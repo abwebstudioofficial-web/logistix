@@ -3544,20 +3544,23 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
       .filter((c) => !!c.dispatchAt)
       .map((c) => {
         const d = new Date(c.dispatchAt);
+        const fuelAmount = xnum(c.fuelAmount);
+        const freightAmount = xnum(c.freightAmount);
         return {
           id: c.id,
           dispatchAtRaw: d.getTime(),
           month: d.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
           dispatchDate: d.toLocaleDateString(),
           vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
-          fuelAmount: xnum(c.fuelAmount),
-          freightAmount: xnum(c.freightAmount),
+          fuelAmount, freightAmount,
+          net: freightAmount - fuelAmount, // net still payable to the transporter once fuel is accounted for
         };
       })
       .sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw);
   }, [tabContainers]);
   const grandFuel = rows.reduce((s, r) => s + r.fuelAmount, 0);
   const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
+  const grandNet = grandFreight - grandFuel;
 
   const swaps = useMemo(
     () => (data.fuel_card_swaps || [])
@@ -3647,6 +3650,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
                 <th className={thCls}>Vehicle No.</th>
                 <th className={thCls}>Fuel (PKR)</th>
                 <th className={thCls}>Freight (PKR)</th>
+                <th className={thCls}>Net Payable (PKR)</th>
               </tr>
             </thead>
             <tbody>
@@ -3657,6 +3661,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
                   <td className={cx(tdCls, "font-mono text-white font-medium")}>{r.vehiclePlate}</td>
                   <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(r.fuelAmount)}</td>
                   <td className={tdCls}>{formatPKR(r.freightAmount)}</td>
+                  <td className={cx(tdCls, "font-medium", r.net < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(r.net)}</td>
                 </tr>
               ))}
             </tbody>
@@ -3665,6 +3670,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
                 <td className={cx(tdCls, "font-semibold text-slate-300")} colSpan={3}>Total</td>
                 <td className={cx(tdCls, "font-semibold text-white")}>{formatPKR(grandFuel)}</td>
                 <td className={cx(tdCls, "font-semibold text-slate-300")}>{formatPKR(grandFreight)}</td>
+                <td className={cx(tdCls, "font-semibold", grandNet < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(grandNet)}</td>
               </tr>
             </tfoot>
           </table>
