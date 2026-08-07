@@ -517,6 +517,11 @@ const orderStatusColor = {
   Completed: "bg-violet-950 text-violet-400 border-violet-800",
   Cancelled: "bg-slate-800 text-slate-400 border-slate-700",
 };
+const emptyStatusColor = {
+  "In Process": "bg-amber-950 text-amber-400 border-amber-800",
+  Received: "bg-violet-950 text-violet-400 border-violet-800",
+  "—": "bg-slate-800 text-slate-500 border-slate-700",
+};
 const priorityColor = {
   Low: "bg-slate-800 text-slate-400 border-slate-700",
   Normal: "bg-slate-800 text-slate-300 border-slate-700",
@@ -547,7 +552,7 @@ const invoiceStatusColor = {
 
 /* Shared style tokens */
 const cardCls = "bg-slate-900 border border-slate-800 rounded-xl transition-all duration-200 hover:-translate-y-1 hover:border-slate-500 hover:shadow-xl";
-const tableWrap = "bg-slate-900 border border-slate-800 rounded-xl overflow-x-auto";
+const tableWrap = "bg-slate-900 border border-slate-800 rounded-xl overflow-x-auto table-scroll";
 const theadCls = "bg-slate-950 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-800";
 const thCls = "text-left font-medium px-4 py-3 whitespace-nowrap";
 const trCls = "border-b border-slate-800 last:border-0 hover:bg-slate-800 transition-colors";
@@ -753,6 +758,17 @@ function containerStatus(c) {
 function isDeliveredOrCompleted(c) {
   if (c.cancelled) return false;
   return (c.stageIndex ?? 0) >= 3;
+}
+
+// Import-only: once a container is Delivered it's "In Process" for empty return,
+// and becomes "Received" the moment it's advanced to Completed (i.e. once an empty
+// return date has actually been logged by the Empty Return Receiver). Not applicable
+// before Delivered, or for Domestic/Export shipments, which never reach Completed.
+function emptyStatusOf(c) {
+  const si = c.stageIndex ?? 0;
+  if (si >= 4) return "Received";
+  if (si === 3) return "In Process";
+  return "—";
 }
 
 // Kept as an alias so any existing references keep working — containerStatus
@@ -2082,6 +2098,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                 <th className={thCls}>Container No.</th>
                 <th className={thCls}>Vehicle No.</th>
                 <th className={thCls}>Status</th>
+                {shipmentType === "Import" && <th className={thCls}>Empty Status</th>}
                 <th className={thCls}></th>
               </tr>
             </thead>
@@ -2089,6 +2106,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
               {rows.map(({ order: o, container: c }, idx) => {
                 const cust = getCustomer(data, o.customerId);
                 const st = c ? containerStatus(c) : orderAggregateStatus(o);
+                const emptyStatus = c ? emptyStatusOf(c) : "—";
                 return (
                   <tr key={c ? c.id : o.id + "-" + idx} className={trCls}>
                     <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
@@ -2098,6 +2116,9 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                     <td className={cx(tdCls, "font-mono")}>{c ? (c.containerNumber || "—") : "—"}</td>
                     <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
                     <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>
+                    {shipmentType === "Import" && (
+                      <td className={tdCls}>{emptyStatus === "—" ? "—" : <Badge text={emptyStatus} className={emptyStatusColor[emptyStatus]} />}</td>
+                    )}
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
                         <button className={iconBtn} title="View" onClick={() => openModal({ type: "order", mode: "view", item: o })}><Eye size={15} /></button>
@@ -2679,6 +2700,9 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                     )}
                     {!c.cancelled && (c.stageIndex ?? 0) < 3 && !canAdvance(c, o) && isDispatcher && (
                       <span className="text-slate-500 text-xs italic">Awaiting Receiver to confirm delivery</span>
+                    )}
+                    {!c.cancelled && (c.stageIndex ?? 0) === 3 && isDispatcher && (o.shipmentType || "Import") === "Import" && (
+                      <span className="text-slate-500 text-xs italic">Awaiting Empty Return Receiver to advance to Completed</span>
                     )}
                     {!c.cancelled && (c.stageIndex ?? 0) === 3 && !canAdvance(c, o) && isEmptyReturnReceiver && (o.shipmentType || "Import") !== "Import" && (
                       <span className="text-slate-500 text-xs italic">Not an import shipment</span>
@@ -5602,6 +5626,7 @@ function LogistixERP() {
 
   return (
     <div className={cx("min-h-screen w-full bg-slate-950 flex text-slate-200", theme === "light" && "light-theme")}>
+      <style>{`.table-scroll { scrollbar-width: none; -ms-overflow-style: none; } .table-scroll::-webkit-scrollbar { display: none; }`}</style>
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleAttachFile} style={{ display: "none" }} />
       <Sidebar
         view={view} setView={setView}
