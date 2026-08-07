@@ -771,6 +771,32 @@ function emptyStatusOf(c) {
   return "—";
 }
 
+// Whenever Empty Return Date changes — from any entry point — keep the container's
+// stage in sync: adding a date completes the Import empty-return cycle (Delivered ->
+// Completed / "Received"); clearing it reverts back to awaiting return ("In Process").
+// This is what replaces the old manual "Advance to Completed" button.
+function commitEmptyReturnDate(updateContainerStage, orderId, container, value) {
+  if (value) {
+    updateContainerStage(orderId, container.id, 4, { emptyReturnDate: value });
+  } else if ((container.stageIndex ?? 0) >= 4) {
+    updateContainerStage(orderId, container.id, 3, { emptyReturnDate: "" });
+  }
+}
+
+// Required before a dispatcher can move a container from Picked Up into In Transit —
+// you shouldn't be able to mark a shipment in transit without knowing who's driving it,
+// what it's on, who's hauling it, what it's costing, and where the empty comes back to.
+function hasTrackingFieldsFilled(c) {
+  return !!(
+    (c.driverName || "").trim() &&
+    (c.vehiclePlate || "").trim() &&
+    (c.transporter || "").trim() &&
+    c.freightAmount !== "" && c.freightAmount !== null && c.freightAmount !== undefined &&
+    c.fuelAmount !== "" && c.fuelAmount !== null && c.fuelAmount !== undefined &&
+    (c.emptyReturnLocation || "").trim()
+  );
+}
+
 // Kept as an alias so any existing references keep working — containerStatus
 // itself is now the single, consistent source of truth used everywhere
 // (Orders table, order view tab, Tracking page, customer portal, etc.)
@@ -2017,9 +2043,9 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("All Status");
   const typeLabel = { Domestic: "Domestic", Import: "Import", Export: "Export" }[shipmentType] || "";
-  // Only the Import page ever has Completed orders (empty-return cycle), and per spec
-  // this block/filter is only for the dispatcher and admin roles.
-  const showCompletedBlock = shipmentType === "Import" && (role === "admin" || role === "dispatcher");
+  // Only the Import page gets the full status block row (it's the only shipment type that
+  // ever reaches Completed), and per spec it's dispatcher/admin only.
+  const showStatusBlocks = shipmentType === "Import" && (role === "admin" || role === "dispatcher");
 
   // Flatten to one row per container so Job No / Container No / Vehicle No
   // can be real table columns, and orders with multiple containers just get
@@ -2034,9 +2060,12 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
     }
   });
 
-  const completedCount = showCompletedBlock
-    ? flat.filter(({ order: o, container: c }) => (c ? containerStatus(c) : orderAggregateStatus(o)) === "Completed").length
-    : 0;
+  const statusOf = ({ order: o, container: c }) => (c ? containerStatus(c) : orderAggregateStatus(o));
+  const confirmedCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Confirmed").length : 0;
+  const pickedUpCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Picked Up").length : 0;
+  const inTransitCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "In Transit").length : 0;
+  const deliveredCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Delivered").length : 0;
+  const completedCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Completed").length : 0;
 
   const rows = flat.filter(({ order: o, container: c }) => {
     const cust = getCustomer(data, o.customerId);
@@ -2059,8 +2088,28 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
         </button>
       </div>
 
-      {showCompletedBlock && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {showStatusBlocks && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <MiniStat
+            label="Confirmed" value={confirmedCount} color="text-blue-400"
+            onClick={() => setStatus(status === "Confirmed" ? "All Status" : "Confirmed")}
+            active={status === "Confirmed"}
+          />
+          <MiniStat
+            label="Picked Up" value={pickedUpCount} color="text-indigo-400"
+            onClick={() => setStatus(status === "Picked Up" ? "All Status" : "Picked Up")}
+            active={status === "Picked Up"}
+          />
+          <MiniStat
+            label="In Transit" value={inTransitCount} color="text-blue-400"
+            onClick={() => setStatus(status === "In Transit" ? "All Status" : "In Transit")}
+            active={status === "In Transit"}
+          />
+          <MiniStat
+            label="Delivered" value={deliveredCount} color="text-emerald-400"
+            onClick={() => setStatus(status === "Delivered" ? "All Status" : "Delivered")}
+            active={status === "Delivered"}
+          />
           <MiniStat
             label="Completed" value={completedCount} color="text-violet-400"
             onClick={() => setStatus(status === "Completed" ? "All Status" : "Completed")}
@@ -2072,7 +2121,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
       <div className="flex gap-3 flex-wrap">
         <SearchBox value={q} onChange={setQ} placeholder="Search orders, customers, containers..." />
         <select className={inputCls} style={{ width: 170 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {(showCompletedBlock
+          {(showStatusBlocks
             ? ["All Status", "Confirmed", "Picked Up", "In Transit", "Delivered", "Completed", "Cancelled"]
             : ["All Status", "Confirmed", "Picked Up", "In Transit", "Delivered", "Cancelled"]
           ).map((s) => <option key={s} value={s}>{s}</option>)}
@@ -2366,7 +2415,7 @@ function RoutesView({ data, openModal, askDelete }) {
 
 /* ==================== Tracking ==================== */
 
-function TrackingAssignFields({ container, orderId, updateContainerFields, transporters }) {
+function TrackingAssignFields({ container, orderId, updateContainerFields, updateContainerStage, transporters }) {
   const [driverName, setDriverName] = useState(container.driverName || "");
   const [vehiclePlate, setVehiclePlate] = useState(container.vehiclePlate || "");
   const [transporter, setTransporter] = useState(container.transporter || "");
@@ -2476,30 +2525,80 @@ function TrackingAssignFields({ container, orderId, updateContainerFields, trans
           placeholder="Empty Return Location"
         />
       </div>
-      <div className="flex items-center gap-1">
-        <ArrowLeft size={12} className="text-slate-500 shrink-0 rotate-90" />
-        <select
-          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-28 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          value={shifting}
-          onChange={(e) => { setShifting(e.target.value); commit("shifting", e.target.value); }}
-        >
-          <option value="">Shifting?</option>
-          <option value="yes">Shifting: Yes</option>
-          <option value="no">Shifting: No</option>
-        </select>
-      </div>
-      {shifting === "yes" && (
-        <div className="flex items-center gap-1">
-          <Clock size={12} className="text-slate-500 shrink-0" />
-          <input
-            type="date"
-            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
-            value={emptyReturnDate}
-            onChange={(e) => { setEmptyReturnDate(e.target.value); commit("emptyReturnDate", e.target.value); }}
-          />
-        </div>
+      {(container.stageIndex ?? 0) >= 3 && (
+        <>
+          <div className="flex items-center gap-1">
+            <ArrowLeft size={12} className="text-slate-500 shrink-0 rotate-90" />
+            <select
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-28 focus:outline-none focus:ring-1 focus:ring-blue-600"
+              value={shifting}
+              onChange={(e) => { setShifting(e.target.value); commit("shifting", e.target.value); }}
+            >
+              <option value="">Shifting?</option>
+              <option value="yes">Shifting: Yes</option>
+              <option value="no">Shifting: No</option>
+            </select>
+          </div>
+          {shifting === "yes" && (
+            <div className="flex items-center gap-1">
+              <Clock size={12} className="text-slate-500 shrink-0" />
+              <input
+                type="date"
+                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
+                value={emptyReturnDate}
+                onChange={(e) => {
+                  setEmptyReturnDate(e.target.value);
+                  commitEmptyReturnDate(updateContainerStage, orderId, container, e.target.value);
+                }}
+              />
+            </div>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+// Inline fields for the Empty Return Receiver: filling in the date is what advances the
+// container from Delivered ("In Process") to Completed ("Received") — no separate button.
+// Clearing the date reverts it back to "In Process".
+function EmptyReturnFields({ container, orderId, updateContainerStage, updateContainerFields }) {
+  const [emptyReturnDate, setEmptyReturnDate] = useState(container.emptyReturnDate || "");
+  const [emptyReturnDescription, setEmptyReturnDescription] = useState(container.emptyReturnDescription || "");
+
+  useEffect(() => {
+    setEmptyReturnDate(container.emptyReturnDate || "");
+    setEmptyReturnDescription(container.emptyReturnDescription || "");
+  }, [container.id, container.emptyReturnDate, container.emptyReturnDescription]);
+
+  return (
+    <>
+      <div className="flex items-center gap-1">
+        <Clock size={12} className="text-slate-500 shrink-0" />
+        <input
+          type="date"
+          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
+          value={emptyReturnDate}
+          onChange={(e) => {
+            setEmptyReturnDate(e.target.value);
+            commitEmptyReturnDate(updateContainerStage, orderId, container, e.target.value);
+          }}
+        />
+      </div>
+      <div className="flex items-center gap-1">
+        <input
+          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-40 focus:outline-none focus:ring-1 focus:ring-blue-600"
+          value={emptyReturnDescription}
+          onChange={(e) => setEmptyReturnDescription(e.target.value)}
+          onBlur={(e) => {
+            if (e.target.value !== (container.emptyReturnDescription || "")) {
+              updateContainerFields(orderId, container.id, { emptyReturnDescription: e.target.value });
+            }
+          }}
+          placeholder="Empty return notes"
+        />
+      </div>
+    </>
   );
 }
 
@@ -2508,7 +2607,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
   const [filter, setFilter] = useState("all");
   const [podTarget, setPodTarget] = useState(null); // { orderId, containerId, label }
   const [dispatchTarget, setDispatchTarget] = useState(null); // { orderId, containerId, label }
-  const [emptyReturnTarget, setEmptyReturnTarget] = useState(null); // { orderId, containerId, label, location }
   const today = todayISO();
   const isReceiver = role === "receiver";
   const isDispatcher = role === "dispatcher";
@@ -2519,16 +2617,17 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
   // empty box returned — everyone else only cares about today's deliveries.
   const showAllDelivered = isAdmin || isEmptyReturnReceiver;
   // Only dispatcher/admin get the Completed block (per spec) — and only Import orders ever reach it.
-  const showCompletedBlock = isDispatcher || isAdmin;
+  const showCompletedBlock = isDispatcher || isAdmin || isEmptyReturnReceiver;
 
   // Dispatchers can move a container up through In Transit, but not all the way to Delivered.
   // Receivers can only take the final step (In Transit -> Delivered).
-  // Empty Return Receivers only take the final Import-only step (Delivered -> Completed).
+  // Delivered -> Completed is never button-driven (see EmptyReturnFields) — filling in
+  // the Empty Return Date is what completes it, for whichever role can edit that field.
   function canAdvance(c, o) {
     const si = c.stageIndex ?? 0;
     if (isDispatcher) return si < 2;
     if (isReceiver) return si === 2;
-    if (isEmptyReturnReceiver) return si === 3 && (o.shipmentType || "Import") === "Import";
+    if (isEmptyReturnReceiver) return false;
     return true;
   }
   function maxStageIndex(o) {
@@ -2649,6 +2748,12 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
             const cust = getCustomer(data, o.customerId);
             const maxIdx = maxStageIndex(o);
             const showPod = (isAdmin || isEmptyReturnReceiver) && c.podPhoto && (c.stageIndex ?? 0) >= 3;
+            const si = c.stageIndex ?? 0;
+            // The button-driven flow only ever goes up to Delivered — Delivered -> Completed
+            // is field-driven (see EmptyReturnFields / the Shifting-gated date field above).
+            const buttonMaxIdx = Math.min(maxIdx, 3);
+            const movingToInTransit = isDispatcher && si === 1;
+            const blockedByRequiredFields = movingToInTransit && !hasTrackingFieldsFilled(c);
             return (
               <div key={c.id} className={cx(cardCls, "p-5")}>
                 <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
@@ -2663,7 +2768,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 flex-wrap gap-3">
                   <div className="flex items-center gap-4 text-slate-500 text-xs flex-wrap">
                     {(role === "dispatcher" || role === "admin") ? (
-                      <TrackingAssignFields container={c} orderId={o.id} updateContainerFields={updateContainerFields} transporters={data.transporters} />
+                      <TrackingAssignFields container={c} orderId={o.id} updateContainerFields={updateContainerFields} updateContainerStage={updateContainerStage} transporters={data.transporters} />
+                    ) : isEmptyReturnReceiver ? (
+                      <>
+                        <span className="flex items-center gap-1"><Truck size={12} />{c.vehiclePlate || "Unassigned"}</span>
+                        <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
+                        <EmptyReturnFields container={c} orderId={o.id} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} />
+                      </>
                     ) : (
                       <>
                         <span className="flex items-center gap-1"><Send size={12} />{c.transporter || "No transporter"}</span>
@@ -2684,28 +2795,30 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                       }}
                     ><ExternalLink size={15} /></button>
                     <button className={iconBtn} title="Download Bilty Receipt" onClick={() => downloadBiltyReceipt({ ...o, containers: [c] }, data)}><Receipt size={15} /></button>
-                    {!c.cancelled && (c.stageIndex ?? 0) < maxIdx && canAdvance(c, o) && (
+                    {!c.cancelled && si < buttonMaxIdx && canAdvance(c, o) && (
                       <button
-                        className={btnPrimary}
+                        className={cx(btnPrimary, blockedByRequiredFields && "opacity-40 cursor-not-allowed hover:bg-blue-600")}
+                        disabled={blockedByRequiredFields}
+                        title={blockedByRequiredFields ? "Fill in driver, vehicle, transporter, freight, fuel, and empty return location first" : undefined}
                         onClick={() => {
-                          const nextIdx = (c.stageIndex ?? 0) + 1;
-                          if (nextIdx === 4) setEmptyReturnTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, location: c.emptyReturnLocation });
-                          else if (nextIdx === 3) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
+                          if (blockedByRequiredFields) return;
+                          const nextIdx = si + 1;
+                          if (nextIdx === 3) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
                       >
-                        Advance to {(o.shipmentType === "Import" ? IMPORT_STAGES : STAGES)[(c.stageIndex ?? 0) + 1]}
+                        Advance to {STAGES[si + 1]}
                       </button>
                     )}
-                    {!c.cancelled && (c.stageIndex ?? 0) < 3 && !canAdvance(c, o) && isDispatcher && (
+                    {!c.cancelled && blockedByRequiredFields && (
+                      <span className="text-amber-500 text-xs italic">Fill in all fields to advance</span>
+                    )}
+                    {!c.cancelled && si < 3 && !canAdvance(c, o) && isDispatcher && (
                       <span className="text-slate-500 text-xs italic">Awaiting Receiver to confirm delivery</span>
                     )}
-                    {!c.cancelled && (c.stageIndex ?? 0) === 3 && isDispatcher && (o.shipmentType || "Import") === "Import" && (
+                    {!c.cancelled && si === 3 && isDispatcher && (o.shipmentType || "Import") === "Import" && (
                       <span className="text-slate-500 text-xs italic">Awaiting Empty Return Receiver to advance to Completed</span>
-                    )}
-                    {!c.cancelled && (c.stageIndex ?? 0) === 3 && !canAdvance(c, o) && isEmptyReturnReceiver && (o.shipmentType || "Import") !== "Import" && (
-                      <span className="text-slate-500 text-xs italic">Not an import shipment</span>
                     )}
                   </div>
                 </div>
@@ -2727,17 +2840,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
           onConfirm={(podData) => {
             updateContainerStage(podTarget.orderId, podTarget.containerId, 3, podData);
             setPodTarget(null);
-          }}
-        />
-      )}
-      {emptyReturnTarget && (
-        <EmptyReturnModal
-          containerLabel={emptyReturnTarget.label}
-          defaultLocation={emptyReturnTarget.location}
-          onClose={() => setEmptyReturnTarget(null)}
-          onConfirm={(returnData) => {
-            updateContainerStage(emptyReturnTarget.orderId, emptyReturnTarget.containerId, 4, returnData);
-            setEmptyReturnTarget(null);
           }}
         />
       )}
