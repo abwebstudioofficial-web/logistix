@@ -336,7 +336,7 @@ function createLiteClient(url, anonKey) {
 
 const supabaseClient = createLiteClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const DATA_TABLES = ["customers", "senders", "transporters", "drivers", "vehicles", "orders", "invoices", "contracts", "fuel_allocations", "fuel_card_swaps"];
+const DATA_TABLES = ["customers", "senders", "transporters", "drivers", "vehicles", "orders", "invoices", "contracts", "fuel_allocations", "fuel_card_swaps", "fuel_prices"];
 
 // Generic camelCase <-> snake_case conversion so every entity's field names
 // line up with the Postgres columns without hand-writing per-table maps.
@@ -766,6 +766,31 @@ function isDeliveredOrCompleted(c) {
 // and becomes "Received" the moment it's advanced to Completed (i.e. once an empty
 // return date has actually been logged by the Empty Return Receiver). Not applicable
 // before Delivered, or for Domestic/Export shipments, which never reach Completed.
+// Finds the fuel price (PKR/liter) in effect on a given date — the most recent price
+// entry whose effective date is on or before it. Fuel prices are company-wide (not
+// per-customer), so this looks across the whole list regardless of which customer's
+// screen it's being calculated for. Returns 0 if no price has been recorded yet for
+// that period.
+function fuelPriceOnDate(fuelPrices, dateISO) {
+  if (!dateISO) return 0;
+  let best = null;
+  (fuelPrices || []).forEach((p) => {
+    if (p.effectiveDate && p.effectiveDate <= dateISO && (!best || p.effectiveDate > best.effectiveDate)) best = p;
+  });
+  return best ? Number(best.pricePerLiter) || 0 : 0;
+}
+
+// Fuel Amount (PKR) for a shipment: half of Freight, converted to liters at the fuel
+// price in effect on its dispatch date, then back to PKR. This nets out to Freight/2,
+// but grounds the figure in an actual per-liter rate rather than an arbitrary fraction —
+// so it also gives an implied liters-used figure as a byproduct. Returns null (not 0) when
+// no fuel price is on file for that date, so a missing price doesn't get mistaken for Rs. 0.
+function computeFuelAmount(freightAmount, fuelPricePerLiter) {
+  if (!fuelPricePerLiter) return null;
+  const liters = (xnum(freightAmount) / 2) / fuelPricePerLiter;
+  return liters * fuelPricePerLiter;
+}
+
 function emptyStatusOf(c) {
   const si = c.stageIndex ?? 0;
   if (si >= 4) return "Received";
@@ -796,7 +821,6 @@ function hasTrackingFieldsFilled(c) {
     (c.vehiclePlate || "").trim() &&
     (c.transporter || "").trim() &&
     c.freightAmount !== "" && c.freightAmount !== null && c.freightAmount !== undefined &&
-    c.fuelAmount !== "" && c.fuelAmount !== null && c.fuelAmount !== undefined &&
     (c.emptyReturnLocation || "").trim()
   );
 }
@@ -2439,7 +2463,6 @@ function TrackingAssignFields({ container, orderId, updateContainerFields, trans
   const [vehiclePlate, setVehiclePlate] = useState(container.vehiclePlate || "");
   const [transporter, setTransporter] = useState(container.transporter || "");
   const [freightAmount, setFreightAmount] = useState(container.freightAmount ?? "");
-  const [fuelAmount, setFuelAmount] = useState(container.fuelAmount ?? "");
   const [emptyReturnLocation, setEmptyReturnLocation] = useState(container.emptyReturnLocation || "");
   const [shifting, setShifting] = useState(container.shifting || "");
   const [emptyReturnDate, setEmptyReturnDate] = useState(container.emptyReturnDate || "");
@@ -2450,11 +2473,10 @@ function TrackingAssignFields({ container, orderId, updateContainerFields, trans
     setVehiclePlate(container.vehiclePlate || "");
     setTransporter(container.transporter || "");
     setFreightAmount(container.freightAmount ?? "");
-    setFuelAmount(container.fuelAmount ?? "");
     setEmptyReturnLocation(container.emptyReturnLocation || "");
     setShifting(container.shifting || "");
     setEmptyReturnDate(container.emptyReturnDate || "");
-  }, [container.id, container.driverName, container.vehiclePlate, container.transporter, container.freightAmount, container.fuelAmount, container.emptyReturnLocation, container.shifting, container.emptyReturnDate]);
+  }, [container.id, container.driverName, container.vehiclePlate, container.transporter, container.freightAmount, container.emptyReturnLocation, container.shifting, container.emptyReturnDate]);
 
   function commit(field, value) {
     if (value !== (container[field] ?? "")) updateContainerFields(orderId, container.id, { [field]: value });
@@ -2521,17 +2543,6 @@ function TrackingAssignFields({ container, orderId, updateContainerFields, trans
           onChange={(e) => setFreightAmount(e.target.value)}
           onBlur={(e) => commit("freightAmount", e.target.value === "" ? "" : Number(e.target.value))}
           placeholder="Freight (PKR)"
-        />
-      </div>
-      <div className="flex items-center gap-1">
-        <Fuel size={12} className="text-slate-500 shrink-0" />
-        <input
-          type="number" min="0"
-          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-24 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          value={fuelAmount}
-          onChange={(e) => setFuelAmount(e.target.value)}
-          onBlur={(e) => commit("fuelAmount", e.target.value === "" ? "" : Number(e.target.value))}
-          placeholder="Fuel (PKR)"
         />
       </div>
       <div className="flex items-center gap-1">
@@ -2742,7 +2753,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                 <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={o.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 flex-wrap gap-3">
                   <div className="flex items-center gap-4 text-slate-500 text-xs flex-wrap">
-                    {(role === "dispatcher" || role === "admin") ? (
+                    {(role === "admin" || (isDispatcher && si < 2)) ? (
                       <TrackingAssignFields container={c} orderId={o.id} updateContainerFields={updateContainerFields} transporters={data.transporters} />
                     ) : (
                       <>
@@ -2768,7 +2779,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                       <button
                         className={cx(btnPrimary, blockedByRequiredFields && "opacity-40 cursor-not-allowed hover:bg-blue-600")}
                         disabled={blockedByRequiredFields}
-                        title={blockedByRequiredFields ? "Fill in driver, vehicle, transporter, freight, fuel, and empty return location first" : undefined}
+                        title={blockedByRequiredFields ? "Fill in driver, vehicle, transporter, freight, and empty return location first" : undefined}
                         onClick={() => {
                           if (blockedByRequiredFields) return;
                           const nextIdx = si + 1;
@@ -3471,7 +3482,7 @@ function customerOrderContainers(data, customerId) {
 }
 
 // Groups containers by rented vehicle plate (case/whitespace-normalized) and sums fuel & freight.
-function groupFuelByVehicle(containers) {
+function groupFuelByVehicle(containers, fuelPrices) {
   const map = new Map();
   containers.forEach((c) => {
     const plateRaw = (c.vehiclePlate || "").trim();
@@ -3479,7 +3490,8 @@ function groupFuelByVehicle(containers) {
     if (!map.has(key)) map.set(key, { plate: plateRaw || "Unassigned", drivers: new Set(), trips: 0, fuelTotal: 0, freightTotal: 0 });
     const g = map.get(key);
     g.trips += 1;
-    g.fuelTotal += xnum(c.fuelAmount);
+    const price = fuelPriceOnDate(fuelPrices, c.dispatchAt ? c.dispatchAt.slice(0, 10) : "");
+    g.fuelTotal += computeFuelAmount(c.freightAmount, price) || 0;
     g.freightTotal += xnum(c.freightAmount);
     if (c.driverName) g.drivers.add(c.driverName);
   });
@@ -3510,7 +3522,7 @@ function FuelManagementView({ data, openModal, askDelete }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {rows.map((c) => {
             const containers = customerOrderContainers(data, c.id);
-            const vehicleGroups = groupFuelByVehicle(containers);
+            const vehicleGroups = groupFuelByVehicle(containers, data.fuel_prices);
             const vehicleCount = vehicleGroups.filter((g) => g.plate !== "Unassigned").length;
             const fuelTotal = vehicleGroups.reduce((s, g) => s + g.fuelTotal, 0);
             return (
@@ -3532,7 +3544,7 @@ function FuelManagementView({ data, openModal, askDelete }) {
 }
 
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
-  const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report"
+  const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const allContainers = useMemo(() => customerOrderContainers(data, customer.id), [data.orders, customer.id]);
   const tabContainers = useMemo(
     () => allContainers.filter((c) => (tab === "export" ? c.shipmentType === "Export" : c.shipmentType !== "Export")),
@@ -3544,8 +3556,9 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
       .filter((c) => !!c.dispatchAt)
       .map((c) => {
         const d = new Date(c.dispatchAt);
-        const fuelAmount = xnum(c.fuelAmount);
         const freightAmount = xnum(c.freightAmount);
+        const price = fuelPriceOnDate(data.fuel_prices, c.dispatchAt.slice(0, 10));
+        const fuelAmount = computeFuelAmount(freightAmount, price); // null if no fuel price on file for that date
         return {
           id: c.id,
           dispatchAtRaw: d.getTime(),
@@ -3553,12 +3566,12 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
           dispatchDate: d.toLocaleDateString(),
           vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
           fuelAmount, freightAmount,
-          net: freightAmount - fuelAmount, // net still payable to the transporter once fuel is accounted for
+          net: freightAmount - (fuelAmount || 0), // net still payable to the transporter once fuel is accounted for
         };
       })
       .sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw);
-  }, [tabContainers]);
-  const grandFuel = rows.reduce((s, r) => s + r.fuelAmount, 0);
+  }, [tabContainers, data.fuel_prices]);
+  const grandFuel = rows.reduce((s, r) => s + (r.fuelAmount || 0), 0);
   const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
   const grandNet = grandFreight - grandFuel;
 
@@ -3568,10 +3581,26 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
       .sort((a, b) => (b.swapDate || "").localeCompare(a.swapDate || "")),
     [data.fuel_card_swaps, customer.id]
   );
+  // Group by month — a month with just one swap shows its exact date as a normal row;
+  // a month with several collapses into a single row with a dropdown to pick between them.
+  const swapGroups = useMemo(() => {
+    const map = new Map();
+    swaps.forEach((s) => {
+      const key = (s.swapDate || "").slice(0, 7) || "unknown";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(s);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [swaps]);
 
   const tabBtnCls = (active) => cx(
     "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
     active ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
+  );
+
+  const fuelPrices = useMemo(
+    () => [...(data.fuel_prices || [])].sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || "")),
+    [data.fuel_prices]
   );
 
   return (
@@ -3579,13 +3608,14 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
       <button onClick={onBack} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> Back to Fuel Management</button>
       <div>
         <h2 className="text-2xl font-bold text-white">{customer.name}</h2>
-        <p className="text-slate-500 text-sm mt-1">Fuel amounts entered per shipment on the Tracking page</p>
+        <p className="text-slate-500 text-sm mt-1">Fuel Amount is calculated automatically from Freight and the fuel price on file for that date</p>
       </div>
 
       <div className="flex border-b border-slate-800 overflow-x-auto">
         <button className={tabBtnCls(tab === "domestic_import")} onClick={() => setTab("domestic_import")}>Import &amp; Domestic Fuel Consumption Report</button>
         <button className={tabBtnCls(tab === "export")} onClick={() => setTab("export")}>Export Fuel Consumption Report</button>
         <button className={tabBtnCls(tab === "swap_report")} onClick={() => setTab("swap_report")}>Fuel Card Swapping Report</button>
+        <button className={tabBtnCls(tab === "fuel_price")} onClick={() => setTab("fuel_price")}>Fuel Price</button>
       </div>
 
       {tab === "swap_report" ? (
@@ -3607,25 +3637,60 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
                 <thead className={theadCls}>
                   <tr>
                     <th className={thCls}>Swap Date</th>
-                    <th className={thCls}>Vehicle No.</th>
-                    <th className={thCls}>Card Number</th>
-                    <th className={thCls}>Driver</th>
-                    <th className={thCls}>Notes</th>
+                    <th className={thCls}>Department</th>
+                    <th className={thCls}>Swapped By</th>
+                    <th className={thCls}>Card No.</th>
+                    <th className={thCls}>Qty Ltr</th>
+                    <th className={thCls}>Amount in PKR</th>
                     <th className={thCls}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {swaps.map((s) => (
-                    <tr key={s.id} className={trCls}>
-                      <td className={tdCls}>{s.swapDate ? fmtDate(s.swapDate) : "—"}</td>
-                      <td className={cx(tdCls, "font-mono text-white font-medium")}>{s.vehiclePlate || "—"}</td>
-                      <td className={tdCls}>{s.cardNumber || "—"}</td>
-                      <td className={tdCls}>{s.driverName || "—"}</td>
-                      <td className={tdCls}>{s.notes || "—"}</td>
+                  {swapGroups.map(([key, entries]) =>
+                    entries.length === 1 ? (
+                      <SwapRow key={entries[0].id} s={entries[0]} dateLabel={entries[0].swapDate ? fmtDate(entries[0].swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
+                    ) : (
+                      <SwapMonthGroupRow key={key} entries={entries} openModal={openModal} askDelete={askDelete} />
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : tab === "fuel_price" ? (
+        <div className="space-y-4">
+          <p className="text-slate-500 text-xs">Fuel price is company-wide — set here, it applies when calculating Fuel Amount for every customer's shipments, not just {customer.name}.</p>
+          <div className="flex items-center justify-end">
+            <button className={btnPrimary} onClick={() => openModal({ type: "fuel_price", mode: "add", item: null })}>
+              <Plus size={16} /> Add Fuel Price
+            </button>
+          </div>
+          {fuelPrices.length === 0 ? (
+            <EmptyState
+              icon={Banknote} text="No fuel prices recorded yet."
+              actionLabel="Add first fuel price"
+              onAction={() => openModal({ type: "fuel_price", mode: "add", item: null })}
+            />
+          ) : (
+            <div className={tableWrap}>
+              <table className="w-full text-sm">
+                <thead className={theadCls}>
+                  <tr>
+                    <th className={thCls}>Effective Date</th>
+                    <th className={thCls}>Price per Liter (PKR)</th>
+                    <th className={thCls}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fuelPrices.map((p) => (
+                    <tr key={p.id} className={trCls}>
+                      <td className={tdCls}>{p.effectiveDate ? fmtDate(p.effectiveDate) : "—"}</td>
+                      <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(p.pricePerLiter)}</td>
                       <td className={tdCls}>
                         <div className="flex items-center gap-1 justify-end">
-                          <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={15} /></button>
-                          <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={15} /></button>
+                          <button className={iconBtn} onClick={() => openModal({ type: "fuel_price", mode: "edit", item: p })}><Pencil size={15} /></button>
+                          <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_prices", id: p.id, label: "fuel price entry" })}><Trash2 size={15} /></button>
                         </div>
                       </td>
                     </tr>
@@ -3659,7 +3724,11 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
                   <td className={tdCls}>{r.month}</td>
                   <td className={tdCls}>{r.dispatchDate}</td>
                   <td className={cx(tdCls, "font-mono text-white font-medium")}>{r.vehiclePlate}</td>
-                  <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(r.fuelAmount)}</td>
+                  <td className={tdCls}>
+                    {r.fuelAmount === null
+                      ? <span className="text-amber-500 italic text-xs">No fuel price set for this date</span>
+                      : <span className="text-white font-medium">{formatPKR(r.fuelAmount)}</span>}
+                  </td>
                   <td className={tdCls}>{formatPKR(r.freightAmount)}</td>
                   <td className={cx(tdCls, "font-medium", r.net < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(r.net)}</td>
                 </tr>
@@ -3724,39 +3793,140 @@ function FuelForm({ initial, prefill, vehicles, onSave, onCancel }) {
    Uses a free-text vehicle plate (like the Tracking page) rather than a Fleet
    vehicle record, since trucks are rented per-shipment, not company-owned.
    Requires a `fuel_card_swaps` table in Supabase — see setup note in chat. */
-function FuelCardSwapForm({ initial, prefill, onSave, onCancel }) {
+const SWAP_DEPARTMENTS = ["Domestic + Import", "Export"];
+
+// A single swap entry, rendered as a normal table row.
+function SwapRow({ s, dateLabel, openModal, askDelete }) {
+  return (
+    <tr className={trCls}>
+      <td className={tdCls}>{dateLabel}</td>
+      <td className={tdCls}>{s.department || "—"}</td>
+      <td className={tdCls}>{s.swappedBy || "—"}</td>
+      <td className={cx(tdCls, "font-mono")}>{s.cardNumber || "—"}</td>
+      <td className={tdCls}>{s.qtyLtr || s.qtyLtr === 0 ? Number(s.qtyLtr).toLocaleString() : "—"}</td>
+      <td className={cx(tdCls, "text-white font-medium")}>{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</td>
+      <td className={tdCls}>
+        <div className="flex items-center gap-1 justify-end">
+          <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={15} /></button>
+          <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={15} /></button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// A month with more than one swap collapses into one row — the date cell shows "Month
+// YYYY" plus a dropdown listing every entry that month; picking one updates the rest of
+// the row (and its edit/delete buttons) to that entry, instead of listing every row out.
+function SwapMonthGroupRow({ entries, openModal, askDelete }) {
+  const [idx, setIdx] = useState(0);
+  const s = entries[idx];
+  const monthLabel = new Date(s.swapDate + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  return (
+    <tr className={trCls}>
+      <td className={tdCls}>
+        <div className="space-y-1">
+          <div>{monthLabel}</div>
+          <select
+            className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-300 w-full focus:outline-none focus:ring-1 focus:ring-blue-600"
+            value={idx}
+            onChange={(e) => setIdx(Number(e.target.value))}
+          >
+            {entries.map((e, i) => (
+              <option key={e.id} value={i}>{fmtDate(e.swapDate)} — {e.cardNumber || "no card"}</option>
+            ))}
+          </select>
+        </div>
+      </td>
+      <td className={tdCls}>{s.department || "—"}</td>
+      <td className={tdCls}>{s.swappedBy || "—"}</td>
+      <td className={cx(tdCls, "font-mono")}>{s.cardNumber || "—"}</td>
+      <td className={tdCls}>{s.qtyLtr || s.qtyLtr === 0 ? Number(s.qtyLtr).toLocaleString() : "—"}</td>
+      <td className={cx(tdCls, "text-white font-medium")}>{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</td>
+      <td className={tdCls}>
+        <div className="flex items-center gap-1 justify-end">
+          <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={15} /></button>
+          <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={15} /></button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function FuelCardSwapForm({ initial, prefill, transporters, onSave, onCancel }) {
   const isEdit = !!initial;
   const f = initial || prefill || {};
-  const [vehiclePlate, setVehiclePlate] = useState(f.vehiclePlate || "");
-  const [cardNumber, setCardNumber] = useState(f.cardNumber || "");
-  const [driverName, setDriverName] = useState(f.driverName || "");
   const [swapDate, setSwapDate] = useState(f.swapDate || todayISO());
-  const [notes, setNotes] = useState(f.notes || "");
+  const [department, setDepartment] = useState(f.department || "");
+  const [swappedBy, setSwappedBy] = useState(f.swappedBy || "");
+  const [cardNumber, setCardNumber] = useState(f.cardNumber || "");
+  const [qtyLtr, setQtyLtr] = useState(f.qtyLtr ?? "");
+  const [amountPkr, setAmountPkr] = useState(f.amountPkr ?? "");
 
   function submit(e) {
     e.preventDefault();
-    if (!vehiclePlate.trim() || !cardNumber.trim()) return;
+    if (!cardNumber.trim() || !department) return;
     onSave({
       id: f.id || genUUID(), customerId: f.customerId,
-      vehiclePlate: vehiclePlate.trim(), cardNumber: cardNumber.trim(),
-      driverName: driverName.trim(), swapDate, notes: notes.trim(),
+      swapDate, department, swappedBy: swappedBy.trim(), cardNumber: cardNumber.trim(),
+      qtyLtr: qtyLtr === "" ? "" : Number(qtyLtr), amountPkr: amountPkr === "" ? "" : Number(amountPkr),
     });
   }
 
   return (
     <form onSubmit={submit}>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Vehicle No."><input className={inputCls} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="Vehicle the card is going into" /></Field>
-        <Field label="Fuel Card Number"><input className={inputCls} value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} placeholder="Card number" /></Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Driver Name (optional)"><input className={inputCls} value={driverName} onChange={(e) => setDriverName(e.target.value)} /></Field>
         <Field label="Swap Date"><input type="date" className={inputCls} value={swapDate} onChange={(e) => setSwapDate(e.target.value)} /></Field>
+        <Field label="Department">
+          <select className={inputCls} value={department} onChange={(e) => setDepartment(e.target.value)}>
+            <option value="">Select department</option>
+            {SWAP_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
       </div>
-      <Field label="Notes (optional)"><input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. swapped off ABC-123 due to breakdown" /></Field>
+      <Field label="Swapped By">
+        <DropdownWithCustom
+          value={swappedBy} onChange={setSwappedBy} options={(transporters || []).map((t) => t.name)}
+          selectPlaceholder="Select transporter" customPlaceholder="Company / person name"
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Card No."><input className={inputCls} value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} placeholder="e.g. 7001 0003 6875 3657" /></Field>
+        <Field label="Qty (Ltr)"><input type="number" min="0" step="0.01" className={inputCls} value={qtyLtr} onChange={(e) => setQtyLtr(e.target.value)} /></Field>
+      </div>
+      <Field label="Amount in PKR"><input type="number" min="0" className={inputCls} value={amountPkr} onChange={(e) => setAmountPkr(e.target.value)} /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
         <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Log Swap"}</button>
+      </div>
+    </form>
+  );
+}
+
+// Company-wide fuel price (PKR per liter), effective from a given date — used to
+// automatically calculate each shipment's Fuel Amount from its Freight Amount.
+function FuelPriceForm({ initial, onSave, onCancel }) {
+  const isEdit = !!initial;
+  const f = initial || {};
+  const [pricePerLiter, setPricePerLiter] = useState(f.pricePerLiter ?? "");
+  const [effectiveDate, setEffectiveDate] = useState(f.effectiveDate || todayISO());
+
+  function submit(e) {
+    e.preventDefault();
+    if (pricePerLiter === "" || !effectiveDate) return;
+    onSave({ id: f.id || genUUID(), pricePerLiter: Number(pricePerLiter), effectiveDate });
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Price per Liter (PKR)"><input type="number" min="0" step="0.01" className={inputCls} value={pricePerLiter} onChange={(e) => setPricePerLiter(e.target.value)} placeholder="e.g. 281" /></Field>
+        <Field label="Effective Date"><input type="date" className={inputCls} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></Field>
+      </div>
+      <p className="text-slate-600 text-xs -mt-1">Applies to shipments dispatched on or after this date, until a newer price is added.</p>
+      <div className="flex justify-end gap-2 mt-2">
+        <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
+        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Fuel Price"}</button>
       </div>
     </form>
   );
@@ -5032,6 +5202,7 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
     contract: mode === "edit" ? "Edit Contract Rate" : "Add Contract Rate",
     fuel: mode === "edit" ? "Edit Fuel Card" : "Add Fuel Card",
     fuel_card_swap: mode === "edit" ? "Edit Fuel Card Swap" : "Log Fuel Card Swap",
+    fuel_price: mode === "edit" ? "Edit Fuel Price" : "Add Fuel Price",
   };
   return (
     <Modal title={titles[type]} onClose={onClose} wide={type === "order" || type === "invoice"} size={type === "order" && mode === "view" ? "xl" : undefined}>
@@ -5048,7 +5219,8 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
       {type === "transporter" && <TransporterForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("transporters", i)} onCancel={onClose} />}
       {type === "contract" && <ContractForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("contracts", i)} onCancel={onClose} />}
       {type === "fuel" && <FuelForm initial={mode === "edit" ? item : null} prefill={modal.prefill} vehicles={data.vehicles} onSave={(i) => onSave("fuel_allocations", i)} onCancel={onClose} />}
-      {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
+      {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} transporters={data.transporters} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
+      {type === "fuel_price" && <FuelPriceForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("fuel_prices", i)} onCancel={onClose} />}
     </Modal>
   );
 }
