@@ -1795,7 +1795,7 @@ function TrackingProgress({ stageIndex, cancelled, stages }) {
 
 function Sidebar({
   view, setView, session, setSession, customers, canSwitchView, profile, onLogout,
-  excelMeta, onAttachClick, onDetach, onDownloadExcel, importMsg,
+  excelMeta, onAttachClick, onDetach, onDownloadExcel, importMsg, excelBusy,
   onOpenFleetLink, onEditFleetLink, fleetUrl, theme, onToggleTheme,
   mobileOpen, onCloseMobileNav,
 }) {
@@ -1909,14 +1909,14 @@ function Sidebar({
                   <FileSpreadsheet size={12} className="shrink-0" /><span className="truncate">{excelMeta.filename}</span>
                 </div>
                 <div className="flex gap-1.5">
-                  <button onClick={onDownloadExcel} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors"><Download size={11} /> Download</button>
-                  <button onClick={onDetach} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800 transition-colors">Detach</button>
+                  <button disabled={excelBusy} onClick={onDownloadExcel} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"><Download size={11} /> Download</button>
+                  <button disabled={excelBusy} title="Undo this import — restores the data to how it was before this file was attached" onClick={onDetach} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800 transition-colors disabled:opacity-50">{excelBusy ? "Reverting…" : "Revert"}</button>
                 </div>
               </div>
             ) : (
               <div className="flex gap-1.5 mb-2">
-                <button onClick={onAttachClick} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors"><Upload size={11} /> Attach</button>
-                <button onClick={onDownloadExcel} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors"><Download size={11} /> Download</button>
+                <button disabled={excelBusy} onClick={onAttachClick} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"><Upload size={11} /> {excelBusy ? "Loading…" : "Attach"}</button>
+                <button disabled={excelBusy} onClick={onDownloadExcel} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[11px] bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"><Download size={11} /> Download</button>
               </div>
             )}
             {importMsg && <div className={cx("text-[11px] mb-2 px-1", importMsg.ok ? "text-emerald-400" : "text-red-400")}>{importMsg.text}</div>}
@@ -5683,8 +5683,9 @@ function LogistixERP() {
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [viewSession, setViewSession] = useState({ role: "admin", customerId: null });
-  const [excelMeta, setExcelMeta] = useState({ attached: false, filename: null });
+  const [excelMeta, setExcelMeta] = useState({ attached: false, filename: null, snapshot: null });
   const [importMsg, setImportMsg] = useState(null);
+  const [excelBusy, setExcelBusy] = useState(false);
   const [fleetUrl, setFleetUrl] = useState(null);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("logistix-theme") || "dark"; } catch (e) { return "dark"; }
@@ -5863,14 +5864,20 @@ function LogistixERP() {
   function handleAttachFile(e) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
+    setExcelBusy(true);
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
         const arr = new Uint8Array(evt.target.result);
         const wb = XLSX.read(arr, { type: "array" });
         const found = [];
+        let updatedCount = 0, addedCount = 0;
         const next = { ...data };
         const writes = [];
+        // Carry forward any snapshot from a file that's already attached, so reverting
+        // always restores all the way back to the true pre-import state, even across
+        // multiple files attached one after another without detaching in between.
+        const snapshot = { ...(excelMeta.snapshot || {}) };
         Object.keys(SHEET_SCHEMAS).forEach((sheetName) => {
           const ws = wb.Sheets[sheetName];
           if (!ws) return;
@@ -5886,31 +5893,87 @@ function LogistixERP() {
           if (sheetName === "Vehicles") coerced = coerceVehicles(rows);
           if (sheetName === "Invoices") coerced = coerceInvoices(rows);
           if (sheetName === "Routes") coerced = coerceRoutes(rows);
-          next[table] = coerced;
+          if (!coerced) return;
+
+          const existingList = data[table] || [];
+          const existingById = new Map(existingList.map((r) => [r.id, r]));
+          const priorEntries = snapshot[table] || [];
+          const alreadyTracked = new Set(priorEntries.map((en) => en.id));
+          const tableSnapshot = [...priorEntries];
+          const mergedList = [...existingList];
+
+          coerced.forEach((row) => {
+            const prev = existingById.get(row.id) || null;
+            if (prev) updatedCount++; else addedCount++;
+            // Only capture the "before" value the first time this record is touched —
+            // if a later file changes it again, we still want to revert to the very original.
+            if (!alreadyTracked.has(row.id)) tableSnapshot.push({ id: row.id, prev });
+            const idx = mergedList.findIndex((r) => r.id === row.id);
+            if (idx >= 0) mergedList[idx] = row; else mergedList.push(row);
+          });
+
+          next[table] = mergedList;
+          snapshot[table] = tableSnapshot;
           if (coerced.length) writes.push(supabaseClient.from(table).upsert(coerced.map(toDbRow)));
         });
         const writeResults = await Promise.all(writes);
         const writeError = writeResults.find((r) => r.error);
         setDataState(next);
-        setExcelMeta({ attached: true, filename: file.name });
+        setExcelMeta({ attached: true, filename: file.name, snapshot });
         if (writeError) {
           setImportMsg({ ok: false, text: `Loaded locally, but saving to the database failed: ${writeError.error.message}` });
         } else {
           setImportMsg(found.length
-            ? { ok: true, text: `Loaded and saved ${found.join(", ")} from ${file.name}.` }
+            ? { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"} across ${found.join(", ")}. Everything else is untouched.` }
             : { ok: false, text: "No matching sheet tabs found (expected Orders, Customers, Drivers, Vehicles, Invoices, Routes)." });
         }
       } catch (err) {
         setImportMsg({ ok: false, text: "Couldn't read that file — make sure it's a valid .xlsx workbook." });
+      } finally {
+        setExcelBusy(false);
       }
     };
     reader.readAsArrayBuffer(file);
     e.target.value = "";
   }
 
-  function handleDetach() {
-    setExcelMeta({ attached: false, filename: null });
-    setImportMsg(null);
+  async function handleDetach() {
+    const snapshot = excelMeta.snapshot;
+    if (!snapshot) {
+      setExcelMeta({ attached: false, filename: null, snapshot: null });
+      setImportMsg(null);
+      return;
+    }
+    setExcelBusy(true);
+    try {
+      const next = { ...data };
+      const writes = [];
+      const deletes = [];
+      Object.entries(snapshot).forEach(([table, entries]) => {
+        const list = [...(data[table] || [])];
+        entries.forEach(({ id, prev }) => {
+          const idx = list.findIndex((r) => r.id === id);
+          if (prev) {
+            // existed before the import(s) -> restore it exactly as it was
+            if (idx >= 0) list[idx] = prev; else list.push(prev);
+            writes.push(supabaseClient.from(table).upsert(toDbRow(prev)));
+          } else {
+            // didn't exist before -> the import created it, so undo means removing it entirely
+            if (idx >= 0) list.splice(idx, 1);
+            deletes.push(supabaseClient.from(table).delete().eq("id", id));
+          }
+        });
+        next[table] = list;
+      });
+      await Promise.all([...writes, ...deletes]);
+      setDataState(next);
+      setImportMsg({ ok: true, text: "Reverted — the site's data is back to how it was before that file was attached." });
+    } catch (err) {
+      setImportMsg({ ok: false, text: "Couldn't fully revert: " + err.message });
+    } finally {
+      setExcelMeta({ attached: false, filename: null, snapshot: null });
+      setExcelBusy(false);
+    }
   }
 
   function handleDownloadExcel() {
@@ -5985,7 +6048,7 @@ function LogistixERP() {
         session={viewSession} setSession={setViewSession} canSwitchView={canSwitchView}
         customers={data.customers} profile={profile} onLogout={handleLogout}
         excelMeta={excelMeta} onAttachClick={handleAttachClick} onDetach={handleDetach}
-        onDownloadExcel={handleDownloadExcel} importMsg={importMsg}
+        onDownloadExcel={handleDownloadExcel} importMsg={importMsg} excelBusy={excelBusy}
         onOpenFleetLink={handleOpenFleetLink} onEditFleetLink={handleEditFleetLink} fleetUrl={fleetUrl}
         theme={theme} onToggleTheme={toggleTheme}
         mobileOpen={mobileNavOpen} onCloseMobileNav={() => setMobileNavOpen(false)}
