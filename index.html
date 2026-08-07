@@ -1273,7 +1273,7 @@ function getWeekData(orders) {
 }
 
 function getStatusMix(orders) {
-  const colors = { Confirmed: "#38bdf8", "Picked Up": "#818cf8", "In Transit": "#3b82f6", Delivered: "#22c55e", Cancelled: "#64748b" };
+  const colors = { Confirmed: "#38bdf8", "Picked Up": "#818cf8", "In Transit": "#3b82f6", Delivered: "#22c55e", Completed: "#a78bfa", Cancelled: "#64748b" };
   const counts = {};
   orders.forEach((o) => { const s = orderAggregateStatus(o); counts[s] = (counts[s] || 0) + 1; });
   return Object.entries(counts).map(([name, value]) => ({ name, value, color: colors[name] || "#64748b" }));
@@ -1798,7 +1798,16 @@ function Sidebar({
         </div>
         <div className="min-w-0">
           <div className="text-white font-bold text-sm tracking-wide leading-none">LOGISTIX</div>
-          <div className="text-slate-500 text-xs mt-1">Transport ERP</div>
+          <div className="text-slate-500 text-xs mt-1 flex items-center gap-1.5">
+            Transport ERP
+            <span
+              className="inline-flex items-center gap-1 text-emerald-500"
+              title="Live updates on — changes made by others appear automatically, no reload needed"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Live
+            </span>
+          </div>
         </div>
         <button onClick={onCloseMobileNav} className="md:hidden ml-auto text-slate-500 hover:text-white p-1">
           <X size={18} />
@@ -2717,7 +2726,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
             const maxIdx = maxStageIndex(o);
             const showPod = (isAdmin || isEmptyReturnReceiver) && c.podPhoto && (c.stageIndex ?? 0) >= 3;
             const si = c.stageIndex ?? 0;
-            const movingToInTransit = isDispatcher && si === 1;
+            const movingToInTransit = (isDispatcher || isAdmin) && si === 1;
             const blockedByRequiredFields = movingToInTransit && !hasTrackingFieldsFilled(c);
             return (
               <div key={c.id} className={cx(cardCls, "p-5")}>
@@ -5525,6 +5534,23 @@ function LogistixERP() {
     // eslint-disable-next-line
   }, [authSession]);
 
+  // Live updates: quietly re-fetch in the background so changes made by other people show
+  // up without anyone needing to reload the page. Skipped while a modal is open (someone's
+  // likely mid-edit right then) and while a previous refresh is still in flight, so it
+  // never piles up requests or clobbers an in-progress form.
+  const modalRef = useRef(null);
+  const refreshingRef = useRef(false);
+  useEffect(() => { modalRef.current = modal; }, [modal]);
+  useEffect(() => {
+    if (!authSession) return;
+    const interval = setInterval(() => {
+      if (modalRef.current || refreshingRef.current) return;
+      refreshingRef.current = true;
+      refreshData().finally(() => { refreshingRef.current = false; });
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [authSession]);
+
   async function handleLogin(email, password) {
     setAuthBusy(true); setAuthError(null);
     const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
@@ -5543,6 +5569,17 @@ function LogistixERP() {
     await supabaseClient.auth.signOut();
   }
 
+  async function refreshData() {
+    const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
+    const next = {};
+    DATA_TABLES.forEach((t, i) => {
+      const { data: rows, error } = results[i];
+      if (error) console.error(`Failed loading ${t}:`, error.message);
+      next[t] = (rows || []).map(fromDbRow);
+    });
+    setDataState(next);
+  }
+
   async function loadProfileAndData() {
     setDataLoading(true);
     const userId = authSession.user.id;
@@ -5553,14 +5590,7 @@ function LogistixERP() {
     const allowed = allowedViewsForRole(prof.role);
     if (allowed && allowed.length) setView(allowed[0]);
 
-    const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
-    const next = {};
-    DATA_TABLES.forEach((t, i) => {
-      const { data: rows, error } = results[i];
-      if (error) console.error(`Failed loading ${t}:`, error.message);
-      next[t] = (rows || []).map(fromDbRow);
-    });
-    setDataState(next);
+    await refreshData();
     setDataLoading(false);
   }
 
