@@ -2039,11 +2039,12 @@ function Dashboard({ data }) {
           )}
         </div>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <MiniIconStat icon={Clock} iconBg="bg-amber-600" label="Confirmed" value={orders.filter((o) => orderAggregateStatus(o) === "Confirmed").length} />
         <MiniIconStat icon={Send} iconBg="bg-indigo-600" label="Picked Up" value={orders.filter((o) => orderAggregateStatus(o) === "Picked Up").length} />
         <MiniIconStat icon={Truck} iconBg="bg-blue-600" label="In Transit" value={orders.filter((o) => orderAggregateStatus(o) === "In Transit").length} />
-        <MiniIconStat icon={CheckCircle2} iconBg="bg-emerald-600" label="Delivered" value={orders.filter((o) => { const s = orderAggregateStatus(o); return s === "Delivered" || s === "Completed"; }).length} />
+        <MiniIconStat icon={CheckCircle2} iconBg="bg-emerald-600" label="Delivered" value={orders.filter((o) => orderAggregateStatus(o) === "Delivered").length} />
+        <MiniIconStat icon={CheckCircle2} iconBg="bg-violet-600" label="Completed" value={orders.filter((o) => orderAggregateStatus(o) === "Completed").length} />
         <MiniIconStat icon={AlertTriangle} iconBg="bg-red-600" label="Cancelled" value={orders.filter((o) => orderAggregateStatus(o) === "Cancelled").length} />
       </div>
     </div>
