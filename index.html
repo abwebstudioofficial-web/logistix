@@ -9,6 +9,7 @@
 <script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
@@ -925,46 +926,79 @@ function buildClearedRow(sr, o, data) {
   return [sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "", o.shippingLine || "", o.nominatedTransporter || "", o.description || "", o.blNumber || "", "", "", o.containerNumber || "", "", "", veh ? veh.plate : "", drv ? drv.phone : "", fmtDateISO(o.igmDate), "", fmtDateISO(o.createdDate), "", fmtDateISO(o.eta), "", fmtDateISO(o.deliveredDate), "", fmtDateISO(o.deliveredDate), "", o.destination || "", o.emptyReturnLocation || "", "", "", "", "", "", "", "", fmtDateISO(o.deliveredDate), "", "", "", "", "", "", "", "", o.amount || "", "", "", cust ? cust.name : ""];
 }
 
-function buildTemplateWorkbook(data) {
-  const wb = XLSX.utils.book_new();
+// Colors/fonts pulled directly from the reference Transportation workbook:
+// Cleared Cases + company sheets use a light-gray header, Import/Export use cream,
+// Domestic uses blue with white text — matching Excel's stock "Office 2007-2010" theme.
+const TPL_GRAY_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } };
+const TPL_CREAM_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEECE1" } };
+const TPL_BLUE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F81BD" } };
+const TPL_THIN_TOP_BORDER = { top: { style: "thin" } };
+
+function styleTemplateHeaderRow(ws, rowNum, colCount, fill, fontColorArgb, fontSize) {
+  const row = ws.getRow(rowNum);
+  for (let c = 1; c <= colCount; c++) {
+    const cell = row.getCell(c);
+    cell.fill = fill;
+    cell.font = { name: "Tahoma", bold: true, size: fontSize, color: fontColorArgb ? { argb: fontColorArgb } : undefined };
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.border = TPL_THIN_TOP_BORDER;
+  }
+  row.commit();
+}
+
+async function buildTemplateWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
   const orders = data.orders || [];
-  const today = new Date().toISOString().slice(0,10);
+  const today = new Date().toISOString().slice(0, 10);
 
   // Cleared Cases-01
-  const clearedRows = [
-    Array(48).fill(""),
-    (() => { const r = Array(48).fill(""); r[3] = "Detention Calculation & Payment Details"; r[47] = today; return r; })(),
-    Array(48).fill(""),
-    CLEARED_CASES_HEADERS,
-    orders.map((o, i) => buildClearedRow(i + 1, o, data)),
-  ];
-  const clearedFlat = [clearedRows[0], clearedRows[1], clearedRows[2], clearedRows[3], ...clearedRows[4]];
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(clearedFlat), "Cleared Cases-01");
+  const wsCleared = wb.addWorksheet("Cleared Cases-01");
+  wsCleared.addRow(Array(48).fill(""));
+  const titleRow = Array(48).fill(""); titleRow[3] = "Detention Calculation & Payment Details"; titleRow[47] = today;
+  wsCleared.addRow(titleRow);
+  wsCleared.getCell(2, 4).font = { name: "Tahoma", bold: true, size: 16 };
+  wsCleared.addRow(Array(48).fill(""));
+  wsCleared.addRow(CLEARED_CASES_HEADERS);
+  styleTemplateHeaderRow(wsCleared, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
+  orders.forEach((o, i) => wsCleared.addRow(buildClearedRow(i + 1, o, data)));
 
-  // Import Transportation-2020
+  // Import Transportation-2020 (cream header)
   const importOrders = orders.filter((o) => orderKind(o) !== "export");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([IMPORT_HEADERS, ...importOrders.map((o, i) => buildImportRow(i + 1, o, data))]), "Import Transportation-2020");
+  const wsImport = wb.addWorksheet("Import Transportation-2020");
+  wsImport.addRow(IMPORT_HEADERS);
+  styleTemplateHeaderRow(wsImport, 1, IMPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
+  importOrders.forEach((o, i) => wsImport.addRow(buildImportRow(i + 1, o, data)));
 
-  // Domestic Movement
+  // Domestic Movement (blue header, white text)
   const domOrders = orders.filter((o) => orderKind(o) === "domestic");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([DOMESTIC_HEADERS, ...domOrders.map((o, i) => buildDomesticRow(i + 1, o, data))]), "Domestic Movement");
+  const wsDom = wb.addWorksheet("Domestic Movement");
+  wsDom.addRow(DOMESTIC_HEADERS);
+  styleTemplateHeaderRow(wsDom, 1, DOMESTIC_HEADERS.length, TPL_BLUE_FILL, "FFFFFFFF", 10);
+  domOrders.forEach((o, i) => wsDom.addRow(buildDomesticRow(i + 1, o, data)));
 
-  // Export Transportation
+  // Export Transportation (cream header)
   const expOrders = orders.filter((o) => orderKind(o) === "export");
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([EXPORT_HEADERS, ...expOrders.map((o, i) => buildExportRow(i + 1, o, data))]), "Export Transportation");
+  const wsExport = wb.addWorksheet("Export Transportation");
+  wsExport.addRow(EXPORT_HEADERS);
+  styleTemplateHeaderRow(wsExport, 1, EXPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
+  expOrders.forEach((o, i) => wsExport.addRow(buildExportRow(i + 1, o, data)));
 
-  // Company-specific sheets — filter orders by matching customer name
+  // Company-specific sheets — same gray "Cleared Cases" style, filtered by customer name match
   TEMPLATE_COMPANY_SHEETS.forEach((sheetName) => {
     const key = sheetName.toLowerCase();
     const filtered = orders.filter((o) => {
       const cust = getCustomer(data, o.customerId);
       return cust && cust.name && cust.name.toLowerCase().includes(key);
     });
-    const titleRow = Array(48).fill("");
-    titleRow[3] = `${sheetName} - Detention Calculation & Payment Details`;
-    titleRow[47] = today;
-    const aoa = [Array(48).fill(""), titleRow, Array(48).fill(""), CLEARED_CASES_HEADERS, ...filtered.map((o, i) => buildClearedRow(i + 1, o, data))];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sheetName);
+    const ws = wb.addWorksheet(sheetName);
+    ws.addRow(Array(48).fill(""));
+    const tRow = Array(48).fill(""); tRow[3] = `${sheetName} - Detention Calculation & Payment Details`; tRow[47] = today;
+    ws.addRow(tRow);
+    ws.getCell(2, 4).font = { name: "Tahoma", bold: true, size: 16 };
+    ws.addRow(Array(48).fill(""));
+    ws.addRow(CLEARED_CASES_HEADERS);
+    styleTemplateHeaderRow(ws, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
+    filtered.forEach((o, i) => ws.addRow(buildClearedRow(i + 1, o, data)));
   });
 
   return wb;
@@ -1960,7 +1994,7 @@ function Sidebar({
   );
 }
 
-function TopBar({ title, onExportTemplate, onOpenMobileNav }) {
+function TopBar({ title, onExportTemplate, onOpenMobileNav, excelBusy }) {
   return (
     <div className="sticky top-0 z-10 bg-slate-950 border-b border-slate-800 px-4 sm:px-6 py-4 flex items-center justify-between gap-2">
       <div className="flex items-center gap-3 min-w-0">
@@ -1972,10 +2006,11 @@ function TopBar({ title, onExportTemplate, onOpenMobileNav }) {
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         <button
           onClick={onExportTemplate}
-          className="inline-flex items-center gap-1.5 rounded-md px-2.5 sm:px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+          disabled={excelBusy}
+          className="inline-flex items-center gap-1.5 rounded-md px-2.5 sm:px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
           title="Download all data as Excel (Transportation-2026 template)"
         >
-          <Download size={13} /> <span className="hidden sm:inline">Export Excel</span>
+          <Download size={13} /> <span className="hidden sm:inline">{excelBusy ? "Building…" : "Export Excel"}</span>
         </button>
         <span className="hidden sm:inline-flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-full px-3 py-1 text-xs text-emerald-400 font-medium">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> System Online
@@ -5982,10 +6017,23 @@ function LogistixERP() {
     XLSX.writeFile(wb, name);
   }
 
-  function handleExportTemplate() {
-    const wb = buildTemplateWorkbook(data);
-    const today = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `Transportation-${today}.xlsx`);
+  async function handleExportTemplate() {
+    setExcelBusy(true);
+    try {
+      const wb = await buildTemplateWorkbook(data);
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const today = new Date().toISOString().slice(0, 10);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `Transportation-${today}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      window.alert("Couldn't build the template export: " + err.message);
+    } finally {
+      setExcelBusy(false);
+    }
   }
 
   function handleOpenFleetLink() {
@@ -6054,7 +6102,7 @@ function LogistixERP() {
         mobileOpen={mobileNavOpen} onCloseMobileNav={() => setMobileNavOpen(false)}
       />
       <div className="flex-1 min-w-0 flex flex-col">
-        <TopBar title={isAdmin ? VIEW_TITLES[view] : "My Orders"} onExportTemplate={handleExportTemplate} onOpenMobileNav={() => setMobileNavOpen(true)} />
+        <TopBar title={isAdmin ? VIEW_TITLES[view] : "My Orders"} onExportTemplate={handleExportTemplate} onOpenMobileNav={() => setMobileNavOpen(true)} excelBusy={excelBusy} />
         <div className="p-4 sm:p-6" key={isAdmin ? view : "portal"}>
           <div className="animate-fade-in-up">
           {!isAdmin ? (
