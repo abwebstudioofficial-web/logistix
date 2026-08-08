@@ -628,10 +628,31 @@ function addDaysISO(iso, days) {
   return d.toISOString().slice(0, 10);
 }
 
+// One fixed date format everywhere on the site: DD/MM/YYYY. Previously most of the app used
+// this, but a handful of timestamp displays fell back to the browser's own locale (toLocaleDateString/
+// toLocaleString with no fixed format), which on a different browser could silently render as
+// MM/DD/YYYY instead — same date, different-looking order. fmtDate/fmtDateTime are now the only
+// two date-formatting functions used anywhere in the UI, so every page reads the same way regardless
+// of the viewer's browser settings.
 function fmtDate(iso) {
   if (!iso) return "—";
   const d = new Date(iso + "T00:00:00");
-  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  if (isNaN(d)) return "—";
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+function fmtDateTime(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (isNaN(d)) return "—";
+  const datePart = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+  const timePart = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${datePart} ${timePart}`;
+}
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function fmtMonthYear(v) {
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d)) return "—";
+  return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -3794,8 +3815,8 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         return {
           id: c.id,
           dispatchAtRaw: d.getTime(),
-          month: d.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
-          dispatchDate: d.toLocaleDateString(),
+          month: fmtMonthYear(d),
+          dispatchDate: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
           vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
           fuelAmount, freightAmount,
           net: freightAmount - (fuelAmount || 0), // net still payable to the transporter once fuel is accounted for
@@ -4060,7 +4081,7 @@ function SwapRow({ s, dateLabel, openModal, askDelete }) {
 function SwapMonthGroupRow({ entries, openModal, askDelete }) {
   const [idx, setIdx] = useState(0);
   const s = entries[idx];
-  const monthLabel = new Date(s.swapDate + "T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const monthLabel = fmtMonthYear(new Date(s.swapDate + "T00:00:00"));
   return (
     <tr className={trCls}>
       <td className={tdCls}>
@@ -4222,7 +4243,7 @@ function ActivityLogView({ data }) {
             <tbody>
               {rows.map((e, i) => (
                 <tr key={e.id || i} className={trCls}>
-                  <td className={cx(tdCls, "text-slate-400 whitespace-nowrap")}>{new Date(e.at).toLocaleString()}</td>
+                  <td className={cx(tdCls, "text-slate-400 whitespace-nowrap")}>{fmtDateTime(e.at)}</td>
                   <td className={cx(tdCls, "text-white font-medium")}>{e.by || "—"}</td>
                   <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 320 }}>{e.message}</td>
                   <td className={cx(tdCls, "font-mono text-xs")}>{e.orderNumber}</td>
@@ -5357,7 +5378,7 @@ function OrderDetail({ order, data }) {
                       <div className="text-slate-300 text-xs font-semibold mb-2 flex items-center gap-1.5"><Send size={13} className="text-blue-500" />Dispatch Details</div>
                       <div className="grid grid-cols-2 gap-y-1.5 text-sm mb-2">
                         <div className="text-slate-500 text-xs">Current Status</div><div className="text-right"><Badge text={trackingDisplayStatus(c)} className={orderStatusColor[trackingDisplayStatus(c)]} /></div>
-                        {c.dispatchAt && (<><div className="text-slate-500 text-xs">Dispatched</div><div className="text-slate-200 text-right">{new Date(c.dispatchAt).toLocaleString()}</div></>)}
+                        {c.dispatchAt && (<><div className="text-slate-500 text-xs">Dispatched</div><div className="text-slate-200 text-right">{fmtDateTime(c.dispatchAt)}</div></>)}
                         {c.dispatchedBy && (<><div className="text-slate-500 text-xs">Dispatched By</div><div className="text-slate-200 text-right">{c.dispatchedBy}</div></>)}
                       </div>
                       {c.dispatchNotes && <div className="text-slate-300 text-sm bg-slate-900/60 rounded-lg p-2 mb-2">{c.dispatchNotes}</div>}
@@ -5368,8 +5389,8 @@ function OrderDetail({ order, data }) {
                     <div className="mt-3 pt-3 border-t border-slate-800">
                       <div className="text-slate-300 text-xs font-semibold mb-2 flex items-center gap-1.5"><CheckCircle2 size={13} className="text-emerald-500" />Proof of Delivery</div>
                       <div className="grid grid-cols-2 gap-y-1.5 text-sm mb-2">
-                        {c.podArrivalAt && (<><div className="text-slate-500 text-xs">Arrived</div><div className="text-slate-200 text-right">{new Date(c.podArrivalAt).toLocaleString()}</div></>)}
-                        {c.podOffloadingAt && (<><div className="text-slate-500 text-xs">Offloading Date &amp; Time</div><div className="text-slate-200 text-right">{new Date(c.podOffloadingAt).toLocaleString()}</div></>)}
+                        {c.podArrivalAt && (<><div className="text-slate-500 text-xs">Arrived</div><div className="text-slate-200 text-right">{fmtDateTime(c.podArrivalAt)}</div></>)}
+                        {c.podOffloadingAt && (<><div className="text-slate-500 text-xs">Offloading Date &amp; Time</div><div className="text-slate-200 text-right">{fmtDateTime(c.podOffloadingAt)}</div></>)}
                         {c.podReceivedBy && (<><div className="text-slate-500 text-xs">Received By</div><div className="text-slate-200 text-right">{c.podReceivedBy}</div></>)}
                       </div>
                       {c.podNotes && <div className="text-slate-300 text-sm bg-slate-900/60 rounded-lg p-2 mb-2">{c.podNotes}</div>}
@@ -5386,7 +5407,7 @@ function OrderDetail({ order, data }) {
                               <span className="text-slate-200">{h.message}</span>
                               {h.by && <span className="text-slate-500"> — by {h.by}</span>}
                             </div>
-                            <span className="text-slate-500 whitespace-nowrap">{new Date(h.at).toLocaleString()}</span>
+                            <span className="text-slate-500 whitespace-nowrap">{fmtDateTime(h.at)}</span>
                           </div>
                         ))}
                       </div>
@@ -5889,7 +5910,7 @@ function PublicTrackingPage() {
                               </div>
                               <div className="pb-4">
                                 <div className="text-white text-sm font-medium">{h.message}</div>
-                                <div className="text-slate-500 text-xs mt-0.5">{h.location ? `${h.location} · ` : ""}{new Date(h.at).toLocaleString()}</div>
+                                <div className="text-slate-500 text-xs mt-0.5">{h.location ? `${h.location} · ` : ""}{fmtDateTime(h.at)}</div>
                               </div>
                             </div>
                           ))}
