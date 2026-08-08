@@ -1091,12 +1091,14 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <fill><patternFill patternType="solid"><fgColor rgb="FFFFC7CE"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF00B0F0"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
-<borders count="2">
+<borders count="4">
 <border><left/><right/><top/><bottom/><diagonal/></border>
-<border><left/><right/><top style="thin"><color indexed="64"/></top><bottom/><diagonal/></border>
+<border><left style="thin"><color indexed="64"/></left><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border>
+<border><left style="thin"><color indexed="64"/></left><right/><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border>
+<border><left/><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="18">
+<cellXfs count="23">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
@@ -1105,29 +1107,40 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
-<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-<xf numFmtId="0" fontId="5" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="6" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="7" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="8" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="9" fillId="7" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="10" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="7" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="6" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="7" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="8" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="9" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="10" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="7" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="3" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+
 </styleSheet>`;
 // Style IDs: 0=unused spare
 // 1=gray header wrap   2=gray header no-wrap   3=cream header wrap   4=cream header no-wrap
-// 5=blue header wrap   6=blue header no-wrap    7=title
+// 5=blue header wrap   6=blue header no-wrap    7=title (no border)
 // 8=data center no-wrap (text+numbers)          9=data center wrap
 // 10=Cargo Type green  11=Cargo Type red        12=Cargo Type plain fallback (all Calibri11, centered)
 // 13=Loading Point red 14=Loading Point green   15=Loading Point cyan   16=Loading Point blue/white
 // 17=Bilty duplicate red, centered + wrap (Bilty No. content is itself a "wrap" column)
-// 3=blue header(white)  4=title  5=text data(Tahoma10 left)  6=number data(Tahoma10 centered)
-// 7=Cargo Type green(Calibri11)  8=Cargo Type red(Calibri11)  9=Loading Point/Bilty red(Tahoma10)
-// 10=Loading Point green(Tahoma10)  11=Loading Point cyan(Tahoma10)  12=Loading Point blue/white(Tahoma10)
+// Every style above (except 0/7) now carries a thin border on all 4 sides. 18-21 are freeze-pane-boundary
+// variants used only on Import Transportation-2020's columns G(7)/H(8), dropping the border right at the split:
+// 18=cream header wrap, no-left border  (col H, "Description")
+// 19=cream header wrap, no-right border (col G, "Transporter")
+// 20=data center no-wrap, no-right border (col G content)
+// 21=data center wrap, no-left border     (col H content)
+// 22=data center no-wrap, BOLD (Tahoma10) — for charges/amount columns (Freight, LOLO/Stay/
+// Other Charges, Bill Amount Approved, Total Bill Amount, etc.)
 
 // Builds one <row> element. `values` is a plain array (1 per column). Every cell's style
 // comes from `cellStyleOverrides[col]` — the caller is expected to have already worked out
@@ -1207,8 +1220,11 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
           }
         }
         const rowXml = xlsxRowXml(rowNum, values, cellOverrides);
-        // Wrapped header text needs a taller row to actually show more than one line.
-        return isHeader ? rowXml.replace(`<row r="${rowNum}">`, `<row r="${rowNum}" ht="59.25" customHeight="1">`) : rowXml;
+        // Every row gets an explicit height + customHeight="1" — without that flag, Excel
+        // treats defaultRowHeight as a mere suggestion and auto-expands any row containing
+        // wrapped text that needs more vertical room, which is exactly what was happening.
+        const height = isHeader ? 59.25 : 30.75;
+        return rowXml.replace(`<row r="${rowNum}">`, `<row r="${rowNum}" ht="${height}" customHeight="1">`);
       })
       .join("\n");
     const lastCol = xlsxColLetter(Math.max(1, ...s.rows.map((r) => r.length)));
@@ -1216,8 +1232,8 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
     zip.file(`xl/worksheets/sheet${sheetIdx + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <dimension ref="A1:${lastCol}${lastRow}"/>
-<sheetViews><sheetView workbookViewId="0"/></sheetViews>
-<sheetFormatPr defaultRowHeight="30.75"/>
+<sheetViews>${sheetViewXml(s.freezeCols, s.freezeRows)}</sheetViews>
+<sheetFormatPr defaultRowHeight="30.75" customHeight="1"/>
 ${colsXml ? `<cols>${colsXml}</cols>` : ""}
 <sheetData>
 ${rowsXml}
@@ -1265,6 +1281,18 @@ function duplicateStyleFn(allValues, styleId) {
     const key = String(val == null ? "" : val).trim();
     return key && counts[key] > 1 ? styleId : null;
   };
+}
+
+// Builds the <sheetView> element, with a frozen pane when the sheet specifies one.
+// freezeCols = how many leftmost columns stay fixed while scrolling horizontally,
+// freezeRows = how many top rows (the header) stay fixed while scrolling vertically.
+function sheetViewXml(freezeCols, freezeRows) {
+  if (!freezeCols && !freezeRows) return '<sheetView workbookViewId="0"/>';
+  const topLeftCell = `${xlsxColLetter((freezeCols || 0) + 1)}${(freezeRows || 0) + 1}`;
+  const activePane = freezeCols && freezeRows ? "bottomRight" : freezeCols ? "topRight" : "bottomLeft";
+  const xSplitAttr = freezeCols ? ` xSplit="${freezeCols}"` : "";
+  const ySplitAttr = freezeRows ? ` ySplit="${freezeRows}"` : "";
+  return `<sheetView workbookViewId="0"><pane${xSplitAttr}${ySplitAttr} topLeftCell="${topLeftCell}" activePane="${activePane}" state="frozen"/><selection pane="${activePane}" activeCell="${topLeftCell}" sqref="${topLeftCell}"/></sheetView>`;
 }
 
 function colWidthsFor(headers) {
@@ -1318,6 +1346,9 @@ async function buildTemplateWorkbook(data) {
   const clearedContentWrap = new Set([2, 3, 6, 8, 9, 15, 17, 27, 28]);
   const clearedHeaderOverrides = buildColStyleMap(48, clearedHeaderWrap, 1, 2);
   const clearedContentDefault = buildColStyleMap(48, clearedContentWrap, 9, 8);
+  // Charges/amount columns — bold: Detention Calculated USD/PKR, Placement Charges,
+  // Damage Repair/Other Chgs, Total Amount Payable in PKR.
+  [40, 42, 43, 44, 45].forEach((col) => { clearedContentDefault[col] = 22; });
 
   const clearedRows = [Array(48).fill("")];
   const titleRow = Array(48).fill(""); titleRow[3] = "Detention Calculation & Payment Details"; titleRow[47] = today;
@@ -1341,13 +1372,22 @@ async function buildTemplateWorkbook(data) {
   // I.G.M Date, Destination, Consignee, Empty Return Location, Bilty No., Truck No.
   const importContentWrap = new Set([2, 3, 6, 8, 9, 11, 14, 15, 16, 17, 18, 19]);
   const importContentDefault = buildColStyleMap(32, importContentWrap, 9, 8);
+  // Freeze panes split right between columns G(7) and H(8) — drop the border on that exact
+  // edge so it doesn't look like a double line where the frozen pane meets the scrollable area.
+  importHeaderOverrides[7] = 19; // G header: wrap, no right border
+  importHeaderOverrides[8] = 18; // H header: wrap, no left border
+  importContentDefault[7] = 20; // G content: no-wrap, no right border
+  importContentDefault[8] = 21; // H content: wrap, no left border
+  // Charges/amount columns — bold: Freight, Freight Paid By Vide Cheque#, Bill Amount Approved,
+  // LOLO/Stay/Other Charges, Total Bill Amount.
+  [21, 22, 26, 27, 28, 29, 30].forEach((col) => { importContentDefault[col] = 22; });
 
   const importFlat = flattenContainers(orders, (o) => orderKind(o) === "import");
   const importDataRows = importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data));
   const importRows = [IMPORT_HEADERS, ...importDataRows];
   sheets.push({
     name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1,
-    colWidths: importColWidths(),
+    colWidths: importColWidths(), freezeCols: 7, freezeRows: 1,
     headerOverrides: importHeaderOverrides, contentDefaultCols: importContentDefault,
     conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 18: duplicateStyleFn(importDataRows.map((r) => r[17]), 17) },
   });
@@ -1359,13 +1399,14 @@ async function buildTemplateWorkbook(data) {
   const domHeaderOverrides = buildColStyleMap(14, domHeaderWrap, 5, 6);
   const domContentWrap = new Set([2, 3, 5, 6]); // PO/SAP No., Delivery Challan No., Movement From, Vehicle Number
   const domContentDefault = buildColStyleMap(14, domContentWrap, 9, 8);
+  domContentDefault[9] = 22; // Freight — bold
 
   const domFlat = flattenContainers(orders, (o) => orderKind(o) === "domestic");
   const domDataRows = domFlat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
   const domRows = [DOMESTIC_HEADERS, ...domDataRows];
   sheets.push({
     name: "Domestic Movement", rows: domRows, headerRowIndex: 1,
-    colWidths: colWidthsFor(DOMESTIC_HEADERS),
+    colWidths: colWidthsFor(DOMESTIC_HEADERS), freezeRows: 1,
     headerOverrides: domHeaderOverrides, contentDefaultCols: domContentDefault,
     conditionalCols: { 4: LOADING_POINT_RULE, 3: duplicateStyleFn(domDataRows.map((r) => r[2]), 17) },
   });
@@ -1376,13 +1417,14 @@ async function buildTemplateWorkbook(data) {
   const expHeaderOverrides = buildColStyleMap(19, expHeaderWrap, 3, 4);
   const expContentWrap = new Set([2, 3, 4, 7, 8, 12, 15, 18]); // Job#, Shipper(~Consignee), Empty Pickup Loc, Shipping Line, Booking No., Truck No., Bilty No., Destination
   const expContentDefault = buildColStyleMap(19, expContentWrap, 9, 8);
+  expContentDefault[16] = 22; // Freight — bold
 
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
   const expDataRows = expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data));
   const expRows = [EXPORT_HEADERS, ...expDataRows];
   sheets.push({
     name: "Export Transportation", rows: expRows, headerRowIndex: 1,
-    colWidths: colWidthsFor(EXPORT_HEADERS),
+    colWidths: colWidthsFor(EXPORT_HEADERS), freezeCols: 6, freezeRows: 1,
     headerOverrides: expHeaderOverrides, contentDefaultCols: expContentDefault,
     conditionalCols: { 17: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 15: duplicateStyleFn(expDataRows.map((r) => r[14]), 17) },
   });
