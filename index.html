@@ -482,7 +482,7 @@ function ChargesEditor({ charges, onChange }) {
 
 // Sheet schema for the Excel attach/detach/sync feature
 const SHEET_SCHEMAS = {
-  Orders: ["id","orderNumber","customerId","customerName","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderAddress","deliveryAddress","containers","history"],
+  Orders: ["id","orderNumber","customerId","customerName","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderName","senderAddress","deliveryAddress","containers","history"],
   Customers: ["id","name","shortName","email","phone","contact","location","deliveryAddresses"],
   Senders: ["id","name","email","phone","contact","addresses"],
   Transporters: ["id","name","email","phone","contact","addresses"],
@@ -499,9 +499,9 @@ const SHEET_SCHEMAS = {
 // matching coerce function by name (defined further down, but hoisted the same way
 // every other cross-referenced function in this file already is).
 const TAB_EXCEL_CONFIG = {
-  orders_domestic: { table: "orders", sheetName: "Orders", label: "Domestic Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Domestic" }, filterFn: (o) => (o.shipmentType || "Import") === "Domestic" },
-  orders_import: { table: "orders", sheetName: "Orders", label: "Import Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Import" }, filterFn: (o) => (o.shipmentType || "Import") === "Import" },
-  orders_export: { table: "orders", sheetName: "Orders", label: "Export Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Export" }, filterFn: (o) => (o.shipmentType || "Import") === "Export" },
+  orders_domestic: { table: "orders", sheetName: "Orders", label: "Domestic Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Domestic", cargoType: "Domestic" }, filterFn: (o) => (o.shipmentType || "Import") === "Domestic" },
+  orders_import: { table: "orders", sheetName: "Orders", label: "Import Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Import", cargoType: "Import" }, filterFn: (o) => (o.shipmentType || "Import") === "Import" },
+  orders_export: { table: "orders", sheetName: "Orders", label: "Export Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Export", cargoType: "Export" }, filterFn: (o) => (o.shipmentType || "Import") === "Export" },
   customers: { table: "customers", sheetName: "Customers", label: "Customers", coerceKey: "coerceCustomers" },
   senders: { table: "senders", sheetName: "Senders", label: "Senders", coerceKey: "coerceSenders" },
   transporters: { table: "transporters", sheetName: "Transporters", label: "Transporters", coerceKey: "coerceTransporters" },
@@ -525,7 +525,6 @@ const INVOICE_STATUSES = ["Draft", "Sent", "Paid", "Overdue", "Cancelled"];
 const SHIPPING_FIELDS = [
   { key: "jobNumber", label: "Job Number" },
   { key: "poNumber", label: "PO Number" },
-  { key: "cargoType", label: "Cargo Type", options: ["Import", "Export", "Domestic"], default: "Import" },
   { key: "shippingLine", label: "Shipping Line" },
   { key: "blNumber", label: "B/L Number" },
   { key: "igmDate", label: "IGM Date", type: "date" },
@@ -953,10 +952,11 @@ const NUMERIC_SCHEMA_FIELDS = {
 };
 function buildSheet(rows, schema, displayHeaders, sheetName) {
   const headers = displayHeaders || schema.map(humanizeFieldName);
-  // "containers"/"history" hold raw JSON (including base64-encoded photos) — needed for
-  // round-trip Attach/Revert, but far too large and technical to show. Hiding rather than
-  // stripping them avoids any risk of silently deleting a dispatch/POD photo on re-import.
-  const hideKeys = new Set(["id", "customerid", "containers", "history"]);
+  // Hidden rather than deleted: id/customerId/senderId are needed for Attach/Revert to match
+  // existing records; containers/history hold raw JSON (including base64 photos); stageIndex/
+  // cancelled are internal status bookkeeping. None of these are useful for a human reading
+  // the sheet, but the data staying present (just not shown) keeps re-import correct.
+  const hideKeys = new Set(["id", "customerid", "containers", "history", "stageindex", "cancelled", "senderid"]);
   const hiddenColIdxs = schema.map((k, i) => (hideKeys.has(String(k).toLowerCase()) ? i : -1)).filter((i) => i >= 0);
   const numericFields = NUMERIC_SCHEMA_FIELDS[sheetName] || new Set();
   if (!rows || rows.length === 0) {
@@ -991,7 +991,11 @@ function buildSheet(rows, schema, displayHeaders, sheetName) {
 }
 function buildWorkbook(data) {
   const wb = XLSX.utils.book_new();
-  const ordersWithNames = (data.orders || []).map((o) => ({ ...o, customerName: (getCustomer(data, o.customerId) || {}).name || "" }));
+  const ordersWithNames = (data.orders || []).map((o) => ({
+    ...o,
+    customerName: (getCustomer(data, o.customerId) || {}).name || "",
+    senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
+  }));
   const map = { Orders: ordersWithNames, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
   const displayHeadersBySheet = { FuelPrices: ["Effective Date", "Price per Liter (PKR)", "ID"] };
   Object.entries(SHEET_SCHEMAS).forEach(([sheetName, schema]) => {
@@ -1523,6 +1527,17 @@ function resolveCustomerId(r, data) {
   }
   return idVal;
 }
+// Same pattern as resolveCustomerId, for Sender.
+function resolveSenderId(r, data) {
+  const idVal = xstr(readField(r, "senderId"));
+  if (idVal && data && data.senders && data.senders.some((s) => s.id === idVal)) return idVal;
+  const nameVal = xstr(readField(r, "senderName")) || xstr(readField(r, "Sender"));
+  if (nameVal && data && data.senders) {
+    const match = data.senders.find((s) => s.name && s.name.toLowerCase().trim() === nameVal.toLowerCase().trim());
+    if (match) return match.id;
+  }
+  return idVal;
+}
 function coerceOrders(rows, data) {
   return rows.map((r) => {
     let containers = [];
@@ -1535,6 +1550,10 @@ function coerceOrders(rows, data) {
       const parsedH = JSON.parse(readField(r, "history") || "[]");
       if (Array.isArray(parsedH)) history = parsedH;
     } catch (e) { history = []; }
+    // Cargo Type always mirrors Shipment Type on the site itself (it's not an independently
+    // editable field there anymore) — import does the same, ignoring whatever raw "Cargo
+    // Type" text might be in the file, rather than risking a mismatched value like "Bonded".
+    const shipmentTypeNorm = normalizeShipmentType(readField(r, "shipmentType"));
     return {
       id: xstr(readField(r, "id")) || uid("ord"), orderNumber: xstr(readField(r, "orderNumber")) || genOrderNumber(),
       customerId: resolveCustomerId(r, data), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")),
@@ -1542,12 +1561,12 @@ function coerceOrders(rows, data) {
       amount: xnum(readField(r, "amount")), weight: xnum(readField(r, "weight")), description: xstr(readField(r, "description")), createdDate: xstr(readField(r, "createdDate")) || todayISO(),
       eta: xstr(readField(r, "eta")), stageIndex: xnum(readField(r, "stageIndex"), 0), cancelled: xbool(readField(r, "cancelled")),
       deliveredDate: xstr(readField(r, "deliveredDate")) || null,
-      jobNumber: xstr(readField(r, "jobNumber")), poNumber: xstr(readField(r, "poNumber")), cargoType: xstr(readField(r, "cargoType")),
+      jobNumber: xstr(readField(r, "jobNumber")), poNumber: xstr(readField(r, "poNumber")), cargoType: shipmentTypeNorm,
       shippingLine: xstr(readField(r, "shippingLine")), nominatedTransporter: xstr(readField(r, "nominatedTransporter")),
       blNumber: xstr(readField(r, "blNumber")),
       igmDate: xstr(readField(r, "igmDate")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
-      bondedStatus: normalizeBondedStatus(readField(r, "bondedStatus")), shipmentType: normalizeShipmentType(readField(r, "shipmentType")),
-      senderId: xstr(readField(r, "senderId")), senderAddress: xstr(readField(r, "senderAddress")), deliveryAddress: xstr(readField(r, "deliveryAddress")),
+      bondedStatus: normalizeBondedStatus(readField(r, "bondedStatus")), shipmentType: shipmentTypeNorm,
+      senderId: resolveSenderId(r, data), senderAddress: xstr(readField(r, "senderAddress")), deliveryAddress: xstr(readField(r, "deliveryAddress")),
       containers, history,
     };
   });
@@ -1806,7 +1825,7 @@ function downloadBiltyReceipt(order, data) {
       txt(value || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
       py += 22;
     }
-    pRow("Item Description:", order.description || order.cargoType);
+    pRow("Item Description:", order.description);
     pRow("DN / LC / SAP No.:", order.poNumber);
     pRow("Job No.:", order.jobNumber);
     pRow("B/L No.:", order.blNumber);
@@ -1997,7 +2016,7 @@ function makeSeed() {
         driverId, vehicleId, priority: "Urgent", amount: 120400000, createdDate: today, eta: addDaysISO(today, 2),
         stageIndex: 2, cancelled: false, deliveredDate: null,
         description: "Bulk tobacco leaf shipment for regional distribution.",
-        jobNumber: "JOB-2026-0143", poNumber: "PO-88231", cargoType: "Tobacco Leaf (Packaged)",
+        jobNumber: "JOB-2026-0143", poNumber: "PO-88231", cargoType: "Import",
         shippingLine: "Maersk", nominatedTransporter: "Logistix Transport ERP", blNumber: "MAEU123456789",
         igmDate: addDaysISO(today, -6),
         emptyReturnLocation: "Karachi Port Trust Yard", biltyNumber: "BLT-55210",
@@ -5020,6 +5039,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
       createdDate: o.createdDate || todayISO(),
       eta,
       ...shipping,
+      cargoType: resolvedShipmentType, // Cargo Type always mirrors Shipment Type - not independently editable
       shipmentType: resolvedShipmentType,
       senderId,
       senderAddress,
@@ -6743,7 +6763,11 @@ function LogistixERP() {
     const allRows = data[cfg.table] || [];
     let rows = cfg.filterFn ? allRows.filter(cfg.filterFn) : allRows;
     if (cfg.sheetName === "Orders") {
-      rows = rows.map((o) => ({ ...o, customerName: (getCustomer(data, o.customerId) || {}).name || "" }));
+      rows = rows.map((o) => ({
+        ...o,
+        customerName: (getCustomer(data, o.customerId) || {}).name || "",
+        senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
+      }));
     }
     const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
     const wb = XLSX.utils.book_new();
