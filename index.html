@@ -1208,7 +1208,7 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
         }
         const rowXml = xlsxRowXml(rowNum, values, cellOverrides);
         // Wrapped header text needs a taller row to actually show more than one line.
-        return isHeader ? rowXml.replace(`<row r="${rowNum}">`, `<row r="${rowNum}" ht="30" customHeight="1">`) : rowXml;
+        return isHeader ? rowXml.replace(`<row r="${rowNum}">`, `<row r="${rowNum}" ht="59.25" customHeight="1">`) : rowXml;
       })
       .join("\n");
     const lastCol = xlsxColLetter(Math.max(1, ...s.rows.map((r) => r.length)));
@@ -1217,7 +1217,7 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <dimension ref="A1:${lastCol}${lastRow}"/>
 <sheetViews><sheetView workbookViewId="0"/></sheetViews>
-<sheetFormatPr defaultRowHeight="15"/>
+<sheetFormatPr defaultRowHeight="30.75"/>
 ${colsXml ? `<cols>${colsXml}</cols>` : ""}
 <sheetData>
 ${rowsXml}
@@ -1269,6 +1269,15 @@ function duplicateStyleFn(allValues, styleId) {
 
 function colWidthsFor(headers) {
   return headers.map((h) => Math.min(Math.max(String(h || "").length + 6, 14), 50));
+}
+
+// Exact widths given for the Import Transportation-2020 sheet's first 30 columns.
+// "Remarks" and "YEAR" (columns 31-32) weren't included in that list, so those two still
+// fall back to the auto-computed width.
+const IMPORT_EXACT_WIDTHS = [6.29, 12.29, 20.14, 15.57, 20.57, 22.71, 24.14, 24.14, 21.14, 17.14, 17.14, 7.86, 9.86, 14.43, 20.71, 18.86, 18.86, 15.14, 11.43, 17, 26.71, 20.71, 20.71, 20.71, 20.71, 26.57, 19.86, 19.86, 19.86, 23.86];
+function importColWidths() {
+  const auto = colWidthsFor(IMPORT_HEADERS);
+  return IMPORT_HEADERS.map((h, i) => (i < IMPORT_EXACT_WIDTHS.length ? IMPORT_EXACT_WIDTHS[i] : auto[i]));
 }
 
 // Builds a {col: styleId} map for every column 1..colCount — wrapCols get wrapStyle,
@@ -1338,7 +1347,7 @@ async function buildTemplateWorkbook(data) {
   const importRows = [IMPORT_HEADERS, ...importDataRows];
   sheets.push({
     name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1,
-    colWidths: colWidthsFor(IMPORT_HEADERS),
+    colWidths: importColWidths(),
     headerOverrides: importHeaderOverrides, contentDefaultCols: importContentDefault,
     conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 18: duplicateStyleFn(importDataRows.map((r) => r[17]), 17) },
   });
