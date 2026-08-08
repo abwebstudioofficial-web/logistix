@@ -9,7 +9,7 @@
 <script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://unpkg.com/exceljs@4.3.0/dist/exceljs.min.js"></script>
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
@@ -1043,13 +1043,14 @@ function styleTemplateHeaderRow(ws, rowNum, colCount, fill, fontColorArgb, fontS
   const row = ws.getRow(rowNum);
   for (let c = 1; c <= colCount; c++) {
     const cell = row.getCell(c);
-    // Fresh objects per cell, not a shared reference — ExcelJS's browser bundle has been
-    // known to silently drop styling when the exact same style object is reused across
-    // many cells instead of each cell getting its own.
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill.fgColor.argb } };
-    cell.font = { name: "Tahoma", bold: true, size: fontSize, color: fontColorArgb ? { argb: fontColorArgb } : undefined };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
-    cell.border = { top: { style: "thin" } };
+    // One combined style assignment per cell (fill+font+alignment+border together) rather
+    // than four separate property setters — more consistent across ExcelJS builds.
+    cell.style = {
+      fill: { type: "pattern", pattern: "solid", fgColor: { argb: String(fill.fgColor.argb) } },
+      font: { name: "Tahoma", bold: true, size: fontSize, color: fontColorArgb ? { argb: String(fontColorArgb) } : { argb: "FF000000" } },
+      alignment: { horizontal: "center", vertical: "middle" },
+      border: { top: { style: "thin" } },
+    };
   }
   row.height = 20;
 }
@@ -6504,4 +6505,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
-
