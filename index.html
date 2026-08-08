@@ -1087,7 +1087,7 @@ async function buildTemplateWorkbook(data) {
   wsCleared.addRow(Array(48).fill(""));
   const titleRow = Array(48).fill(""); titleRow[3] = "Detention Calculation & Payment Details"; titleRow[47] = today;
   wsCleared.addRow(titleRow);
-  wsCleared.getCell(2, 4).font = { name: "Tahoma", bold: true, size: 16 };
+  wsCleared.getRow(2).getCell(4).font = { name: "Tahoma", bold: true, size: 16 };
   wsCleared.addRow(Array(48).fill(""));
   wsCleared.addRow(CLEARED_CASES_HEADERS);
   styleTemplateHeaderRow(wsCleared, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
@@ -1131,7 +1131,7 @@ async function buildTemplateWorkbook(data) {
     ws.addRow(Array(48).fill(""));
     const tRow = Array(48).fill(""); tRow[3] = `${sheetName} - Detention Calculation & Payment Details`; tRow[47] = today;
     ws.addRow(tRow);
-    ws.getCell(2, 4).font = { name: "Tahoma", bold: true, size: 16 };
+    ws.getRow(2).getCell(4).font = { name: "Tahoma", bold: true, size: 16 };
     ws.addRow(Array(48).fill(""));
     ws.addRow(CLEARED_CASES_HEADERS);
     styleTemplateHeaderRow(ws, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
