@@ -275,7 +275,8 @@ function createLiteClient(url, anonKey) {
       .catch(() => {});
   })();
 
-  function headersFor(extra) {
+  async function headersFor(extra) {
+    await refreshIfNeeded(); // keeps the access token from silently going stale mid-session
     const h = { apikey: anonKey, "Content-Type": "application/json", Authorization: "Bearer " + (session && session.access_token ? session.access_token : anonKey), ...(extra || {}) };
     return h;
   }
@@ -288,13 +289,14 @@ function createLiteClient(url, anonKey) {
           eq(col, val) { query += `&${col}=eq.${encodeURIComponent(val)}`; return builder; },
           order(col, opts) { query += `&order=${col}.${opts && opts.ascending === false ? "desc" : "asc"}`; return builder; },
           async maybeSingle() {
-            const res = await fetch(query, { headers: headersFor() });
+            const res = await fetch(query, { headers: await headersFor() });
             const json = await res.json().catch(() => []);
             if (!res.ok) return { data: null, error: { message: (json && json.message) || res.statusText } };
             return { data: Array.isArray(json) ? (json[0] || null) : json, error: null };
           },
           then(resolve, reject) {
-            return fetch(query, { headers: headersFor() })
+            return headersFor()
+              .then((headers) => fetch(query, { headers }))
               .then(async (res) => {
                 const json = await res.json().catch(() => []);
                 if (!res.ok) return resolve({ data: null, error: { message: (json && json.message) || res.statusText } });
@@ -307,14 +309,14 @@ function createLiteClient(url, anonKey) {
       },
       async upsert(rows) {
         const body = Array.isArray(rows) ? rows : [rows];
-        const res = await fetch(`${REST}/${table}`, { method: "POST", headers: headersFor({ Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify(body) });
+        const res = await fetch(`${REST}/${table}`, { method: "POST", headers: await headersFor({ Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify(body) });
         if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
         return { error: null };
       },
       update(fields) {
         return {
           async eq(col, val) {
-            const res = await fetch(`${REST}/${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH", headers: headersFor({ Prefer: "return=minimal" }), body: JSON.stringify(fields) });
+            const res = await fetch(`${REST}/${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH", headers: await headersFor({ Prefer: "return=minimal" }), body: JSON.stringify(fields) });
             if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
             return { error: null };
           },
@@ -323,7 +325,7 @@ function createLiteClient(url, anonKey) {
       delete() {
         return {
           async eq(col, val) {
-            const res = await fetch(`${REST}/${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", headers: headersFor({ Prefer: "return=minimal" }) });
+            const res = await fetch(`${REST}/${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", headers: await headersFor({ Prefer: "return=minimal" }) });
             if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
             return { error: null };
           },
@@ -488,6 +490,24 @@ const SHEET_SCHEMAS = {
   Vehicles: ["id","plate","type","make","model","year","capacityKg","mileageKm","lastService","driverId","status"],
   Invoices: ["id","invoiceNumber","orderId","containerId","customerId","issued","due","total","status"],
   Routes: ["id","name","origin","destination","driverId","vehicleId","orderId","status"],
+  FuelPrices: ["id","pricePerLiter","effectiveDate"],
+};
+
+// Maps a nav view to the single table it should attach/export against, scoped to just
+// that tab's data — e.g. attaching a file on the Import Orders tab only ever touches
+// Import orders, never Domestic/Export or any other table. `coerceKey` looks up the
+// matching coerce function by name (defined further down, but hoisted the same way
+// every other cross-referenced function in this file already is).
+const TAB_EXCEL_CONFIG = {
+  orders_domestic: { table: "orders", sheetName: "Orders", label: "Domestic Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Domestic" }, filterFn: (o) => (o.shipmentType || "Import") === "Domestic" },
+  orders_import: { table: "orders", sheetName: "Orders", label: "Import Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Import" }, filterFn: (o) => (o.shipmentType || "Import") === "Import" },
+  orders_export: { table: "orders", sheetName: "Orders", label: "Export Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Export" }, filterFn: (o) => (o.shipmentType || "Import") === "Export" },
+  customers: { table: "customers", sheetName: "Customers", label: "Customers", coerceKey: "coerceCustomers" },
+  senders: { table: "senders", sheetName: "Senders", label: "Senders", coerceKey: "coerceSenders" },
+  transporters: { table: "transporters", sheetName: "Transporters", label: "Transporters", coerceKey: "coerceTransporters" },
+  invoices: { table: "invoices", sheetName: "Invoices", label: "Invoices", coerceKey: "coerceInvoices" },
+  // Not tied to a nav view — rendered inside the Fuel Price sub-tab instead (see CustomerFuelDetail).
+  fuel_prices: { table: "fuel_prices", sheetName: "FuelPrices", label: "Fuel Prices", coerceKey: "coerceFuelPrices" },
 };
 
 const STAGES = ["Confirmed", "Picked Up", "In Transit", "Delivered"];
@@ -869,8 +889,25 @@ const xnum = (v, fb = 0) => { const n = Number(v); return Number.isFinite(n) ? n
 const xstr = (v, fb = "") => (v === null || v === undefined || v === "" ? fb : String(v));
 const xbool = (v) => v === true || v === "true" || v === 1 || v === "1" || v === "TRUE";
 
+// Sizes each column to comfortably fit its header and content — previously no width was
+// set at all, so every column fell back to Excel's cramped ~8-character default regardless
+// of what was actually in it.
+function computeColWidths(schema, cleanedRows) {
+  return schema.map((key) => {
+    let maxLen = String(key).length;
+    (cleanedRows || []).slice(0, 300).forEach((r) => {
+      const v = r[key];
+      if (v !== null && v !== undefined && v !== "") maxLen = Math.max(maxLen, String(v).length);
+    });
+    return { wch: Math.min(Math.max(maxLen + 6, 14), 60) }; // generous padding, floor of 14, capped at 60 so one huge cell can't blow out the sheet
+  });
+}
 function buildSheet(rows, schema) {
-  if (!rows || rows.length === 0) return XLSX.utils.aoa_to_sheet([schema]);
+  if (!rows || rows.length === 0) {
+    const ws = XLSX.utils.aoa_to_sheet([schema]);
+    ws["!cols"] = schema.map((key) => ({ wch: Math.max(String(key).length + 6, 14) }));
+    return ws;
+  }
   const cleaned = rows.map((r) => {
     const out = {};
     schema.forEach((k) => {
@@ -879,11 +916,13 @@ function buildSheet(rows, schema) {
     });
     return out;
   });
-  return XLSX.utils.json_to_sheet(cleaned, { header: schema });
+  const ws = XLSX.utils.json_to_sheet(cleaned, { header: schema });
+  ws["!cols"] = computeColWidths(schema, cleaned);
+  return ws;
 }
 function buildWorkbook(data) {
   const wb = XLSX.utils.book_new();
-  const map = { Orders: data.orders, Customers: data.customers, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes };
+  const map = { Orders: data.orders, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
   Object.entries(SHEET_SCHEMAS).forEach(([sheetName, schema]) => {
     XLSX.utils.book_append_sheet(wb, buildSheet(map[sheetName] || [], schema), sheetName);
   });
@@ -934,6 +973,14 @@ const TPL_CREAM_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF
 const TPL_BLUE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F81BD" } };
 const TPL_THIN_TOP_BORDER = { top: { style: "thin" } };
 
+// Same fix as buildSheet's computeColWidths, for the ExcelJS-built template sheets —
+// otherwise ExcelJS's own narrow default leaves every column just as cramped.
+function setTemplateColWidths(ws, headers) {
+  headers.forEach((h, i) => {
+    ws.getColumn(i + 1).width = Math.min(Math.max(String(h || "").length + 6, 14), 50);
+  });
+}
+
 function styleTemplateHeaderRow(ws, rowNum, colCount, fill, fontColorArgb, fontSize) {
   const row = ws.getRow(rowNum);
   for (let c = 1; c <= colCount; c++) {
@@ -961,6 +1008,7 @@ async function buildTemplateWorkbook(data) {
   wsCleared.addRow(CLEARED_CASES_HEADERS);
   styleTemplateHeaderRow(wsCleared, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
   orders.forEach((o, i) => wsCleared.addRow(buildClearedRow(i + 1, o, data)));
+  setTemplateColWidths(wsCleared, CLEARED_CASES_HEADERS);
 
   // Import Transportation-2020 (cream header)
   const importOrders = orders.filter((o) => orderKind(o) !== "export");
@@ -968,6 +1016,7 @@ async function buildTemplateWorkbook(data) {
   wsImport.addRow(IMPORT_HEADERS);
   styleTemplateHeaderRow(wsImport, 1, IMPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
   importOrders.forEach((o, i) => wsImport.addRow(buildImportRow(i + 1, o, data)));
+  setTemplateColWidths(wsImport, IMPORT_HEADERS);
 
   // Domestic Movement (blue header, white text)
   const domOrders = orders.filter((o) => orderKind(o) === "domestic");
@@ -975,6 +1024,7 @@ async function buildTemplateWorkbook(data) {
   wsDom.addRow(DOMESTIC_HEADERS);
   styleTemplateHeaderRow(wsDom, 1, DOMESTIC_HEADERS.length, TPL_BLUE_FILL, "FFFFFFFF", 10);
   domOrders.forEach((o, i) => wsDom.addRow(buildDomesticRow(i + 1, o, data)));
+  setTemplateColWidths(wsDom, DOMESTIC_HEADERS);
 
   // Export Transportation (cream header)
   const expOrders = orders.filter((o) => orderKind(o) === "export");
@@ -982,6 +1032,7 @@ async function buildTemplateWorkbook(data) {
   wsExport.addRow(EXPORT_HEADERS);
   styleTemplateHeaderRow(wsExport, 1, EXPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
   expOrders.forEach((o, i) => wsExport.addRow(buildExportRow(i + 1, o, data)));
+  setTemplateColWidths(wsExport, EXPORT_HEADERS);
 
   // Company-specific sheets — same gray "Cleared Cases" style, filtered by customer name match
   TEMPLATE_COMPANY_SHEETS.forEach((sheetName) => {
@@ -999,6 +1050,7 @@ async function buildTemplateWorkbook(data) {
     ws.addRow(CLEARED_CASES_HEADERS);
     styleTemplateHeaderRow(ws, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
     filtered.forEach((o, i) => ws.addRow(buildClearedRow(i + 1, o, data)));
+    setTemplateColWidths(ws, CLEARED_CASES_HEADERS);
   });
 
   return wb;
@@ -1078,6 +1130,10 @@ function coerceInvoices(rows) {
 function coerceRoutes(rows) {
   return rows.map((r) => ({ id: xstr(r.id) || uid("rte"), name: xstr(r.name), origin: xstr(r.origin), destination: xstr(r.destination), driverId: xstr(r.driverId), vehicleId: xstr(r.vehicleId), orderId: xstr(r.orderId), status: xstr(r.status, "planned") }));
 }
+function coerceFuelPrices(rows) {
+  return rows.map((r) => ({ id: xstr(r.id) || genUUID(), pricePerLiter: xnum(r.pricePerLiter), effectiveDate: xstr(r.effectiveDate) }));
+}
+const COERCE_FUNCTIONS = { coerceOrders, coerceCustomers, coerceSenders, coerceTransporters, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices };
 
 /* ---- Bilty receipt generator (downloads a PDF, styled like a real bilty form) ---- */
 
@@ -1533,6 +1589,57 @@ function DropdownWithCustom({ value, onChange, options, selectPlaceholder, custo
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
       <option value="__custom__">+ Custom...</option>
     </select>
+  );
+}
+
+// Per-tab Excel attach/export/revert bar — one small toolbar reused across every
+// importable tab (Orders x3, Customers, Senders, Transporters, Invoices). Attaching only
+// ever touches this tab's own table (and for Orders, only its own shipment type); Export
+// downloads just this tab's current data; Revert undoes exactly what that attach changed.
+function TabExcelBar({ label, meta, onAttachFile, onExport, onRevert }) {
+  const fileInputRef = useRef(null);
+  const m = meta || {};
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <input
+        ref={fileInputRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files && e.target.files[0];
+          if (f) onAttachFile(f);
+          e.target.value = "";
+        }}
+      />
+      {m.attached && (
+        <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 bg-slate-900 border border-slate-800 rounded-md px-2 py-1.5">
+          <FileSpreadsheet size={12} className="shrink-0" /> {m.filename}
+        </span>
+      )}
+      <button
+        disabled={m.busy}
+        onClick={() => fileInputRef.current && fileInputRef.current.click()}
+        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
+      >
+        <Upload size={12} /> {m.busy && !m.attached ? "Loading…" : m.attached ? "Attach another file" : `Attach file to ${label}`}
+      </button>
+      <button
+        disabled={m.busy}
+        onClick={onExport}
+        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
+      >
+        <Download size={12} /> Export {label}
+      </button>
+      {m.attached && (
+        <button
+          disabled={m.busy}
+          title="Undo this import — restores this tab's data to how it was before this file was attached"
+          onClick={onRevert}
+          className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-400 hover:bg-slate-800 transition-colors disabled:opacity-50"
+        >
+          {m.busy ? "Reverting…" : "Revert"}
+        </button>
+      )}
+      {m.message && <span className={cx("text-xs", m.message.ok ? "text-emerald-400" : "text-red-400")}>{m.message.text}</span>}
+    </div>
   );
 }
 
@@ -3533,13 +3640,20 @@ function groupFuelByVehicle(containers, fuelPrices) {
   return Array.from(map.values()).sort((a, b) => b.fuelTotal - a.fuelTotal || b.trips - a.trips);
 }
 
-function FuelManagementView({ data, openModal, askDelete }) {
+function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
   if (selectedCustomerId) {
     const cust = data.customers.find((c) => c.id === selectedCustomerId);
-    if (cust) return <CustomerFuelDetail customer={cust} data={data} openModal={openModal} askDelete={askDelete} onBack={() => setSelectedCustomerId(null)} />;
+    if (cust) {
+      return (
+        <CustomerFuelDetail
+          customer={cust} data={data} openModal={openModal} askDelete={askDelete} onBack={() => setSelectedCustomerId(null)}
+          fuelPriceExcel={fuelPriceExcel} onFuelPriceAttach={onFuelPriceAttach} onFuelPriceExport={onFuelPriceExport} onFuelPriceRevert={onFuelPriceRevert}
+        />
+      );
+    }
   }
 
   const rows = data.customers.filter((c) => `${c.name} ${c.shortName || ""}`.toLowerCase().includes(q.toLowerCase()));
@@ -3578,7 +3692,7 @@ function FuelManagementView({ data, openModal, askDelete }) {
   );
 }
 
-function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
+function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const allContainers = useMemo(() => customerOrderContainers(data, customer.id), [data.orders, customer.id]);
   const tabContainers = useMemo(
@@ -3696,6 +3810,13 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack }) {
       ) : tab === "fuel_price" ? (
         <div className="space-y-4">
           <p className="text-slate-500 text-xs">Fuel price is company-wide — set here, it applies when calculating Fuel Amount for every customer's shipments, not just {customer.name}.</p>
+          <TabExcelBar
+            label="Fuel Prices"
+            meta={fuelPriceExcel}
+            onAttachFile={onFuelPriceAttach}
+            onExport={onFuelPriceExport}
+            onRevert={onFuelPriceRevert}
+          />
           <div className="flex items-center justify-end">
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_price", mode: "add", item: null })}>
               <Plus size={16} /> Add Fuel Price
@@ -5721,6 +5842,7 @@ function LogistixERP() {
   const [excelMeta, setExcelMeta] = useState({ attached: false, filename: null, snapshot: null });
   const [importMsg, setImportMsg] = useState(null);
   const [excelBusy, setExcelBusy] = useState(false);
+  const [tabExcel, setTabExcel] = useState({}); // { [viewKey]: { attached, filename, snapshot, busy, message } }
   const [fleetUrl, setFleetUrl] = useState(null);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("logistix-theme") || "dark"; } catch (e) { return "dark"; }
@@ -5786,13 +5908,20 @@ function LogistixERP() {
 
   async function refreshData() {
     const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
-    const next = {};
-    DATA_TABLES.forEach((t, i) => {
-      const { data: rows, error } = results[i];
-      if (error) console.error(`Failed loading ${t}:`, error.message);
-      next[t] = (rows || []).map(fromDbRow);
+    setDataState((prev) => {
+      const next = { ...prev };
+      DATA_TABLES.forEach((t, i) => {
+        const { data: rows, error } = results[i];
+        if (error) {
+          // Never let a failed background fetch wipe out data that's already on screen —
+          // keep whatever was there before and just skip updating this one table.
+          console.error(`Failed refreshing ${t}:`, error.message);
+          return;
+        }
+        next[t] = (rows || []).map(fromDbRow);
+      });
+      return next;
     });
-    setDataState(next);
   }
 
   async function loadProfileAndData() {
@@ -5913,11 +6042,12 @@ function LogistixERP() {
         // always restores all the way back to the true pre-import state, even across
         // multiple files attached one after another without detaching in between.
         const snapshot = { ...(excelMeta.snapshot || {}) };
+        const SHEET_TABLE_NAME = { Orders: "orders", Customers: "customers", Senders: "senders", Transporters: "transporters", Drivers: "drivers", Vehicles: "vehicles", Invoices: "invoices", Routes: "routes", FuelPrices: "fuel_prices" };
         Object.keys(SHEET_SCHEMAS).forEach((sheetName) => {
           const ws = wb.Sheets[sheetName];
           if (!ws) return;
           const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
-          const table = sheetName.toLowerCase();
+          const table = SHEET_TABLE_NAME[sheetName] || sheetName.toLowerCase();
           found.push(sheetName);
           let coerced;
           if (sheetName === "Orders") coerced = coerceOrders(rows);
@@ -5928,6 +6058,7 @@ function LogistixERP() {
           if (sheetName === "Vehicles") coerced = coerceVehicles(rows);
           if (sheetName === "Invoices") coerced = coerceInvoices(rows);
           if (sheetName === "Routes") coerced = coerceRoutes(rows);
+          if (sheetName === "FuelPrices") coerced = coerceFuelPrices(rows);
           if (!coerced) return;
 
           const existingList = data[table] || [];
@@ -6009,6 +6140,104 @@ function LogistixERP() {
       setExcelMeta({ attached: false, filename: null, snapshot: null });
       setExcelBusy(false);
     }
+  }
+
+  function handleTabAttachFile(viewKey, file) {
+    const cfg = TAB_EXCEL_CONFIG[viewKey];
+    if (!cfg || !file) return;
+    setTabExcel((prev) => ({ ...prev, [viewKey]: { ...(prev[viewKey] || {}), busy: true, message: null } }));
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const arr = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(arr, { type: "array" });
+        // Prefer a sheet named to match (e.g. "Orders"); otherwise just use whatever's first —
+        // a single-table tab attach doesn't need to follow the multi-sheet naming convention.
+        const wsName = wb.Sheets[cfg.sheetName] ? cfg.sheetName : wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        if (!ws) throw new Error("That file doesn't have a readable sheet.");
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+        const coerceFn = COERCE_FUNCTIONS[cfg.coerceKey];
+        let coerced = coerceFn(rows);
+        if (cfg.forceFields) coerced = coerced.map((r) => ({ ...r, ...cfg.forceFields }));
+
+        const existingList = data[cfg.table] || [];
+        const existingById = new Map(existingList.map((r) => [r.id, r]));
+        const priorMeta = tabExcel[viewKey] || {};
+        const priorEntries = priorMeta.snapshot || [];
+        const alreadyTracked = new Set(priorEntries.map((en) => en.id));
+        const tableSnapshot = [...priorEntries];
+        const mergedList = [...existingList];
+        let updatedCount = 0, addedCount = 0;
+
+        coerced.forEach((row) => {
+          const prev = existingById.get(row.id) || null;
+          if (prev) updatedCount++; else addedCount++;
+          if (!alreadyTracked.has(row.id)) tableSnapshot.push({ id: row.id, prev });
+          const idx = mergedList.findIndex((r) => r.id === row.id);
+          if (idx >= 0) mergedList[idx] = row; else mergedList.push(row);
+        });
+
+        const { error } = coerced.length ? await supabaseClient.from(cfg.table).upsert(coerced.map(toDbRow)) : { error: null };
+        setDataState((prevData) => ({ ...prevData, [cfg.table]: mergedList }));
+        setTabExcel((prev) => ({
+          ...prev,
+          [viewKey]: {
+            attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
+            message: error
+              ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
+              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.` },
+          },
+        }));
+      } catch (err) {
+        setTabExcel((prev) => ({
+          ...prev,
+          [viewKey]: { ...(prev[viewKey] || {}), busy: false, message: { ok: false, text: "Couldn't read that file — make sure it's a valid .xlsx workbook." } },
+        }));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function handleTabRevert(viewKey) {
+    const cfg = TAB_EXCEL_CONFIG[viewKey];
+    const meta = tabExcel[viewKey];
+    if (!cfg || !meta || !meta.snapshot) {
+      setTabExcel((prev) => ({ ...prev, [viewKey]: { attached: false, filename: null, snapshot: null } }));
+      return;
+    }
+    setTabExcel((prev) => ({ ...prev, [viewKey]: { ...meta, busy: true } }));
+    try {
+      const list = [...(data[cfg.table] || [])];
+      const writes = [];
+      const deletes = [];
+      meta.snapshot.forEach(({ id, prev }) => {
+        const idx = list.findIndex((r) => r.id === id);
+        if (prev) {
+          if (idx >= 0) list[idx] = prev; else list.push(prev);
+          writes.push(supabaseClient.from(cfg.table).upsert(toDbRow(prev)));
+        } else {
+          if (idx >= 0) list.splice(idx, 1);
+          deletes.push(supabaseClient.from(cfg.table).delete().eq("id", id));
+        }
+      });
+      await Promise.all([...writes, ...deletes]);
+      setDataState((prevData) => ({ ...prevData, [cfg.table]: list }));
+      setTabExcel((prev) => ({ ...prev, [viewKey]: { attached: false, filename: null, snapshot: null, message: { ok: true, text: "Reverted — back to how this tab was before that file was attached." } } }));
+    } catch (err) {
+      setTabExcel((prev) => ({ ...prev, [viewKey]: { ...meta, busy: false, message: { ok: false, text: "Couldn't fully revert: " + err.message } } }));
+    }
+  }
+
+  function handleTabExport(viewKey) {
+    const cfg = TAB_EXCEL_CONFIG[viewKey];
+    if (!cfg) return;
+    const allRows = data[cfg.table] || [];
+    const rows = cfg.filterFn ? allRows.filter(cfg.filterFn) : allRows;
+    const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema), cfg.sheetName);
+    XLSX.writeFile(wb, `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
   function handleDownloadExcel() {
@@ -6109,6 +6338,17 @@ function LogistixERP() {
             <CustomerPortal data={data} customerId={viewSession.customerId} />
           ) : (
             <>
+              {TAB_EXCEL_CONFIG[view] && (
+                <div className="mb-4">
+                  <TabExcelBar
+                    label={TAB_EXCEL_CONFIG[view].label}
+                    meta={tabExcel[view]}
+                    onAttachFile={(file) => handleTabAttachFile(view, file)}
+                    onExport={() => handleTabExport(view)}
+                    onRevert={() => handleTabRevert(view)}
+                  />
+                </div>
+              )}
               {view === "dashboard" && <Dashboard data={data} />}
               {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} />}
               {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} />}
@@ -6116,7 +6356,15 @@ function LogistixERP() {
               {view === "tracking" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} />}
               {view === "contracts" && <ContractsView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
-              {view === "fuel_management" && <FuelManagementView data={data} openModal={setModal} askDelete={setConfirm} />}
+              {view === "fuel_management" && (
+                <FuelManagementView
+                  data={data} openModal={setModal} askDelete={setConfirm}
+                  fuelPriceExcel={tabExcel.fuel_prices}
+                  onFuelPriceAttach={(file) => handleTabAttachFile("fuel_prices", file)}
+                  onFuelPriceExport={() => handleTabExport("fuel_prices")}
+                  onFuelPriceRevert={() => handleTabRevert("fuel_prices")}
+                />
+              )}
               {view === "customers" && <CustomersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
