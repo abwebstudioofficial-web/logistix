@@ -1043,12 +1043,15 @@ function styleTemplateHeaderRow(ws, rowNum, colCount, fill, fontColorArgb, fontS
   const row = ws.getRow(rowNum);
   for (let c = 1; c <= colCount; c++) {
     const cell = row.getCell(c);
-    cell.fill = fill;
+    // Fresh objects per cell, not a shared reference — ExcelJS's browser bundle has been
+    // known to silently drop styling when the exact same style object is reused across
+    // many cells instead of each cell getting its own.
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill.fgColor.argb } };
     cell.font = { name: "Tahoma", bold: true, size: fontSize, color: fontColorArgb ? { argb: fontColorArgb } : undefined };
     cell.alignment = { horizontal: "center", vertical: "middle" };
-    cell.border = TPL_THIN_TOP_BORDER;
+    cell.border = { top: { style: "thin" } };
   }
-  row.commit();
+  row.height = 20;
 }
 
 // Flattens orders into individual containers (cancelled ones excluded — they aren't
