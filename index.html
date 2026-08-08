@@ -937,32 +937,69 @@ const DOMESTIC_HEADERS = ["Sr.#","PO / SAP No.","Delivery Challan No.","Loading 
 const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Booking No.","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Cargo Type","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
+function fmtTimePart(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? "" : d.toLocaleTimeString(); }
+// The real, authoritative field — replaces an old heuristic that guessed shipment type by
+// searching the description/origin/destination text for the words "import"/"export", which
+// could misfire on any order whose free-text happened to contain those words.
 function orderKind(o) {
-  const t = ((o.description || "") + " " + (o.origin || "") + " " + (o.destination || "")).toLowerCase();
-  if (t.includes("export")) return "export";
-  if (t.includes("import")) return "import";
-  return "domestic";
+  return (o.shipmentType || "Import").toLowerCase();
+}
+function chargeAmount(c, type) {
+  const ch = (Array.isArray(c.charges) ? c.charges : []).find((x) => x.type === type);
+  return ch ? Number(ch.amount) || "" : "";
+}
+function driverPhoneFor(c, data) {
+  const drv = (data.drivers || []).find((d) => d.name && c.driverName && d.name.toLowerCase() === c.driverName.toLowerCase());
+  return drv ? drv.phone || "" : "";
 }
 
-function buildImportRow(sr, o, data) {
+// Every row-builder below operates on one CONTAINER at a time (not one order) — an order
+// with 3 containers produces 3 rows, matching how the reference workbook is actually laid
+// out. Fields the app genuinely doesn't track (detention-specific manual figures like
+// exchange rate, free-day counts, DP World yard dates) are left blank rather than guessed.
+
+function buildImportRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
-  const veh = data.vehicles.find((v) => v.id === o.vehicleId);
-  return [sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "", o.shippingLine || "", o.nominatedTransporter || "", o.description || "", o.blNumber || "", o.containerNumber || "", o.sealNumber || "", "", "", fmtDateISO(o.igmDate), o.destination || "", cust ? cust.name : "", o.emptyReturnLocation || "", o.biltyNumber || "", veh ? veh.plate : "", fmtDateISO(o.createdDate), o.amount || "", "", "", "", "", o.amount || "", "", "", "", o.amount || "", "", new Date(o.createdDate || Date.now()).getFullYear()];
+  return [
+    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "",
+    o.shippingLine || "", c.transporter || o.nominatedTransporter || "", o.description || "", o.blNumber || "",
+    c.containerNumber || "", c.sealNumber || "", c.containerSize || "", c.weight || "", fmtDateISO(o.igmDate),
+    c.destination || o.destination || "", cust ? cust.name : "", c.emptyReturnLocation || "", c.biltyNumber || "",
+    c.vehiclePlate || "", fmtDateISO(c.dispatchAt), c.freightAmount || "", "", fmtDateISO(c.transporterBillDate),
+    fmtDateISO(c.transporterBillDate), c.transporterBillNo || "", c.billAmountApproved || "",
+    chargeAmount(c, "LOLO Charges"), chargeAmount(c, "Halting/Stay Charges"), chargeAmount(c, "Other Charges"),
+    containerTotalBillAmount(c), c.emptyReturnDescription || "", new Date(o.createdDate || Date.now()).getFullYear(),
+  ];
 }
-function buildExportRow(sr, o, data) {
+function buildExportRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
-  const veh = data.vehicles.find((v) => v.id === o.vehicleId);
-  return [sr, o.jobNumber || o.orderNumber || "", cust ? cust.name : "", o.emptyReturnLocation || "", o.origin || "", o.nominatedTransporter || "", o.shippingLine || "", o.blNumber || "", o.containerNumber || "", "", "", veh ? veh.plate : "", fmtDateISO(o.createdDate), fmtDateISO(o.deliveredDate), o.biltyNumber || "", o.amount || "", o.cargoType || "", o.destination || "", ""];
+  return [
+    sr, o.jobNumber || o.orderNumber || "", cust ? cust.name : "", c.emptyReturnLocation || "", o.origin || "",
+    c.transporter || o.nominatedTransporter || "", o.shippingLine || "", o.blNumber || "", c.containerNumber || "",
+    c.containerSize || "", c.weight || "", c.vehiclePlate || "", fmtDateISO(c.dispatchAt), fmtDateISO(c.dispatchAt),
+    c.biltyNumber || "", c.freightAmount || "", o.cargoType || "", c.destination || o.destination || "", c.emptyReturnDescription || "",
+  ];
 }
-function buildDomesticRow(sr, o, data) {
-  const veh = data.vehicles.find((v) => v.id === o.vehicleId);
-  return [sr, o.poNumber || "", o.biltyNumber || "", o.origin || "", `${o.origin || ""} - ${o.destination || ""}`, veh ? veh.plate : "", "", fmtDateISO(o.createdDate), o.amount || "", o.nominatedTransporter || "", o.deliveredDate ? "Received" : "Pending", fmtDateISO(o.deliveredDate), "", ""];
+function buildDomesticRow(sr, o, c, data) {
+  return [
+    sr, o.poNumber || "", c.biltyNumber || "", o.origin || "", `${o.origin || ""} - ${c.destination || o.destination || ""}`,
+    c.vehiclePlate || "", c.containerSize || "", fmtDateISO(c.dispatchAt), c.freightAmount || "", c.transporter || o.nominatedTransporter || "",
+    c.podArrivalAt ? "Received" : "Pending", fmtDateISO(c.podArrivalAt), fmtDateISO(c.transporterBillDate), c.transporterBillNo || "",
+  ];
 }
-function buildClearedRow(sr, o, data) {
+function buildClearedRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
-  const veh = data.vehicles.find((v) => v.id === o.vehicleId);
-  const drv = data.drivers.find((d) => d.id === o.driverId);
-  return [sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "", o.shippingLine || "", o.nominatedTransporter || "", o.description || "", o.blNumber || "", "", "", o.containerNumber || "", "", "", veh ? veh.plate : "", drv ? drv.phone : "", fmtDateISO(o.igmDate), "", fmtDateISO(o.createdDate), "", fmtDateISO(o.eta), "", fmtDateISO(o.deliveredDate), "", fmtDateISO(o.deliveredDate), "", o.destination || "", o.emptyReturnLocation || "", "", "", "", "", "", "", "", fmtDateISO(o.deliveredDate), "", "", "", "", "", "", "", "", o.amount || "", "", "", cust ? cust.name : ""];
+  return [
+    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "", o.shippingLine || "",
+    c.transporter || o.nominatedTransporter || "", o.description || "", o.blNumber || "",
+    c.containerSize === "20'" ? 1 : "", c.containerSize === "40'" ? 1 : "",
+    c.containerNumber || "", c.containerSize || "", c.weight || "", c.vehiclePlate || "", driverPhoneFor(c, data),
+    fmtDateISO(o.igmDate), "", fmtDateISO(c.dispatchAt), fmtTimePart(c.dispatchAt),
+    fmtDateISO(o.eta), "", fmtDateISO(c.podArrivalAt), fmtTimePart(c.podArrivalAt),
+    fmtDateISO(c.podOffloadingAt), fmtTimePart(c.podOffloadingAt), c.destination || o.destination || "", c.emptyReturnLocation || "",
+    "", "", "", "", "", "", "", fmtDateISO(c.emptyReturnDate), "", "", "", "", "", "", "", "",
+    containerTotalBillAmount(c), "", "", c.emptyReturnDescription || "",
+  ];
 }
 
 // Colors/fonts pulled directly from the reference Transportation workbook:
@@ -993,12 +1030,24 @@ function styleTemplateHeaderRow(ws, rowNum, colCount, fill, fontColorArgb, fontS
   row.commit();
 }
 
+// Flattens orders into individual containers (cancelled ones excluded — they aren't
+// active shipments worth listing in these reports), optionally filtered by order.
+function flattenContainers(orders, filterFn) {
+  const out = [];
+  orders.forEach((o) => {
+    if (filterFn && !filterFn(o)) return;
+    orderContainers(o).forEach((c) => { if (!c.cancelled) out.push({ o, c }); });
+  });
+  return out;
+}
+
 async function buildTemplateWorkbook(data) {
   const wb = new ExcelJS.Workbook();
   const orders = data.orders || [];
   const today = new Date().toISOString().slice(0, 10);
+  const allFlat = flattenContainers(orders);
 
-  // Cleared Cases-01
+  // Cleared Cases-01 — every container, across every shipment type
   const wsCleared = wb.addWorksheet("Cleared Cases-01");
   wsCleared.addRow(Array(48).fill(""));
   const titleRow = Array(48).fill(""); titleRow[3] = "Detention Calculation & Payment Details"; titleRow[47] = today;
@@ -1007,37 +1056,39 @@ async function buildTemplateWorkbook(data) {
   wsCleared.addRow(Array(48).fill(""));
   wsCleared.addRow(CLEARED_CASES_HEADERS);
   styleTemplateHeaderRow(wsCleared, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
-  orders.forEach((o, i) => wsCleared.addRow(buildClearedRow(i + 1, o, data)));
+  allFlat.forEach(({ o, c }, i) => wsCleared.addRow(buildClearedRow(i + 1, o, c, data)));
   setTemplateColWidths(wsCleared, CLEARED_CASES_HEADERS);
 
   // Import Transportation-2020 (cream header)
-  const importOrders = orders.filter((o) => orderKind(o) !== "export");
+  const importFlat = flattenContainers(orders, (o) => orderKind(o) === "import");
   const wsImport = wb.addWorksheet("Import Transportation-2020");
   wsImport.addRow(IMPORT_HEADERS);
   styleTemplateHeaderRow(wsImport, 1, IMPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
-  importOrders.forEach((o, i) => wsImport.addRow(buildImportRow(i + 1, o, data)));
+  importFlat.forEach(({ o, c }, i) => wsImport.addRow(buildImportRow(i + 1, o, c, data)));
   setTemplateColWidths(wsImport, IMPORT_HEADERS);
 
   // Domestic Movement (blue header, white text)
-  const domOrders = orders.filter((o) => orderKind(o) === "domestic");
+  const domFlat = flattenContainers(orders, (o) => orderKind(o) === "domestic");
   const wsDom = wb.addWorksheet("Domestic Movement");
   wsDom.addRow(DOMESTIC_HEADERS);
   styleTemplateHeaderRow(wsDom, 1, DOMESTIC_HEADERS.length, TPL_BLUE_FILL, "FFFFFFFF", 10);
-  domOrders.forEach((o, i) => wsDom.addRow(buildDomesticRow(i + 1, o, data)));
+  domFlat.forEach(({ o, c }, i) => wsDom.addRow(buildDomesticRow(i + 1, o, c, data)));
   setTemplateColWidths(wsDom, DOMESTIC_HEADERS);
 
   // Export Transportation (cream header)
-  const expOrders = orders.filter((o) => orderKind(o) === "export");
+  const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
   const wsExport = wb.addWorksheet("Export Transportation");
   wsExport.addRow(EXPORT_HEADERS);
   styleTemplateHeaderRow(wsExport, 1, EXPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
-  expOrders.forEach((o, i) => wsExport.addRow(buildExportRow(i + 1, o, data)));
+  expFlat.forEach(({ o, c }, i) => wsExport.addRow(buildExportRow(i + 1, o, c, data)));
   setTemplateColWidths(wsExport, EXPORT_HEADERS);
 
-  // Company-specific sheets — same gray "Cleared Cases" style, filtered by customer name match
+  // Customer-specific sheets — same gray "Cleared Cases" style and columns, one row per
+  // container, filtered to that customer only. TEMPLATE_COMPANY_SHEETS names are matched
+  // against real customer names (case-insensitive substring match).
   TEMPLATE_COMPANY_SHEETS.forEach((sheetName) => {
     const key = sheetName.toLowerCase();
-    const filtered = orders.filter((o) => {
+    const filtered = flattenContainers(orders, (o) => {
       const cust = getCustomer(data, o.customerId);
       return cust && cust.name && cust.name.toLowerCase().includes(key);
     });
@@ -1049,7 +1100,7 @@ async function buildTemplateWorkbook(data) {
     ws.addRow(Array(48).fill(""));
     ws.addRow(CLEARED_CASES_HEADERS);
     styleTemplateHeaderRow(ws, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
-    filtered.forEach((o, i) => ws.addRow(buildClearedRow(i + 1, o, data)));
+    filtered.forEach(({ o, c }, i) => ws.addRow(buildClearedRow(i + 1, o, c, data)));
     setTemplateColWidths(ws, CLEARED_CASES_HEADERS);
   });
 
@@ -1130,8 +1181,40 @@ function coerceInvoices(rows) {
 function coerceRoutes(rows) {
   return rows.map((r) => ({ id: xstr(r.id) || uid("rte"), name: xstr(r.name), origin: xstr(r.origin), destination: xstr(r.destination), driverId: xstr(r.driverId), vehicleId: xstr(r.vehicleId), orderId: xstr(r.orderId), status: xstr(r.status, "planned") }));
 }
+// Reads a value trying several plausible header spellings (case/spacing-insensitive) —
+// an uploaded file's headers won't always match our internal camelCase field names exactly.
+function readAnyKey(row, keys) {
+  for (const k of keys) {
+    if (row[k] !== undefined && row[k] !== "") return row[k];
+  }
+  const normalized = {};
+  Object.keys(row).forEach((rk) => { normalized[rk.toLowerCase().replace(/[^a-z0-9]/g, "")] = row[rk]; });
+  for (const k of keys) {
+    const nk = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalized[nk] !== undefined && normalized[nk] !== "") return normalized[nk];
+  }
+  return "";
+}
+// Normalizes whatever date format Excel handed back (locale-formatted string, or a Date
+// object) into strict YYYY-MM-DD, since that's what the database column requires.
+function normalizeDateStr(v) {
+  if (!v) return "";
+  if (v instanceof Date) return isNaN(v) ? "" : v.toISOString().slice(0, 10);
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  return isNaN(d) ? "" : d.toISOString().slice(0, 10);
+}
 function coerceFuelPrices(rows) {
-  return rows.map((r) => ({ id: xstr(r.id) || genUUID(), pricePerLiter: xnum(r.pricePerLiter), effectiveDate: xstr(r.effectiveDate) }));
+  return rows
+    .map((r) => ({
+      id: xstr(r.id) || genUUID(),
+      pricePerLiter: xnum(readAnyKey(r, ["pricePerLiter", "PricePerLiter", "Price per Liter (PKR)", "Price per Liter", "Price (PKR)", "Price"])),
+      effectiveDate: normalizeDateStr(readAnyKey(r, ["effectiveDate", "EffectiveDate", "Effective Date", "Date"])),
+    }))
+    // effective_date is required by the database — a row with no usable date can never be
+    // saved, so drop it here rather than sending null and having the whole import fail.
+    .filter((row) => row.effectiveDate);
 }
 const COERCE_FUNCTIONS = { coerceOrders, coerceCustomers, coerceSenders, coerceTransporters, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices };
 
@@ -6159,6 +6242,7 @@ function LogistixERP() {
         const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
         const coerceFn = COERCE_FUNCTIONS[cfg.coerceKey];
         let coerced = coerceFn(rows);
+        const skippedCount = rows.length - coerced.length;
         if (cfg.forceFields) coerced = coerced.map((r) => ({ ...r, ...cfg.forceFields }));
 
         const existingList = data[cfg.table] || [];
@@ -6186,7 +6270,7 @@ function LogistixERP() {
             attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
             message: error
               ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
-              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.` },
+              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (e.g. a date).` : ""}` },
           },
         }));
       } catch (err) {
