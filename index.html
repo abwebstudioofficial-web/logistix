@@ -1048,7 +1048,11 @@ function buildClearedRow(sr, o, c, data) {
 //   2 = cream header (Import/Export)           3 = blue header, white text (Domestic)
 //   4 = title text (16pt bold, no fill)
 function xlsxEscape(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+  // Strip characters XML 1.0 forbids outright (stray control characters from pasted data
+  // would otherwise produce an invalid file, not just unstyled one), then escape the
+  // standard XML special characters.
+  const clean = String(s).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+  return clean.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
 }
 function xlsxColLetter(n) {
   let s = "";
@@ -1155,8 +1159,13 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
         return xlsxRowXml(rowNum, values, isHeader ? s.headerStyle : 0, cellOverrides);
       })
       .join("\n");
+    const lastCol = xlsxColLetter(Math.max(1, ...s.rows.map((r) => r.length)));
+    const lastRow = Math.max(1, s.rows.length);
     zip.file(`xl/worksheets/sheet${sheetIdx + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<dimension ref="A1:${lastCol}${lastRow}"/>
+<sheetViews><sheetView workbookViewId="0"/></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
 ${colsXml ? `<cols>${colsXml}</cols>` : ""}
 <sheetData>
 ${rowsXml}
