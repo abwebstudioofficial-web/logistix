@@ -953,7 +953,10 @@ const NUMERIC_SCHEMA_FIELDS = {
 };
 function buildSheet(rows, schema, displayHeaders, sheetName) {
   const headers = displayHeaders || schema.map(humanizeFieldName);
-  const hideKeys = new Set(["id", "customerid"]);
+  // "containers"/"history" hold raw JSON (including base64-encoded photos) — needed for
+  // round-trip Attach/Revert, but far too large and technical to show. Hiding rather than
+  // stripping them avoids any risk of silently deleting a dispatch/POD photo on re-import.
+  const hideKeys = new Set(["id", "customerid", "containers", "history"]);
   const hiddenColIdxs = schema.map((k, i) => (hideKeys.has(String(k).toLowerCase()) ? i : -1)).filter((i) => i >= 0);
   const numericFields = NUMERIC_SCHEMA_FIELDS[sheetName] || new Set();
   if (!rows || rows.length === 0) {
