@@ -1047,6 +1047,9 @@ function buildClearedRow(sr, o, c, data) {
 //   0 = default (no fill/border)              1 = gray header  (Cleared Cases + customer sheets)
 //   2 = cream header (Import/Export)           3 = blue header, white text (Domestic)
 //   4 = title text (16pt bold, no fill)
+//   5 = green (Cargo Type "NON-BONDED", Loading Point "QICT")
+//   6 = red/pink (Cargo Type "BONDED", Loading Point "PICT", duplicate Bilty No.)
+//   7 = cyan (Loading Point "KICT")            8 = solid blue, white text (Loading Point "SAPT")
 function xlsxEscape(s) {
   // Strip characters XML 1.0 forbids outright (stray control characters from pasted data
   // would otherwise produce an invalid file, not just unstyled one), then escape the
@@ -1065,52 +1068,77 @@ function xlsxColLetter(n) {
 }
 const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="5">
+<fonts count="11">
 <font><sz val="11"/><name val="Calibri"/></font>
-<font><sz val="9"/><name val="Tahoma"/><b/><color rgb="FF000000"/></font>
 <font><sz val="10"/><name val="Tahoma"/><b/><color rgb="FF000000"/></font>
 <font><sz val="10"/><name val="Tahoma"/><b/><color rgb="FFFFFFFF"/></font>
 <font><sz val="16"/><name val="Tahoma"/><b/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF000000"/></font>
+<font><sz val="11"/><name val="Calibri"/><color rgb="FF006100"/></font>
+<font><sz val="11"/><name val="Calibri"/><color rgb="FF9C0006"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF9C0006"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF006100"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF002060"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FFFFFFFF"/></font>
 </fonts>
-<fills count="5">
+<fills count="8">
 <fill><patternFill patternType="none"/></fill>
 <fill><patternFill patternType="gray125"/></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFEEECE1"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF4F81BD"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFFC7CE"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF00B0F0"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
 <borders count="2">
 <border><left/><right/><top/><bottom/><diagonal/></border>
 <border><left/><right/><top style="thin"><color indexed="64"/></top><bottom/><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="5">
+<cellXfs count="13">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="5" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="6" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="7" fillId="6" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="8" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="9" fillId="7" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="10" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
+// Style IDs: 0=default/Cargo-Type-no-match(Calibri11)  1=gray header  2=cream header
+// 3=blue header(white)  4=title  5=text data(Tahoma10 left)  6=number data(Tahoma10 centered)
+// 7=Cargo Type green(Calibri11)  8=Cargo Type red(Calibri11)  9=Loading Point/Bilty red(Tahoma10)
+// 10=Loading Point green(Tahoma10)  11=Loading Point cyan(Tahoma10)  12=Loading Point blue/white(Tahoma10)
 
-// Builds one <row> element. `values` is a plain array (1 per column); `styleForCol(colIdx)`
-// returns the style id (0-4) for that column, letting header rows apply a style to every
-// cell and data rows just use 0 (or a specific per-cell override via `cellStyles` map).
-function xlsxRowXml(rowNum, values, defaultStyle, cellStyleOverrides) {
+// Builds one <row> element. `values` is a plain array (1 per column). For header rows,
+// every cell gets `headerStyle`. For data rows, each cell automatically gets the text
+// default (5) or number default (6) based on its own JS value type — Sr./weights/amounts
+// come through as real numbers already, so this naturally centers numeric columns without
+// having to hardcode which columns are "numeric". `cellStyleOverrides` (conditional colors,
+// title cell) takes priority over both.
+function xlsxRowXml(rowNum, values, headerStyle, cellStyleOverrides) {
   const cells = [];
   values.forEach((val, i) => {
-    if (val === "" || val === null || val === undefined) {
-      if (!defaultStyle) return; // skip genuinely empty cells in unstyled rows
-    }
+    const isEmpty = val === "" || val === null || val === undefined;
+    if (isEmpty && !headerStyle) return; // skip genuinely empty cells in unstyled data rows
     const col = i + 1;
     const ref = `${xlsxColLetter(col)}${rowNum}`;
-    const style = (cellStyleOverrides && cellStyleOverrides[col]) || defaultStyle || 0;
+    const isNumber = typeof val === "number" && Number.isFinite(val);
+    const override = cellStyleOverrides && cellStyleOverrides[col];
+    const style = override != null ? override : headerStyle ? headerStyle : (isNumber ? 6 : 5);
     const styleAttr = style ? ` s="${style}"` : "";
-    if (typeof val === "number" && Number.isFinite(val)) {
+    if (isNumber) {
       cells.push(`<c r="${ref}"${styleAttr}><v>${val}</v></c>`);
     } else {
-      const text = val === "" || val === null || val === undefined ? "" : String(val);
+      const text = isEmpty ? "" : String(val);
       cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${xlsxEscape(text)}</t></is></c>`);
     }
   });
@@ -1156,6 +1184,12 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
         const isHeader = rowNum === s.headerRowIndex;
         const cellOverrides = {};
         if (s.titleCell && s.titleCell.row === rowNum) cellOverrides[s.titleCell.col] = 4;
+        if (!isHeader && s.conditionalCols) {
+          Object.entries(s.conditionalCols).forEach(([colIdx, fn]) => {
+            const styleId = fn(values[colIdx - 1]);
+            if (styleId != null) cellOverrides[colIdx] = styleId;
+          });
+        }
         return xlsxRowXml(rowNum, values, isHeader ? s.headerStyle : 0, cellOverrides);
       })
       .join("\n");
@@ -1187,9 +1221,49 @@ function flattenContainers(orders, filterFn) {
   return out;
 }
 
+// Returns a per-cell style function: checks the cell's own text against a list of
+// [substring, styleId] rules in order, first match wins. Used for Cargo Type ("NON" before
+// "BONDED", so "NON-BONDED" correctly lands on green, not red) and Loading Point.
+function textContainsStyle(rules) {
+  return (val) => {
+    if (val === "" || val === null || val === undefined) return null;
+    const s = String(val).toUpperCase();
+    for (const [needle, styleId] of rules) {
+      if (s.includes(needle.toUpperCase())) return styleId;
+    }
+    return null;
+  };
+}
+// Flags any value that appears more than once in the given column's data as an error
+// (e.g. a Bilty No. that's been accidentally duplicated) — matches the reference file's
+// "duplicate values" conditional formatting exactly.
+function duplicateStyleFn(allValues, styleId) {
+  const counts = {};
+  allValues.forEach((v) => {
+    const key = String(v == null ? "" : v).trim();
+    if (key) counts[key] = (counts[key] || 0) + 1;
+  });
+  return (val) => {
+    const key = String(val == null ? "" : val).trim();
+    return key && counts[key] > 1 ? styleId : null;
+  };
+}
+
 function colWidthsFor(headers) {
   return headers.map((h) => Math.min(Math.max(String(h || "").length + 6, 14), 50));
 }
+
+// Cargo Type always stays Calibri 11 regardless of match — colored (green/red) when it
+// says NON-BONDED/BONDED, plain style 0 (also Calibri 11) for anything else, rather than
+// falling through to the Tahoma 10 data default like every other column does.
+const CARGO_TYPE_RULE = (val) => {
+  if (val === "" || val === null || val === undefined) return null; // truly empty cell - let it get skipped normally
+  const s = String(val).toUpperCase();
+  if (s.includes("NON")) return 7;
+  if (s.includes("BONDED")) return 8;
+  return 0;
+};
+const LOADING_POINT_RULE = textContainsStyle([["PICT", 9], ["QICT", 10], ["KICT", 11], ["SAPT", 12]]);
 
 async function buildTemplateWorkbook(data) {
   const orders = data.orders || [];
@@ -1204,22 +1278,41 @@ async function buildTemplateWorkbook(data) {
   clearedRows.push(Array(48).fill(""));
   clearedRows.push(CLEARED_CASES_HEADERS);
   allFlat.forEach(({ o, c }, i) => clearedRows.push(buildClearedRow(i + 1, o, c, data)));
-  sheets.push({ name: "Cleared Cases-01", rows: clearedRows, headerRowIndex: 4, headerStyle: 1, titleCell: { row: 2, col: 4 }, colWidths: colWidthsFor(CLEARED_CASES_HEADERS) });
+  sheets.push({
+    name: "Cleared Cases-01", rows: clearedRows, headerRowIndex: 4, headerStyle: 1, titleCell: { row: 2, col: 4 },
+    colWidths: colWidthsFor(CLEARED_CASES_HEADERS),
+    conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE },
+  });
 
   // Import Transportation-2020 (cream header)
   const importFlat = flattenContainers(orders, (o) => orderKind(o) === "import");
-  const importRows = [IMPORT_HEADERS, ...importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data))];
-  sheets.push({ name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1, headerStyle: 2, colWidths: colWidthsFor(IMPORT_HEADERS) });
+  const importDataRows = importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data));
+  const importRows = [IMPORT_HEADERS, ...importDataRows];
+  sheets.push({
+    name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1, headerStyle: 2,
+    colWidths: colWidthsFor(IMPORT_HEADERS),
+    conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 18: duplicateStyleFn(importDataRows.map((r) => r[17]), 9) },
+  });
 
   // Domestic Movement (blue header, white text)
   const domFlat = flattenContainers(orders, (o) => orderKind(o) === "domestic");
-  const domRows = [DOMESTIC_HEADERS, ...domFlat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data))];
-  sheets.push({ name: "Domestic Movement", rows: domRows, headerRowIndex: 1, headerStyle: 3, colWidths: colWidthsFor(DOMESTIC_HEADERS) });
+  const domDataRows = domFlat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
+  const domRows = [DOMESTIC_HEADERS, ...domDataRows];
+  sheets.push({
+    name: "Domestic Movement", rows: domRows, headerRowIndex: 1, headerStyle: 3,
+    colWidths: colWidthsFor(DOMESTIC_HEADERS),
+    conditionalCols: { 4: LOADING_POINT_RULE, 3: duplicateStyleFn(domDataRows.map((r) => r[2]), 9) },
+  });
 
   // Export Transportation (cream header)
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
-  const expRows = [EXPORT_HEADERS, ...expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data))];
-  sheets.push({ name: "Export Transportation", rows: expRows, headerRowIndex: 1, headerStyle: 2, colWidths: colWidthsFor(EXPORT_HEADERS) });
+  const expDataRows = expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data));
+  const expRows = [EXPORT_HEADERS, ...expDataRows];
+  sheets.push({
+    name: "Export Transportation", rows: expRows, headerRowIndex: 1, headerStyle: 2,
+    colWidths: colWidthsFor(EXPORT_HEADERS),
+    conditionalCols: { 17: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 15: duplicateStyleFn(expDataRows.map((r) => r[14]), 9) },
+  });
 
   // Customer-specific sheets — same gray "Cleared Cases" style and columns, one row per
   // container, filtered to that customer only.
@@ -1235,7 +1328,11 @@ async function buildTemplateWorkbook(data) {
     rows.push(Array(48).fill(""));
     rows.push(CLEARED_CASES_HEADERS);
     filtered.forEach(({ o, c }, i) => rows.push(buildClearedRow(i + 1, o, c, data)));
-    sheets.push({ name: sheetName, rows, headerRowIndex: 4, headerStyle: 1, titleCell: { row: 2, col: 4 }, colWidths: colWidthsFor(CLEARED_CASES_HEADERS) });
+    sheets.push({
+      name: sheetName, rows, headerRowIndex: 4, headerStyle: 1, titleCell: { row: 2, col: 4 },
+      colWidths: colWidthsFor(CLEARED_CASES_HEADERS),
+      conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE },
+    });
   });
 
   return buildXlsxBuffer(sheets);
@@ -6613,5 +6710,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
-
-
