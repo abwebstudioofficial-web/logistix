@@ -490,7 +490,7 @@ const SHEET_SCHEMAS = {
   Vehicles: ["id","plate","type","make","model","year","capacityKg","mileageKm","lastService","driverId","status"],
   Invoices: ["id","invoiceNumber","orderId","containerId","customerId","issued","due","total","status"],
   Routes: ["id","name","origin","destination","driverId","vehicleId","orderId","status"],
-  FuelPrices: ["id","pricePerLiter","effectiveDate"],
+  FuelPrices: ["effectiveDate", "pricePerLiter", "id"],
 };
 
 // Maps a nav view to the single table it should attach/export against, scoped to just
@@ -507,7 +507,7 @@ const TAB_EXCEL_CONFIG = {
   transporters: { table: "transporters", sheetName: "Transporters", label: "Transporters", coerceKey: "coerceTransporters" },
   invoices: { table: "invoices", sheetName: "Invoices", label: "Invoices", coerceKey: "coerceInvoices" },
   // Not tied to a nav view — rendered inside the Fuel Price sub-tab instead (see CustomerFuelDetail).
-  fuel_prices: { table: "fuel_prices", sheetName: "FuelPrices", label: "Fuel Prices", coerceKey: "coerceFuelPrices" },
+  fuel_prices: { table: "fuel_prices", sheetName: "FuelPrices", label: "Fuel Prices", coerceKey: "coerceFuelPrices", displayHeaders: ["Effective Date", "Price per Liter (PKR)", "ID"] },
 };
 
 const STAGES = ["Confirmed", "Picked Up", "In Transit", "Delivered"];
@@ -933,29 +933,46 @@ function computeColWidths(schema, cleanedRows) {
     return { wch: Math.min(Math.max(maxLen + 6, 14), 60) }; // generous padding, floor of 14, capped at 60 so one huge cell can't blow out the sheet
   });
 }
-function buildSheet(rows, schema) {
+// Converts an internal camelCase field name into a readable column header, e.g.
+// "orderNumber" -> "Order Number", "customerId" -> "Customer ID". Used both to generate
+// export headers and (via readField) to read them back correctly on re-import.
+function humanizeFieldName(key) {
+  if (String(key).toLowerCase() === "id") return "ID";
+  let s = String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
+  s = s.replace(/\bId\b/g, "ID").replace(/\bBl\b/g, "BL").replace(/\bIgm\b/g, "IGM").replace(/\bPo\b/g, "PO").replace(/\bPkr\b/g, "PKR");
+  return s;
+}
+function buildSheet(rows, schema, displayHeaders) {
+  const headers = displayHeaders || schema.map(humanizeFieldName);
+  const idColIdx = schema.findIndex((k) => String(k).toLowerCase() === "id");
   if (!rows || rows.length === 0) {
-    const ws = XLSX.utils.aoa_to_sheet([schema]);
-    ws["!cols"] = schema.map((key) => ({ wch: Math.max(String(key).length + 6, 14) }));
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    ws["!cols"] = headers.map((h) => ({ wch: Math.max(String(h).length + 6, 14) }));
+    if (idColIdx >= 0) ws["!cols"][idColIdx].hidden = true;
     return ws;
   }
   const cleaned = rows.map((r) => {
     const out = {};
-    schema.forEach((k) => {
+    schema.forEach((k, i) => {
       const val = r[k];
-      out[k] = (val === null || val === undefined || val === "") ? "" : (typeof val === "object" ? JSON.stringify(val) : val);
+      out[headers[i]] = (val === null || val === undefined || val === "") ? "" : (typeof val === "object" ? JSON.stringify(val) : val);
     });
     return out;
   });
-  const ws = XLSX.utils.json_to_sheet(cleaned, { header: schema });
-  ws["!cols"] = computeColWidths(schema, cleaned);
+  const ws = XLSX.utils.json_to_sheet(cleaned, { header: headers });
+  ws["!cols"] = computeColWidths(headers, cleaned);
+  // Hide the ID column rather than deleting it — it's what lets Attach/Revert correctly
+  // match this row to the existing database record instead of creating a duplicate on
+  // re-import, but there's no reason for it to visually clutter the sheet.
+  if (idColIdx >= 0 && ws["!cols"][idColIdx]) ws["!cols"][idColIdx].hidden = true;
   return ws;
 }
 function buildWorkbook(data) {
   const wb = XLSX.utils.book_new();
   const map = { Orders: data.orders, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
+  const displayHeadersBySheet = { FuelPrices: ["Effective Date", "Price per Liter (PKR)", "ID"] };
   Object.entries(SHEET_SCHEMAS).forEach(([sheetName, schema]) => {
-    XLSX.utils.book_append_sheet(wb, buildSheet(map[sheetName] || [], schema), sheetName);
+    XLSX.utils.book_append_sheet(wb, buildSheet(map[sheetName] || [], schema, displayHeadersBySheet[sheetName]), sheetName);
   });
   return wb;
 }
@@ -1456,27 +1473,27 @@ function coerceOrders(rows) {
   return rows.map((r) => {
     let containers = [];
     try {
-      const parsed = JSON.parse(r.containers || "[]");
+      const parsed = JSON.parse(readField(r, "containers") || "[]");
       if (Array.isArray(parsed)) containers = parsed;
     } catch (e) { containers = []; }
     let history = [];
     try {
-      const parsedH = JSON.parse(r.history || "[]");
+      const parsedH = JSON.parse(readField(r, "history") || "[]");
       if (Array.isArray(parsedH)) history = parsedH;
     } catch (e) { history = []; }
     return {
-      id: xstr(r.id) || uid("ord"), orderNumber: xstr(r.orderNumber) || genOrderNumber(),
-      customerId: xstr(r.customerId), origin: xstr(r.origin), destination: xstr(r.destination),
-      driverId: xstr(r.driverId), vehicleId: xstr(r.vehicleId), priority: xstr(r.priority, "Normal"),
-      amount: xnum(r.amount), weight: xnum(r.weight), description: xstr(r.description), createdDate: xstr(r.createdDate) || todayISO(),
-      eta: xstr(r.eta), stageIndex: xnum(r.stageIndex, 0), cancelled: xbool(r.cancelled),
-      deliveredDate: xstr(r.deliveredDate) || null,
-      jobNumber: xstr(r.jobNumber), poNumber: xstr(r.poNumber), cargoType: xstr(r.cargoType),
-      shippingLine: xstr(r.shippingLine), nominatedTransporter: xstr(r.nominatedTransporter),
-      blNumber: xstr(r.blNumber),
-      igmDate: xstr(r.igmDate), emptyReturnLocation: xstr(r.emptyReturnLocation), biltyNumber: xstr(r.biltyNumber),
-      bondedStatus: xstr(r.bondedStatus, "Non-Bonded"), shipmentType: xstr(r.shipmentType, "Import"),
-      senderId: xstr(r.senderId), senderAddress: xstr(r.senderAddress), deliveryAddress: xstr(r.deliveryAddress),
+      id: xstr(readField(r, "id")) || uid("ord"), orderNumber: xstr(readField(r, "orderNumber")) || genOrderNumber(),
+      customerId: xstr(readField(r, "customerId")), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")),
+      driverId: xstr(readField(r, "driverId")), vehicleId: xstr(readField(r, "vehicleId")), priority: xstr(readField(r, "priority"), "Normal"),
+      amount: xnum(readField(r, "amount")), weight: xnum(readField(r, "weight")), description: xstr(readField(r, "description")), createdDate: xstr(readField(r, "createdDate")) || todayISO(),
+      eta: xstr(readField(r, "eta")), stageIndex: xnum(readField(r, "stageIndex"), 0), cancelled: xbool(readField(r, "cancelled")),
+      deliveredDate: xstr(readField(r, "deliveredDate")) || null,
+      jobNumber: xstr(readField(r, "jobNumber")), poNumber: xstr(readField(r, "poNumber")), cargoType: xstr(readField(r, "cargoType")),
+      shippingLine: xstr(readField(r, "shippingLine")), nominatedTransporter: xstr(readField(r, "nominatedTransporter")),
+      blNumber: xstr(readField(r, "blNumber")),
+      igmDate: xstr(readField(r, "igmDate")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
+      bondedStatus: xstr(readField(r, "bondedStatus"), "Non-Bonded"), shipmentType: xstr(readField(r, "shipmentType"), "Import"),
+      senderId: xstr(readField(r, "senderId")), senderAddress: xstr(readField(r, "senderAddress")), deliveryAddress: xstr(readField(r, "deliveryAddress")),
       containers, history,
     };
   });
@@ -1485,47 +1502,47 @@ function coerceCustomers(rows) {
   return rows.map((r) => {
     let deliveryAddresses = [];
     try {
-      const parsed = JSON.parse(r.deliveryAddresses || "[]");
+      const parsed = JSON.parse(readField(r, "deliveryAddresses") || "[]");
       if (Array.isArray(parsed)) deliveryAddresses = parsed;
     } catch (e) { deliveryAddresses = []; }
-    return { id: xstr(r.id) || uid("cust"), name: xstr(r.name), shortName: xstr(r.shortName), email: xstr(r.email), phone: xstr(r.phone), contact: xstr(r.contact), location: xstr(r.location), deliveryAddresses };
+    return { id: xstr(readField(r, "id")) || uid("cust"), name: xstr(readField(r, "name")), shortName: xstr(readField(r, "shortName")), email: xstr(readField(r, "email")), phone: xstr(readField(r, "phone")), contact: xstr(readField(r, "contact")), location: xstr(readField(r, "location")), deliveryAddresses };
   });
 }
 function coerceSenders(rows) {
   return rows.map((r) => {
     let addresses = [];
     try {
-      const parsed = JSON.parse(r.addresses || "[]");
+      const parsed = JSON.parse(readField(r, "addresses") || "[]");
       if (Array.isArray(parsed)) addresses = parsed;
     } catch (e) { addresses = []; }
-    return { id: xstr(r.id) || uid("sender"), name: xstr(r.name), email: xstr(r.email), phone: xstr(r.phone), contact: xstr(r.contact), addresses };
+    return { id: xstr(readField(r, "id")) || uid("sender"), name: xstr(readField(r, "name")), email: xstr(readField(r, "email")), phone: xstr(readField(r, "phone")), contact: xstr(readField(r, "contact")), addresses };
   });
 }
 function coerceTransporters(rows) {
   return rows.map((r) => {
     let addresses = [];
     try {
-      const parsed = JSON.parse(r.addresses || "[]");
+      const parsed = JSON.parse(readField(r, "addresses") || "[]");
       if (Array.isArray(parsed)) addresses = parsed;
     } catch (e) { addresses = []; }
-    return { id: xstr(r.id) || uid("transporter"), name: xstr(r.name), email: xstr(r.email), phone: xstr(r.phone), contact: xstr(r.contact), addresses };
+    return { id: xstr(readField(r, "id")) || uid("transporter"), name: xstr(readField(r, "name")), email: xstr(readField(r, "email")), phone: xstr(readField(r, "phone")), contact: xstr(readField(r, "contact")), addresses };
   });
 }
 function coerceDrivers(rows) {
-  return rows.map((r) => ({ id: xstr(r.id) || uid("drv"), name: xstr(r.name), email: xstr(r.email), role: xstr(r.role, "Driver"), phone: xstr(r.phone), status: xstr(r.status) }));
+  return rows.map((r) => ({ id: xstr(readField(r, "id")) || uid("drv"), name: xstr(readField(r, "name")), email: xstr(readField(r, "email")), role: xstr(readField(r, "role"), "Driver"), phone: xstr(readField(r, "phone")), status: xstr(readField(r, "status")) }));
 }
 function coerceVehicles(rows) {
   return rows.map((r) => ({
-    id: xstr(r.id) || uid("veh"), plate: xstr(r.plate), type: xstr(r.type, "Truck"), make: xstr(r.make), model: xstr(r.model),
-    year: xnum(r.year, new Date().getFullYear()), capacityKg: xnum(r.capacityKg), mileageKm: xnum(r.mileageKm),
-    lastService: xstr(r.lastService) || todayISO(), driverId: xstr(r.driverId), status: xstr(r.status, "active"),
+    id: xstr(readField(r, "id")) || uid("veh"), plate: xstr(readField(r, "plate")), type: xstr(readField(r, "type"), "Truck"), make: xstr(readField(r, "make")), model: xstr(readField(r, "model")),
+    year: xnum(readField(r, "year"), new Date().getFullYear()), capacityKg: xnum(readField(r, "capacityKg")), mileageKm: xnum(readField(r, "mileageKm")),
+    lastService: xstr(readField(r, "lastService")) || todayISO(), driverId: xstr(readField(r, "driverId")), status: xstr(readField(r, "status"), "active"),
   }));
 }
 function coerceInvoices(rows) {
-  return rows.map((r) => ({ id: xstr(r.id) || uid("inv"), invoiceNumber: xstr(r.invoiceNumber) || genInvoiceNumber(), orderId: xstr(r.orderId), containerId: xstr(r.containerId), customerId: xstr(r.customerId), issued: xstr(r.issued) || todayISO(), due: xstr(r.due), total: xnum(r.total), status: xstr(r.status, "Draft") }));
+  return rows.map((r) => ({ id: xstr(readField(r, "id")) || uid("inv"), invoiceNumber: xstr(readField(r, "invoiceNumber")) || genInvoiceNumber(), orderId: xstr(readField(r, "orderId")), containerId: xstr(readField(r, "containerId")), customerId: xstr(readField(r, "customerId")), issued: xstr(readField(r, "issued")) || todayISO(), due: xstr(readField(r, "due")), total: xnum(readField(r, "total")), status: xstr(readField(r, "status"), "Draft") }));
 }
 function coerceRoutes(rows) {
-  return rows.map((r) => ({ id: xstr(r.id) || uid("rte"), name: xstr(r.name), origin: xstr(r.origin), destination: xstr(r.destination), driverId: xstr(r.driverId), vehicleId: xstr(r.vehicleId), orderId: xstr(r.orderId), status: xstr(r.status, "planned") }));
+  return rows.map((r) => ({ id: xstr(readField(r, "id")) || uid("rte"), name: xstr(readField(r, "name")), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")), driverId: xstr(readField(r, "driverId")), vehicleId: xstr(readField(r, "vehicleId")), orderId: xstr(readField(r, "orderId")), status: xstr(readField(r, "status"), "planned") }));
 }
 // Reads a value trying several plausible header spellings (case/spacing-insensitive) —
 // an uploaded file's headers won't always match our internal camelCase field names exactly.
@@ -1541,6 +1558,13 @@ function readAnyKey(row, keys) {
   }
   return "";
 }
+// Reads a field by its internal camelCase name OR the human-readable header we now export
+// it under (e.g. "customerId" or "Customer ID") — every coerce function uses this instead of
+// direct property access, so switching exports to readable headers doesn't silently break
+// re-importing them (which would otherwise reset every field to blank on every re-attach).
+function readField(row, camelKey) {
+  return readAnyKey(row, [camelKey, humanizeFieldName(camelKey)]);
+}
 // Normalizes whatever date format Excel handed back (locale-formatted string, or a Date
 // object) into strict YYYY-MM-DD, since that's what the database column requires.
 function normalizeDateStr(v) {
@@ -1554,7 +1578,7 @@ function normalizeDateStr(v) {
 function coerceFuelPrices(rows) {
   return rows
     .map((r) => ({
-      id: xstr(r.id) || genUUID(),
+      id: xstr(readAnyKey(r, ["id", "ID", "Id"])) || genUUID(),
       pricePerLiter: xnum(readAnyKey(r, ["pricePerLiter", "PricePerLiter", "Price per Liter (PKR)", "Price per Liter", "Price (PKR)", "Price"])),
       effectiveDate: normalizeDateStr(readAnyKey(r, ["effectiveDate", "EffectiveDate", "Effective Date", "Date"])),
     }))
@@ -6666,7 +6690,7 @@ function LogistixERP() {
     const rows = cfg.filterFn ? allRows.filter(cfg.filterFn) : allRows;
     const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema), cfg.sheetName);
+    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, cfg.displayHeaders), cfg.sheetName);
     XLSX.writeFile(wb, `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
