@@ -9,7 +9,7 @@
 <script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/exceljs@4.3.0/dist/exceljs.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
@@ -1036,33 +1036,135 @@ function buildClearedRow(sr, o, c, data) {
 // Colors/fonts pulled directly from the reference Transportation workbook:
 // Cleared Cases + company sheets use a light-gray header, Import/Export use cream,
 // Domestic uses blue with white text — matching Excel's stock "Office 2007-2010" theme.
-const TPL_GRAY_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } };
-const TPL_CREAM_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEECE1" } };
-const TPL_BLUE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4F81BD" } };
-const TPL_THIN_TOP_BORDER = { top: { style: "thin" } };
+// ==================== Hand-written XLSX generator ====================
+// ExcelJS (tried across several versions/builds) was confirmed to write files whose
+// styling is only readable by ExcelJS's own parser — real Excel and Google Sheets both
+// silently drop the colors, meaning the actual file bytes are spec-non-compliant. Rather
+// than depend on a third-party writer with a proven bug, this builds the .xlsx file
+// (a zip of plain OOXML XML) directly, using JSZip only to zip up files we write ourselves.
+// Five fixed cell styles cover everything this export needs — no per-cell object creation,
+// no ambiguity about what gets serialized.
+//   0 = default (no fill/border)              1 = gray header  (Cleared Cases + customer sheets)
+//   2 = cream header (Import/Export)           3 = blue header, white text (Domestic)
+//   4 = title text (16pt bold, no fill)
+function xlsxEscape(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+function xlsxColLetter(n) {
+  let s = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="5">
+<font><sz val="11"/><name val="Calibri"/></font>
+<font><sz val="9"/><name val="Tahoma"/><b/><color rgb="FF000000"/></font>
+<font><sz val="10"/><name val="Tahoma"/><b/><color rgb="FF000000"/></font>
+<font><sz val="10"/><name val="Tahoma"/><b/><color rgb="FFFFFFFF"/></font>
+<font><sz val="16"/><name val="Tahoma"/><b/></font>
+</fonts>
+<fills count="5">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFEEECE1"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF4F81BD"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left/><right/><top style="thin"><color indexed="64"/></top><bottom/><diagonal/></border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="5">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
 
-// Same fix as buildSheet's computeColWidths, for the ExcelJS-built template sheets —
-// otherwise ExcelJS's own narrow default leaves every column just as cramped.
-function setTemplateColWidths(ws, headers) {
-  headers.forEach((h, i) => {
-    ws.getColumn(i + 1).width = Math.min(Math.max(String(h || "").length + 6, 14), 50);
+// Builds one <row> element. `values` is a plain array (1 per column); `styleForCol(colIdx)`
+// returns the style id (0-4) for that column, letting header rows apply a style to every
+// cell and data rows just use 0 (or a specific per-cell override via `cellStyles` map).
+function xlsxRowXml(rowNum, values, defaultStyle, cellStyleOverrides) {
+  const cells = [];
+  values.forEach((val, i) => {
+    if (val === "" || val === null || val === undefined) {
+      if (!defaultStyle) return; // skip genuinely empty cells in unstyled rows
+    }
+    const col = i + 1;
+    const ref = `${xlsxColLetter(col)}${rowNum}`;
+    const style = (cellStyleOverrides && cellStyleOverrides[col]) || defaultStyle || 0;
+    const styleAttr = style ? ` s="${style}"` : "";
+    if (typeof val === "number" && Number.isFinite(val)) {
+      cells.push(`<c r="${ref}"${styleAttr}><v>${val}</v></c>`);
+    } else {
+      const text = val === "" || val === null || val === undefined ? "" : String(val);
+      cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${xlsxEscape(text)}</t></is></c>`);
+    }
   });
+  return `<row r="${rowNum}">${cells.join("")}</row>`;
 }
 
-function styleTemplateHeaderRow(ws, rowNum, colCount, fill, fontColorArgb, fontSize) {
-  const row = ws.getRow(rowNum);
-  for (let c = 1; c <= colCount; c++) {
-    const cell = row.getCell(c);
-    // One combined style assignment per cell (fill+font+alignment+border together) rather
-    // than four separate property setters — more consistent across ExcelJS builds.
-    cell.style = {
-      fill: { type: "pattern", pattern: "solid", fgColor: { argb: String(fill.fgColor.argb) } },
-      font: { name: "Tahoma", bold: true, size: fontSize, color: fontColorArgb ? { argb: String(fontColorArgb) } : { argb: "FF000000" } },
-      alignment: { horizontal: "center", vertical: "middle" },
-      border: { top: { style: "thin" } },
-    };
-  }
-  row.height = 20;
+// sheets: [{ name, colCount, colWidths, rows: [array-of-values, ...], headerRowIndex,
+//            headerStyle, titleCell: {row, col} }]
+async function buildXlsxBuffer(sheets) {
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("\n")}
+</Types>`);
+  zip.file("_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`);
+  zip.file("xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>
+${sheets.map((s, i) => `<sheet name="${xlsxEscape(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("\n")}
+</sheets>
+</workbook>`);
+  zip.file("xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("\n")}
+<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`);
+  zip.file("xl/styles.xml", XLSX_STYLES_XML);
+
+  sheets.forEach((s, sheetIdx) => {
+    const colsXml = (s.colWidths || [])
+      .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`)
+      .join("\n");
+    const rowsXml = s.rows
+      .map((values, i) => {
+        const rowNum = i + 1;
+        const isHeader = rowNum === s.headerRowIndex;
+        const cellOverrides = {};
+        if (s.titleCell && s.titleCell.row === rowNum) cellOverrides[s.titleCell.col] = 4;
+        return xlsxRowXml(rowNum, values, isHeader ? s.headerStyle : 0, cellOverrides);
+      })
+      .join("\n");
+    zip.file(`xl/worksheets/sheet${sheetIdx + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+${colsXml ? `<cols>${colsXml}</cols>` : ""}
+<sheetData>
+${rowsXml}
+</sheetData>
+</worksheet>`);
+  });
+
+  return zip.generateAsync({ type: "uint8array" });
 }
 
 // Flattens orders into individual containers (cancelled ones excluded — they aren't
@@ -1076,70 +1178,58 @@ function flattenContainers(orders, filterFn) {
   return out;
 }
 
+function colWidthsFor(headers) {
+  return headers.map((h) => Math.min(Math.max(String(h || "").length + 6, 14), 50));
+}
+
 async function buildTemplateWorkbook(data) {
-  const wb = new ExcelJS.Workbook();
   const orders = data.orders || [];
   const today = new Date().toISOString().slice(0, 10);
   const allFlat = flattenContainers(orders);
+  const sheets = [];
 
   // Cleared Cases-01 — every container, across every shipment type
-  const wsCleared = wb.addWorksheet("Cleared Cases-01");
-  wsCleared.addRow(Array(48).fill(""));
+  const clearedRows = [Array(48).fill("")];
   const titleRow = Array(48).fill(""); titleRow[3] = "Detention Calculation & Payment Details"; titleRow[47] = today;
-  wsCleared.addRow(titleRow);
-  wsCleared.getRow(2).getCell(4).font = { name: "Tahoma", bold: true, size: 16 };
-  wsCleared.addRow(Array(48).fill(""));
-  wsCleared.addRow(CLEARED_CASES_HEADERS);
-  styleTemplateHeaderRow(wsCleared, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
-  allFlat.forEach(({ o, c }, i) => wsCleared.addRow(buildClearedRow(i + 1, o, c, data)));
-  setTemplateColWidths(wsCleared, CLEARED_CASES_HEADERS);
+  clearedRows.push(titleRow);
+  clearedRows.push(Array(48).fill(""));
+  clearedRows.push(CLEARED_CASES_HEADERS);
+  allFlat.forEach(({ o, c }, i) => clearedRows.push(buildClearedRow(i + 1, o, c, data)));
+  sheets.push({ name: "Cleared Cases-01", rows: clearedRows, headerRowIndex: 4, headerStyle: 1, titleCell: { row: 2, col: 4 }, colWidths: colWidthsFor(CLEARED_CASES_HEADERS) });
 
   // Import Transportation-2020 (cream header)
   const importFlat = flattenContainers(orders, (o) => orderKind(o) === "import");
-  const wsImport = wb.addWorksheet("Import Transportation-2020");
-  wsImport.addRow(IMPORT_HEADERS);
-  styleTemplateHeaderRow(wsImport, 1, IMPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
-  importFlat.forEach(({ o, c }, i) => wsImport.addRow(buildImportRow(i + 1, o, c, data)));
-  setTemplateColWidths(wsImport, IMPORT_HEADERS);
+  const importRows = [IMPORT_HEADERS, ...importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data))];
+  sheets.push({ name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1, headerStyle: 2, colWidths: colWidthsFor(IMPORT_HEADERS) });
 
   // Domestic Movement (blue header, white text)
   const domFlat = flattenContainers(orders, (o) => orderKind(o) === "domestic");
-  const wsDom = wb.addWorksheet("Domestic Movement");
-  wsDom.addRow(DOMESTIC_HEADERS);
-  styleTemplateHeaderRow(wsDom, 1, DOMESTIC_HEADERS.length, TPL_BLUE_FILL, "FFFFFFFF", 10);
-  domFlat.forEach(({ o, c }, i) => wsDom.addRow(buildDomesticRow(i + 1, o, c, data)));
-  setTemplateColWidths(wsDom, DOMESTIC_HEADERS);
+  const domRows = [DOMESTIC_HEADERS, ...domFlat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data))];
+  sheets.push({ name: "Domestic Movement", rows: domRows, headerRowIndex: 1, headerStyle: 3, colWidths: colWidthsFor(DOMESTIC_HEADERS) });
 
   // Export Transportation (cream header)
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
-  const wsExport = wb.addWorksheet("Export Transportation");
-  wsExport.addRow(EXPORT_HEADERS);
-  styleTemplateHeaderRow(wsExport, 1, EXPORT_HEADERS.length, TPL_CREAM_FILL, null, 10);
-  expFlat.forEach(({ o, c }, i) => wsExport.addRow(buildExportRow(i + 1, o, c, data)));
-  setTemplateColWidths(wsExport, EXPORT_HEADERS);
+  const expRows = [EXPORT_HEADERS, ...expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data))];
+  sheets.push({ name: "Export Transportation", rows: expRows, headerRowIndex: 1, headerStyle: 2, colWidths: colWidthsFor(EXPORT_HEADERS) });
 
   // Customer-specific sheets — same gray "Cleared Cases" style and columns, one row per
-  // container, filtered to that customer only. TEMPLATE_COMPANY_SHEETS names are matched
-  // against real customer names (case-insensitive substring match).
+  // container, filtered to that customer only.
   TEMPLATE_COMPANY_SHEETS.forEach((sheetName) => {
     const key = sheetName.toLowerCase();
     const filtered = flattenContainers(orders, (o) => {
       const cust = getCustomer(data, o.customerId);
       return cust && cust.name && cust.name.toLowerCase().includes(key);
     });
-    const ws = wb.addWorksheet(sheetName);
-    ws.addRow(Array(48).fill(""));
+    const rows = [Array(48).fill("")];
     const tRow = Array(48).fill(""); tRow[3] = `${sheetName} - Detention Calculation & Payment Details`; tRow[47] = today;
-    ws.addRow(tRow);
-    ws.getRow(2).getCell(4).font = { name: "Tahoma", bold: true, size: 16 };
-    ws.addRow(Array(48).fill(""));
-    ws.addRow(CLEARED_CASES_HEADERS);
-    styleTemplateHeaderRow(ws, 4, CLEARED_CASES_HEADERS.length, TPL_GRAY_FILL, null, 9);
-    filtered.forEach(({ o, c }, i) => ws.addRow(buildClearedRow(i + 1, o, c, data)));
-    setTemplateColWidths(ws, CLEARED_CASES_HEADERS);
+    rows.push(tRow);
+    rows.push(Array(48).fill(""));
+    rows.push(CLEARED_CASES_HEADERS);
+    filtered.forEach(({ o, c }, i) => rows.push(buildClearedRow(i + 1, o, c, data)));
+    sheets.push({ name: sheetName, rows, headerRowIndex: 4, headerStyle: 1, titleCell: { row: 2, col: 4 }, colWidths: colWidthsFor(CLEARED_CASES_HEADERS) });
   });
 
-  return wb;
+  return buildXlsxBuffer(sheets);
 }
 function coerceOrders(rows) {
   return rows.map((r) => {
@@ -6368,8 +6458,7 @@ function LogistixERP() {
   async function handleExportTemplate() {
     setExcelBusy(true);
     try {
-      const wb = await buildTemplateWorkbook(data);
-      const buffer = await wb.xlsx.writeBuffer();
+      const buffer = await buildTemplateWorkbook(data);
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const today = new Date().toISOString().slice(0, 10);
       const url = URL.createObjectURL(blob);
