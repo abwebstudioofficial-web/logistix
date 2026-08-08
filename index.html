@@ -9,7 +9,7 @@
 <script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
 <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/exceljs@4.3.0/dist/exceljs.min.js"></script>
+<script src="https://unpkg.com/exceljs@4.3.0/dist/exceljs.js"></script>
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
@@ -906,7 +906,17 @@ function getOrder(data, id) { return data.orders.find((o) => o.id === id) || nul
 
 /* ---- Excel attach/detach/download helpers ---- */
 
-const xnum = (v, fb = 0) => { const n = Number(v); return Number.isFinite(n) ? n : fb; };
+// Tolerant number parser used across every Excel import — strips currency symbols (Rs,
+// PKR, $, etc.), thousands separators, and stray whitespace before parsing, so a value
+// written as "Rs257.08" or "1,234.50" still comes through as a real number instead of
+// silently falling back to 0 just because Number() can't parse letters/commas directly.
+const xnum = (v, fb = 0) => {
+  if (v === null || v === undefined || v === "") return fb;
+  if (typeof v === "number") return Number.isFinite(v) ? v : fb;
+  const cleaned = String(v).trim().replace(/[^0-9.\-]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) && cleaned !== "" ? n : fb;
+};
 const xstr = (v, fb = "") => (v === null || v === undefined || v === "" ? fb : String(v));
 const xbool = (v) => v === true || v === "true" || v === 1 || v === "1" || v === "TRUE";
 
