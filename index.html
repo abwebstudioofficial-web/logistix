@@ -482,7 +482,7 @@ function ChargesEditor({ charges, onChange }) {
 
 // Sheet schema for the Excel attach/detach/sync feature
 const SHEET_SCHEMAS = {
-  Orders: ["id","orderNumber","customerId","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderAddress","deliveryAddress","containers","history"],
+  Orders: ["id","orderNumber","customerId","customerName","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderAddress","deliveryAddress","containers","history"],
   Customers: ["id","name","shortName","email","phone","contact","location","deliveryAddresses"],
   Senders: ["id","name","email","phone","contact","addresses"],
   Transporters: ["id","name","email","phone","contact","addresses"],
@@ -942,47 +942,67 @@ function humanizeFieldName(key) {
   s = s.replace(/\bId\b/g, "ID").replace(/\bBl\b/g, "BL").replace(/\bIgm\b/g, "IGM").replace(/\bPo\b/g, "PO").replace(/\bPkr\b/g, "PKR");
   return s;
 }
-function buildSheet(rows, schema, displayHeaders) {
+// Fields that must always be real numbers in Excel, never text — listed explicitly per
+// sheet (not a blanket "looks numeric" heuristic) so things like phone numbers or a purely-
+// numeric Job#/Container No. never get silently reinterpreted and lose meaning.
+const NUMERIC_SCHEMA_FIELDS = {
+  Orders: new Set(["amount", "weight", "stageIndex"]),
+  Vehicles: new Set(["year", "capacityKg", "mileageKm"]),
+  Invoices: new Set(["total"]),
+  FuelPrices: new Set(["pricePerLiter"]),
+};
+function buildSheet(rows, schema, displayHeaders, sheetName) {
   const headers = displayHeaders || schema.map(humanizeFieldName);
-  const idColIdx = schema.findIndex((k) => String(k).toLowerCase() === "id");
+  const hideKeys = new Set(["id", "customerid"]);
+  const hiddenColIdxs = schema.map((k, i) => (hideKeys.has(String(k).toLowerCase()) ? i : -1)).filter((i) => i >= 0);
+  const numericFields = NUMERIC_SCHEMA_FIELDS[sheetName] || new Set();
   if (!rows || rows.length === 0) {
     const ws = XLSX.utils.aoa_to_sheet([headers]);
     ws["!cols"] = headers.map((h) => ({ wch: Math.max(String(h).length + 6, 14) }));
-    if (idColIdx >= 0) ws["!cols"][idColIdx].hidden = true;
+    hiddenColIdxs.forEach((i) => { ws["!cols"][i].hidden = true; });
     return ws;
   }
   const cleaned = rows.map((r) => {
     const out = {};
     schema.forEach((k, i) => {
       const val = r[k];
-      out[headers[i]] = (val === null || val === undefined || val === "") ? "" : (typeof val === "object" ? JSON.stringify(val) : val);
+      const isEmpty = val === null || val === undefined || val === "";
+      if (isEmpty) {
+        // Hidden ID columns must stay truly empty — a literal "-" there would be read back
+        // as a real ID on re-import instead of correctly falling back to a freshly generated one.
+        out[headers[i]] = hideKeys.has(String(k).toLowerCase()) ? "" : "-";
+        return;
+      }
+      if (typeof val === "object") { out[headers[i]] = JSON.stringify(val); return; }
+      out[headers[i]] = numericFields.has(k) ? xnum(val) : val;
     });
     return out;
   });
   const ws = XLSX.utils.json_to_sheet(cleaned, { header: headers });
   ws["!cols"] = computeColWidths(headers, cleaned);
-  // Hide the ID column rather than deleting it — it's what lets Attach/Revert correctly
-  // match this row to the existing database record instead of creating a duplicate on
-  // re-import, but there's no reason for it to visually clutter the sheet.
-  if (idColIdx >= 0 && ws["!cols"][idColIdx]) ws["!cols"][idColIdx].hidden = true;
+  // Hide technical ID columns rather than deleting them — they're what lets Attach/Revert
+  // correctly match a row to its existing database record instead of creating a duplicate
+  // on re-import, but there's no reason for them to visually clutter the sheet.
+  hiddenColIdxs.forEach((i) => { if (ws["!cols"][i]) ws["!cols"][i].hidden = true; });
   return ws;
 }
 function buildWorkbook(data) {
   const wb = XLSX.utils.book_new();
-  const map = { Orders: data.orders, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
+  const ordersWithNames = (data.orders || []).map((o) => ({ ...o, customerName: (getCustomer(data, o.customerId) || {}).name || "" }));
+  const map = { Orders: ordersWithNames, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
   const displayHeadersBySheet = { FuelPrices: ["Effective Date", "Price per Liter (PKR)", "ID"] };
   Object.entries(SHEET_SCHEMAS).forEach(([sheetName, schema]) => {
-    XLSX.utils.book_append_sheet(wb, buildSheet(map[sheetName] || [], schema, displayHeadersBySheet[sheetName]), sheetName);
+    XLSX.utils.book_append_sheet(wb, buildSheet(map[sheetName] || [], schema, displayHeadersBySheet[sheetName], sheetName), sheetName);
   });
   return wb;
 }
 
 /* ---- Transportation-2026 template export ---- */
 const TEMPLATE_COMPANY_SHEETS = ["Tetra Pak","PTC","Dairyland","Haleeb","Fauji","Nestle","Engro","Pakola","Shezan","Others","Coca Cola","Ecolean","Pepsi"];
-const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Cargo Type","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
-const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Cargo Type","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
+const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Bonded Status","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
+const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Bonded Status","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
 const DOMESTIC_HEADERS = ["Sr.#","PO / SAP No.","Delivery Challan No.","Loading Point","Movement From (Origin - Destination)","Vehicle Number","Vehicle Qty","Loading Date","Freight","Transporter","POD Status","POD Received On","Transporter Bill Signed On","Transporter Bill No."];
-const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Booking No.","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Cargo Type","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
+const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Booking No.","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
 function fmtTimePart(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? "" : d.toLocaleTimeString(); }
@@ -1009,12 +1029,12 @@ function driverPhoneFor(c, data) {
 function buildImportRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
   return [
-    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "",
+    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.bondedStatus || "", o.origin || "",
     o.shippingLine || "", c.transporter || o.nominatedTransporter || "", o.description || "", o.blNumber || "",
-    c.containerNumber || "", c.sealNumber || "", c.containerSize || "", c.weight || "", fmtDateISO(o.igmDate),
+    c.containerNumber || "", c.sealNumber || "", c.containerSize || "", xnum(c.weight, ""), fmtDateISO(o.igmDate),
     c.destination || o.destination || "", cust ? cust.name : "", c.emptyReturnLocation || "", c.biltyNumber || "",
-    c.vehiclePlate || "", fmtDateISO(c.dispatchAt), c.freightAmount || "", "", fmtDateISO(c.transporterBillDate),
-    fmtDateISO(c.transporterBillDate), c.transporterBillNo || "", c.billAmountApproved || "",
+    c.vehiclePlate || "", fmtDateISO(c.dispatchAt), xnum(c.freightAmount, ""), "", fmtDateISO(c.transporterBillDate),
+    fmtDateISO(c.transporterBillDate), c.transporterBillNo || "", xnum(c.billAmountApproved, ""),
     chargeAmount(c, "LOLO Charges"), chargeAmount(c, "Halting/Stay Charges"), chargeAmount(c, "Other Charges"),
     containerTotalBillAmount(c), c.emptyReturnDescription || "", new Date(o.createdDate || Date.now()).getFullYear(),
   ];
@@ -1024,24 +1044,24 @@ function buildExportRow(sr, o, c, data) {
   return [
     sr, o.jobNumber || o.orderNumber || "", cust ? cust.name : "", c.emptyReturnLocation || "", o.origin || "",
     c.transporter || o.nominatedTransporter || "", o.shippingLine || "", o.blNumber || "", c.containerNumber || "",
-    c.containerSize || "", c.weight || "", c.vehiclePlate || "", fmtDateISO(c.dispatchAt), fmtDateISO(c.dispatchAt),
-    c.biltyNumber || "", c.freightAmount || "", o.cargoType || "", c.destination || o.destination || "", c.emptyReturnDescription || "",
+    c.containerSize || "", xnum(c.weight, ""), c.vehiclePlate || "", fmtDateISO(c.dispatchAt), fmtDateISO(c.dispatchAt),
+    c.biltyNumber || "", xnum(c.freightAmount, ""), o.bondedStatus || "", c.destination || o.destination || "", c.emptyReturnDescription || "",
   ];
 }
 function buildDomesticRow(sr, o, c, data) {
   return [
     sr, o.poNumber || "", c.biltyNumber || "", o.origin || "", `${o.origin || ""} - ${c.destination || o.destination || ""}`,
-    c.vehiclePlate || "", c.containerSize || "", fmtDateISO(c.dispatchAt), c.freightAmount || "", c.transporter || o.nominatedTransporter || "",
+    c.vehiclePlate || "", c.containerSize || "", fmtDateISO(c.dispatchAt), xnum(c.freightAmount, ""), c.transporter || o.nominatedTransporter || "",
     c.podArrivalAt ? "Received" : "Pending", fmtDateISO(c.podArrivalAt), fmtDateISO(c.transporterBillDate), c.transporterBillNo || "",
   ];
 }
 function buildClearedRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
   return [
-    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.cargoType || "", o.origin || "", o.shippingLine || "",
+    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.bondedStatus || "", o.origin || "", o.shippingLine || "",
     c.transporter || o.nominatedTransporter || "", o.description || "", o.blNumber || "",
     c.containerSize === "20'" ? 1 : "", c.containerSize === "40'" ? 1 : "",
-    c.containerNumber || "", c.containerSize || "", c.weight || "", c.vehiclePlate || "", driverPhoneFor(c, data),
+    c.containerNumber || "", c.containerSize || "", xnum(c.weight, ""), c.vehiclePlate || "", driverPhoneFor(c, data),
     fmtDateISO(o.igmDate), "", fmtDateISO(c.dispatchAt), fmtTimePart(c.dispatchAt),
     fmtDateISO(o.eta), "", fmtDateISO(c.podArrivalAt), fmtTimePart(c.podArrivalAt),
     fmtDateISO(c.podOffloadingAt), fmtTimePart(c.podOffloadingAt), c.destination || o.destination || "", c.emptyReturnLocation || "",
@@ -1164,13 +1184,16 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 // the right style id for every column (header wrap/no-wrap, data wrap/no-wrap, conditional
 // colors), since those now vary per-column rather than uniformly per-row. Falls back to
 // style 8 (centered, no wrap) for any column that genuinely has no explicit style.
-function xlsxRowXml(rowNum, values, cellStyleOverrides) {
+// `fillBlanks`: when true, a genuinely empty data cell gets "-" instead of being skipped —
+// used for real data rows so the sheet reads as "checked and confirmed blank" rather than
+// looking incomplete. Left false for spacer/title rows, which are blank on purpose.
+function xlsxRowXml(rowNum, values, cellStyleOverrides, fillBlanks) {
   const cells = [];
   values.forEach((val, i) => {
     const isEmpty = val === "" || val === null || val === undefined;
     const col = i + 1;
     const override = cellStyleOverrides && cellStyleOverrides[col];
-    if (isEmpty && override == null) return; // skip genuinely empty, unstyled cells
+    if (isEmpty && override == null && !fillBlanks) return; // skip empty cells in structural spacer rows
     const ref = `${xlsxColLetter(col)}${rowNum}`;
     const isNumber = typeof val === "number" && Number.isFinite(val);
     const style = override != null ? override : 8;
@@ -1178,7 +1201,7 @@ function xlsxRowXml(rowNum, values, cellStyleOverrides) {
     if (isNumber) {
       cells.push(`<c r="${ref}"${styleAttr}><v>${val}</v></c>`);
     } else {
-      const text = isEmpty ? "" : String(val);
+      const text = isEmpty ? (fillBlanks ? "-" : "") : String(val);
       cells.push(`<c r="${ref}"${styleAttr} t="inlineStr"><is><t xml:space="preserve">${xlsxEscape(text)}</t></is></c>`);
     }
   });
@@ -1236,7 +1259,8 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
             });
           }
         }
-        const rowXml = xlsxRowXml(rowNum, values, cellOverrides);
+        const isDataRow = rowNum > s.headerRowIndex;
+        const rowXml = xlsxRowXml(rowNum, values, cellOverrides, isDataRow);
         // Every row gets an explicit height + customHeight="1" — without that flag, Excel
         // treats defaultRowHeight as a mere suggestion and auto-expands any row containing
         // wrapped text that needs more vertical room, which is exactly what was happening.
@@ -1469,7 +1493,34 @@ async function buildTemplateWorkbook(data) {
 
   return buildXlsxBuffer(sheets);
 }
-function coerceOrders(rows) {
+// Snaps loosely-typed shipment type text to exactly "Import"/"Domestic"/"Export".
+function normalizeShipmentType(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s.startsWith("dom")) return "Domestic";
+  if (s.startsWith("exp")) return "Export";
+  return "Import";
+}
+// Snaps loosely-typed bonded-status text to exactly "Bonded"/"Non-Bonded".
+function normalizeBondedStatus(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s.includes("non")) return "Non-Bonded";
+  if (s.includes("bond")) return "Bonded";
+  return "Non-Bonded";
+}
+// Resolves a customer for an imported row: prefers a customerId that actually matches an
+// existing customer, but falls back to matching by name (since the export shows the
+// customer's name, not the raw ID, as the primary editable column).
+function resolveCustomerId(r, data) {
+  const idVal = xstr(readField(r, "customerId"));
+  if (idVal && data && data.customers && data.customers.some((c) => c.id === idVal)) return idVal;
+  const nameVal = xstr(readField(r, "customerName")) || xstr(readField(r, "Customer"));
+  if (nameVal && data && data.customers) {
+    const match = data.customers.find((c) => c.name && c.name.toLowerCase().trim() === nameVal.toLowerCase().trim());
+    if (match) return match.id;
+  }
+  return idVal;
+}
+function coerceOrders(rows, data) {
   return rows.map((r) => {
     let containers = [];
     try {
@@ -1483,7 +1534,7 @@ function coerceOrders(rows) {
     } catch (e) { history = []; }
     return {
       id: xstr(readField(r, "id")) || uid("ord"), orderNumber: xstr(readField(r, "orderNumber")) || genOrderNumber(),
-      customerId: xstr(readField(r, "customerId")), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")),
+      customerId: resolveCustomerId(r, data), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")),
       driverId: xstr(readField(r, "driverId")), vehicleId: xstr(readField(r, "vehicleId")), priority: xstr(readField(r, "priority"), "Normal"),
       amount: xnum(readField(r, "amount")), weight: xnum(readField(r, "weight")), description: xstr(readField(r, "description")), createdDate: xstr(readField(r, "createdDate")) || todayISO(),
       eta: xstr(readField(r, "eta")), stageIndex: xnum(readField(r, "stageIndex"), 0), cancelled: xbool(readField(r, "cancelled")),
@@ -1492,7 +1543,7 @@ function coerceOrders(rows) {
       shippingLine: xstr(readField(r, "shippingLine")), nominatedTransporter: xstr(readField(r, "nominatedTransporter")),
       blNumber: xstr(readField(r, "blNumber")),
       igmDate: xstr(readField(r, "igmDate")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
-      bondedStatus: xstr(readField(r, "bondedStatus"), "Non-Bonded"), shipmentType: xstr(readField(r, "shipmentType"), "Import"),
+      bondedStatus: normalizeBondedStatus(readField(r, "bondedStatus")), shipmentType: normalizeShipmentType(readField(r, "shipmentType")),
       senderId: xstr(readField(r, "senderId")), senderAddress: xstr(readField(r, "senderAddress")), deliveryAddress: xstr(readField(r, "deliveryAddress")),
       containers, history,
     };
@@ -6503,7 +6554,7 @@ function LogistixERP() {
           const table = SHEET_TABLE_NAME[sheetName] || sheetName.toLowerCase();
           found.push(sheetName);
           let coerced;
-          if (sheetName === "Orders") coerced = coerceOrders(rows);
+          if (sheetName === "Orders") coerced = coerceOrders(rows, data);
           if (sheetName === "Customers") coerced = coerceCustomers(rows);
           if (sheetName === "Senders") coerced = coerceSenders(rows);
           if (sheetName === "Transporters") coerced = coerceTransporters(rows);
@@ -6611,7 +6662,7 @@ function LogistixERP() {
         if (!ws) throw new Error("That file doesn't have a readable sheet.");
         const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
         const coerceFn = COERCE_FUNCTIONS[cfg.coerceKey];
-        let coerced = coerceFn(rows);
+        let coerced = coerceFn(rows, data);
         const skippedCount = rows.length - coerced.length;
         if (cfg.forceFields) coerced = coerced.map((r) => ({ ...r, ...cfg.forceFields }));
 
@@ -6687,10 +6738,13 @@ function LogistixERP() {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
     const allRows = data[cfg.table] || [];
-    const rows = cfg.filterFn ? allRows.filter(cfg.filterFn) : allRows;
+    let rows = cfg.filterFn ? allRows.filter(cfg.filterFn) : allRows;
+    if (cfg.sheetName === "Orders") {
+      rows = rows.map((o) => ({ ...o, customerName: (getCustomer(data, o.customerId) || {}).name || "" }));
+    }
     const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, cfg.displayHeaders), cfg.sheetName);
+    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, cfg.displayHeaders, cfg.sheetName), cfg.sheetName);
     XLSX.writeFile(wb, `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
