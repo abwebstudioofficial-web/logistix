@@ -4354,11 +4354,37 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
 }
 
 function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
+  const [q, setQ] = useState("");
+  const [calcDate, setCalcDate] = useState("");
   const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
-  const rows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
+  const allRows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
+  const rows = allRows.filter((k) => {
+    const text = `${k.loadingPoint} ${k.destination} ${k.movementThrough || ""} ${k.vehicleSize || ""} ${k.weightCategory || ""} ${k.axleLoadCategory || ""}`.toLowerCase();
+    return !q || text.includes(q.toLowerCase());
+  });
   const title = group ? group.contractTitle : "Unassigned Rates";
   const excelKey = group ? group.id : "orphan";
   const excelMeta = (contractExcel || {})[excelKey];
+
+  // Every rate is treated as half General (fixed) and half Fuel (variable) component. Picking
+  // a date looks up the fuel price on file for it (Fuel Management > Fuel Price) and scales
+  // just the Fuel half by how much that price has moved relative to this contract's own Fuel
+  // Base Rate — the General half never changes. Only possible for a real contract (the
+  // "Unassigned Rates" bucket has no Fuel Base Rate to compare against).
+  const fuelPriceForDate = calcDate ? fuelPriceOnDate(data.fuel_prices, calcDate) : 0;
+  const canCalculate = !!group && group.fuelBaseRate && !!calcDate && fuelPriceForDate > 0;
+  function adjustedRateFor(baseRate) {
+    if (!canCalculate) return null;
+    const general = baseRate * 0.5;
+    const fuelComponent = baseRate * 0.5;
+    // Fuel component (an amount, e.g. Rs 50,000) ÷ Fuel Base Rate (e.g. Rs 272.77/L) gives
+    // how many litres that amount represents at the contract's base price. Multiplying that
+    // litre quantity by the fuel price on the chosen date gives the adjusted fuel amount.
+    const impliedLitres = fuelComponent / group.fuelBaseRate;
+    const adjustedFuel = impliedLitres * fuelPriceForDate;
+    return general + adjustedFuel;
+  }
+
   return (
     <div className="space-y-5">
       <button onClick={onBack} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> Back to {customer.name}</button>
@@ -4393,10 +4419,23 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
       {excelMeta && excelMeta.message && (
         <p className={cx("text-xs", excelMeta.message.ok ? "text-emerald-400" : "text-red-400")}>{excelMeta.message.text}</p>
       )}
+      <div className="flex gap-3 flex-wrap items-end">
+        <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
+        {group && (
+          <Field label="Calculate rate as of date">
+            <input type="date" className={inputCls} style={{ width: 180 }} value={calcDate} onChange={(e) => setCalcDate(e.target.value)} />
+          </Field>
+        )}
+      </div>
+      {calcDate && group && !canCalculate && (
+        <p className="text-amber-500 text-xs">
+          {!group.fuelBaseRate ? "This contract has no Fuel Base Rate set, so an adjusted rate can't be calculated." : "No fuel price on file for that date yet — set one in Fuel Management > Fuel Price."}
+        </p>
+      )}
       {rows.length === 0 ? (
         <EmptyState
-          icon={FileSpreadsheet} text="No rates yet in this contract."
-          actionLabel="Add first rate"
+          icon={FileSpreadsheet} text={allRows.length === 0 ? "No rates yet in this contract." : "No rates match your search."}
+          actionLabel={allRows.length === 0 ? "Add first rate" : null}
           onAction={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id, contractGroupId: group ? group.id : "" } })}
         />
       ) : (
@@ -4411,27 +4450,32 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                 <th className={thCls}>Weight Category</th>
                 <th className={thCls}>Axle Load Category</th>
                 <th className={thCls}>Rate (PKR)</th>
+                {canCalculate && <th className={thCls}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((k) => (
-                <tr key={k.id} className={trCls}>
-                  <td className={tdCls}>{k.loadingPoint}</td>
-                  <td className={tdCls}>{k.destination}</td>
-                  <td className={tdCls}>{k.movementThrough || "—"}</td>
-                  <td className={tdCls}>{k.vehicleSize || "—"}</td>
-                  <td className={tdCls}>{k.weightCategory || "—"}</td>
-                  <td className={tdCls}>{k.axleLoadCategory || "—"}</td>
-                  <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(k.rate)}</td>
-                  <td className={tdCls}>
-                    <div className="flex items-center gap-1 justify-end">
-                      <button className={iconBtn} onClick={() => openModal({ type: "contract", mode: "edit", item: k })}><Pencil size={15} /></button>
-                      <button className={iconBtnDanger} onClick={() => askDelete({ entity: "contracts", id: k.id, label: "contract rate" })}><Trash2 size={15} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((k) => {
+                const adjusted = adjustedRateFor(k.rate);
+                return (
+                  <tr key={k.id} className={trCls}>
+                    <td className={tdCls}>{k.loadingPoint}</td>
+                    <td className={tdCls}>{k.destination}</td>
+                    <td className={tdCls}>{k.movementThrough || "—"}</td>
+                    <td className={tdCls}>{k.vehicleSize || "—"}</td>
+                    <td className={tdCls}>{k.weightCategory || "—"}</td>
+                    <td className={tdCls}>{k.axleLoadCategory || "—"}</td>
+                    <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(k.rate)}</td>
+                    {canCalculate && <td className={cx(tdCls, "text-emerald-400 font-medium")}>{adjusted !== null ? formatPKR(adjusted) : "—"}</td>}
+                    <td className={tdCls}>
+                      <div className="flex items-center gap-1 justify-end">
+                        <button className={iconBtn} onClick={() => openModal({ type: "contract", mode: "edit", item: k })}><Pencil size={15} /></button>
+                        <button className={iconBtnDanger} onClick={() => askDelete({ entity: "contracts", id: k.id, label: "contract rate" })}><Trash2 size={15} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
