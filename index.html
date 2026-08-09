@@ -4200,13 +4200,13 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
 
 /* ==================== Contracts (Finance Manager + Admin) ==================== */
 
-function ContractsView({ data, openModal, askDelete }) {
+function ContractsView({ data, openModal, askDelete, role }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
   if (selectedCustomerId) {
     const cust = data.customers.find((c) => c.id === selectedCustomerId);
-    if (cust) return <CustomerContractsDetail customer={cust} data={data} openModal={openModal} askDelete={askDelete} onBack={() => setSelectedCustomerId(null)} />;
+    if (cust) return <CustomerContractsDetail customer={cust} data={data} openModal={openModal} askDelete={askDelete} role={role} onBack={() => setSelectedCustomerId(null)} />;
   }
 
   const rows = data.customers.filter((c) => `${c.name} ${c.shortName || ""}`.toLowerCase().includes(q.toLowerCase()));
@@ -4242,11 +4242,12 @@ function ContractsView({ data, openModal, askDelete }) {
   );
 }
 
-function CustomerContractsDetail({ customer, data, openModal, askDelete, onBack }) {
+function CustomerContractsDetail({ customer, data, openModal, askDelete, role, onBack }) {
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const groups = (data.contract_groups || []).filter((g) => g.customerId === customer.id);
   const allRates = (data.contracts || []).filter((k) => k.customerId === customer.id);
   const groupIds = new Set(groups.map((g) => g.id));
+  const canEditContract = role === "admin" || role === "finance_manager";
   // Rate rows saved before contracts had a proper title/id (or whose parent contract was
   // deleted) fall into a single "Unassigned Rates" bucket so nothing gets hidden.
   const orphanRates = allRates.filter((k) => !k.contractGroupId || !groupIds.has(k.contractGroupId));
@@ -4256,7 +4257,7 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, onBack 
     return (
       <ContractDetail
         customer={customer} group={group} data={data}
-        openModal={openModal} askDelete={askDelete}
+        openModal={openModal} askDelete={askDelete} role={role}
         onBack={() => setSelectedGroupId(null)}
       />
     );
@@ -4285,18 +4286,27 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, onBack 
           {groups.map((g) => {
             const count = allRates.filter((k) => k.contractGroupId === g.id).length;
             return (
-              <button key={g.id} onClick={() => setSelectedGroupId(g.id)} className={cx(cardCls, "p-5 text-left")}>
-                <div className="flex items-center gap-3 mb-1">
-                  <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><FileSpreadsheet size={18} className="text-white" /></div>
-                  <div className="min-w-0">
-                    <div className="text-white font-semibold truncate">{g.contractTitle}</div>
-                    <div className="text-slate-500 text-xs">{count} rate{count !== 1 ? "s" : ""} on file</div>
+              <div key={g.id} onClick={() => setSelectedGroupId(g.id)} className={cx(cardCls, "p-5 text-left cursor-pointer")}>
+                <div className="flex items-start justify-between mb-1">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><FileSpreadsheet size={18} className="text-white" /></div>
+                    <div className="min-w-0">
+                      <div className="text-white font-semibold truncate">{g.contractTitle}</div>
+                      <div className="text-slate-500 text-xs">{count} rate{count !== 1 ? "s" : ""} on file</div>
+                    </div>
                   </div>
+                  {canEditContract && (
+                    <button
+                      className={iconBtn}
+                      title="Edit contract details"
+                      onClick={(e) => { e.stopPropagation(); openModal({ type: "contract_group", mode: "edit", item: g }); }}
+                    ><Pencil size={14} /></button>
+                  )}
                 </div>
                 {(g.commencementDate || g.expiryDate) && (
                   <div className="text-slate-500 text-xs mt-2">{g.commencementDate ? fmtDate(g.commencementDate) : "—"} → {g.expiryDate ? fmtDate(g.expiryDate) : "—"}</div>
                 )}
-              </button>
+              </div>
             );
           })}
           {orphanRates.length > 0 && (
@@ -4316,7 +4326,7 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, onBack 
   );
 }
 
-function ContractDetail({ customer, group, data, openModal, askDelete, onBack }) {
+function ContractDetail({ customer, group, data, openModal, askDelete, role, onBack }) {
   const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
   const rows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
   const title = group ? group.contractTitle : "Unassigned Rates";
@@ -4336,7 +4346,7 @@ function ContractDetail({ customer, group, data, openModal, askDelete, onBack })
           )}
         </div>
         <div className="flex items-center gap-2">
-          {group && (
+          {group && (role === "admin" || role === "finance_manager") && (
             <button className={btnSecondary} onClick={() => openModal({ type: "contract_group", mode: "edit", item: group })}><Pencil size={14} /> Edit Contract</button>
           )}
           <button className={btnPrimary} onClick={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id, contractGroupId: group ? group.id : "" } })}>
@@ -4357,6 +4367,7 @@ function ContractDetail({ customer, group, data, openModal, askDelete, onBack })
               <tr>
                 <th className={thCls}>Loading Point</th>
                 <th className={thCls}>Destination</th>
+                <th className={thCls}>Movement Through</th>
                 <th className={thCls}>Vehicle Size</th>
                 <th className={thCls}>Weight Category</th>
                 <th className={thCls}>Axle Load Category</th>
@@ -4369,6 +4380,7 @@ function ContractDetail({ customer, group, data, openModal, askDelete, onBack })
                 <tr key={k.id} className={trCls}>
                   <td className={tdCls}>{k.loadingPoint}</td>
                   <td className={tdCls}>{k.destination}</td>
+                  <td className={tdCls}>{k.movementThrough || "—"}</td>
                   <td className={tdCls}>{k.vehicleSize || "—"}</td>
                   <td className={tdCls}>{k.weightCategory || "—"}</td>
                   <td className={tdCls}>{k.axleLoadCategory || "—"}</td>
@@ -4394,6 +4406,7 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
   const k = initial || prefill || {};
   const [loadingPoint, setLoadingPoint] = useState(k.loadingPoint || "");
   const [destination, setDestination] = useState(k.destination || "");
+  const [movementThrough, setMovementThrough] = useState(k.movementThrough || "");
   const [vehicleSize, setVehicleSize] = useState(k.vehicleSize || "");
   const [weightCategory, setWeightCategory] = useState(k.weightCategory || "");
   const [axleLoadCategory, setAxleLoadCategory] = useState(k.axleLoadCategory || "");
@@ -4404,7 +4417,7 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
     if (!loadingPoint.trim() || !destination.trim() || rate === "") return;
     onSave({
       id: k.id || genUUID(), customerId: k.customerId, contractGroupId: k.contractGroupId,
-      loadingPoint: loadingPoint.trim(), destination: destination.trim(),
+      loadingPoint: loadingPoint.trim(), destination: destination.trim(), movementThrough,
       vehicleSize: vehicleSize.trim(), weightCategory: weightCategory.trim(), axleLoadCategory: axleLoadCategory.trim(),
       rate: Number(rate),
     });
@@ -4416,6 +4429,12 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
         <Field label="Loading Point"><input className={inputCls} value={loadingPoint} onChange={(e) => setLoadingPoint(e.target.value)} placeholder="e.g. Karachi Port" /></Field>
         <Field label="Destination"><input className={inputCls} value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="e.g. Lahore" /></Field>
       </div>
+      <Field label="Movement Through">
+        <select className={inputCls} value={movementThrough} onChange={(e) => setMovementThrough(e.target.value)}>
+          <option value="">Select</option>
+          {MOVEMENT_THROUGH_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Vehicle Size">
           <DropdownWithCustom
@@ -7424,7 +7443,7 @@ function LogistixERP() {
               {view === "tracking_import" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Import" />}
               {view === "tracking_domestic" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Domestic" />}
               {view === "tracking_export" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Export" />}
-              {view === "contracts" && <ContractsView data={data} openModal={setModal} askDelete={setConfirm} />}
+              {view === "contracts" && <ContractsView data={data} openModal={setModal} askDelete={setConfirm} role={viewSession.role} />}
               {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "fuel_management" && (
                 <FuelManagementView
