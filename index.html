@@ -5181,13 +5181,17 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
     setContainers((cs) => cs.map((c) => (c.id === id ? { ...c, [key]: val } : c)));
   }
   function setContainerStatus(id, statusChoice) {
-    const stageMap = { Confirmed: 0, "In Transit": 2, Delivered: 3, Completed: 4 };
+    const isDomesticOrder = (presetShipmentType || o.shipmentType || "Import") === "Domestic";
+    const stageMap = isDomesticOrder
+      ? { Confirmed: 0, "Picked Up": 1, "In Transit": 2, "Under Offloading": 3, Delivered: 4 }
+      : { Confirmed: 0, "In Transit": 2, Delivered: 3, Completed: 4 };
+    const deliveredAtIndex = isDomesticOrder ? 4 : 3;
     setContainers((cs) => cs.map((c) => {
       if (c.id !== id) return c;
       if (statusChoice === "Cancelled") return { ...c, cancelled: true };
       return {
         ...c, cancelled: false, stageIndex: stageMap[statusChoice],
-        deliveredDate: (statusChoice === "Delivered" || statusChoice === "Completed") ? (c.deliveredDate || todayISO()) : c.deliveredDate,
+        deliveredDate: (stageMap[statusChoice] >= deliveredAtIndex) ? (c.deliveredDate || todayISO()) : c.deliveredDate,
       };
     }));
   }
@@ -5315,6 +5319,17 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
           </div>
           <Field label="Loading Point"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
           <Field label="Destination"><input className={inputCls} value={dc.destination} onChange={(e) => setContainerField(dc.id, "destination", e.target.value)} /></Field>
+          {role !== "data_entry" && (
+            <Field label="Status">
+              <select
+                className={inputCls}
+                value={dc.cancelled ? "Cancelled" : (dc.stageIndex >= 4 ? "Delivered" : dc.stageIndex >= 3 ? "Under Offloading" : dc.stageIndex >= 2 ? "In Transit" : dc.stageIndex >= 1 ? "Picked Up" : "Confirmed")}
+                onChange={(e) => setContainerStatus(dc.id, e.target.value)}
+              >
+                {DOMESTIC_STAGES.concat("Cancelled").map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
