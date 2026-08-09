@@ -2954,7 +2954,6 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                     <th className={thCls}>Loading Date</th>
                     <th className={thCls}>Vehicle No.</th>
                     <th className={thCls}>Vehicle Size</th>
-                    {domesticTab === "Wrapping Materials" && <th className={thCls}>Supplier</th>}
                     <th className={thCls}>Loading Point</th>
                     <th className={thCls}>Destination</th>
                     <th className={thCls}>Transporter Name</th>
@@ -2992,7 +2991,6 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                         <td className={tdCls}>{c && c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>
-                        {domesticTab === "Wrapping Materials" && <td className={tdCls}>{c ? (c.supplier || "—") : "—"}</td>}
                         <td className={tdCls}>{o.origin || "—"}</td>
                         <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.transporter || "—") : "—"}</td>
@@ -3484,7 +3482,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     <span>Via: {c.movementThrough || "—"}</span>
                     <span>Loading: {c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</span>
                     <span>Vehicle Size: {c.vehicleSize || "—"}</span>
-                    {o.domesticCategory === "Wrapping Materials" && <span>Supplier: {c.supplier || "—"}</span>}
                   </div>
                 )}
                 <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={o.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
@@ -4320,8 +4317,9 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       .sort((a, b) => (b.swapDate || "").localeCompare(a.swapDate || "")),
     [data.fuel_card_swaps, customer.id]
   );
-  // Group by month — a month with just one swap shows its exact date as a normal row;
-  // a month with several collapses into a single row with a dropdown to pick between them.
+  // Group by month just to build the filter dropdown's options — the actual
+  // display switches between the plain table (all months) and a tile grid
+  // (one specific month), it no longer groups rows in the table itself.
   const swapGroups = useMemo(() => {
     const map = new Map();
     swaps.forEach((s) => {
@@ -4331,6 +4329,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     });
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [swaps]);
+  const [swapMonthFilter, setSwapMonthFilter] = useState("all");
 
   const tabBtnCls = (active) => cx(
     "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
@@ -4359,7 +4358,13 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
 
       {tab === "swap_report" ? (
         <div className="space-y-4">
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <select className={inputCls} style={{ width: 220 }} value={swapMonthFilter} onChange={(e) => setSwapMonthFilter(e.target.value)}>
+              <option value="all">All months</option>
+              {swapGroups.map(([key]) => (
+                <option key={key} value={key}>{key === "unknown" ? "No date" : fmtMonthYear(new Date(key + "-01T00:00:00"))}</option>
+              ))}
+            </select>
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}>
               <Plus size={16} /> Log Swap
             </button>
@@ -4370,7 +4375,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               actionLabel="Log first swap"
               onAction={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}
             />
-          ) : (
+          ) : swapMonthFilter === "all" ? (
             <div className={tableWrap}>
               <table className="w-full text-sm">
                 <thead className={theadCls}>
@@ -4385,15 +4390,17 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                   </tr>
                 </thead>
                 <tbody>
-                  {swapGroups.map(([key, entries]) =>
-                    entries.length === 1 ? (
-                      <SwapRow key={entries[0].id} s={entries[0]} dateLabel={entries[0].swapDate ? fmtDate(entries[0].swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
-                    ) : (
-                      <SwapMonthGroupRow key={key} entries={entries} openModal={openModal} askDelete={askDelete} />
-                    )
-                  )}
+                  {swaps.map((s) => (
+                    <SwapRow key={s.id} s={s} dateLabel={s.swapDate ? fmtDate(s.swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
+                  ))}
                 </tbody>
               </table>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {(swapGroups.find(([key]) => key === swapMonthFilter)?.[1] || []).map((s) => (
+                <SwapTile key={s.id} s={s} openModal={openModal} askDelete={askDelete} />
+              ))}
             </div>
           )}
         </div>
@@ -4561,52 +4568,24 @@ function SwapRow({ s, dateLabel, openModal, askDelete }) {
   );
 }
 
-// A month with more than one swap collapses into one row with a "+" toggle. Clicking it
-// expands a row of compact tiles, one per date, each showing only what's needed at a
-// glance — Date, Card No., Qty, Amount — with edit/delete on the tile itself.
-function SwapMonthGroupRow({ entries, openModal, askDelete }) {
-  const [expanded, setExpanded] = useState(false);
-  const first = entries[0];
-  const monthLabel = fmtMonthYear(new Date(first.swapDate + "T00:00:00"));
+// One compact tile per entry, used by the month-filtered tile view — shows only
+// Date, Card No., Qty, Amount at a glance, with edit/delete on the tile itself.
+function SwapTile({ s, openModal, askDelete }) {
   return (
-    <>
-      <tr className={trCls}>
-        <td className={tdCls}>
-          <button type="button" onClick={() => setExpanded((v) => !v)} className="flex items-center gap-1.5 text-slate-200 hover:text-white font-medium">
-            <span className={cx("inline-flex items-center justify-center w-4 h-4 rounded border border-slate-600 text-slate-400 transition-transform", expanded && "rotate-45 border-blue-500 text-blue-400")}>
-              <Plus size={11} />
-            </span>
-            {monthLabel} <span className="text-slate-500 font-normal">({entries.length} entries)</span>
-          </button>
-        </td>
-        <td className={tdCls}>{first.department || "—"}</td>
-        <td className={tdCls} colSpan={5}></td>
-      </tr>
-      {expanded && (
-        <tr className="bg-slate-900/40">
-          <td colSpan={7} className="px-4 py-3">
-            <div className="flex flex-wrap gap-2">
-              {entries.map((s) => (
-                <div key={s.id} className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 flex items-center gap-3 text-xs">
-                  <div>
-                    <div className="text-slate-500">{fmtDate(s.swapDate)}</div>
-                    <div className="text-slate-300 font-mono">{s.cardNumber || "—"}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-slate-400">{s.qtyLtr || s.qtyLtr === 0 ? `${Number(s.qtyLtr).toLocaleString()} L` : "—"}</div>
-                    <div className="text-white font-medium">{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</div>
-                  </div>
-                  <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
-                    <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={13} /></button>
-                    <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={13} /></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+    <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 flex items-center gap-3 text-xs">
+      <div>
+        <div className="text-slate-500">{s.swapDate ? fmtDate(s.swapDate) : "—"}</div>
+        <div className="text-slate-300 font-mono">{s.cardNumber || "—"}</div>
+      </div>
+      <div className="text-right">
+        <div className="text-slate-400">{s.qtyLtr || s.qtyLtr === 0 ? `${Number(s.qtyLtr).toLocaleString()} L` : "—"}</div>
+        <div className="text-white font-medium">{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</div>
+      </div>
+      <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
+        <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={13} /></button>
+        <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={13} /></button>
+      </div>
+    </div>
   );
 }
 
@@ -5182,7 +5161,6 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
           )}
         </Field>
         <Field label="Est. Delivery Date"><input type="date" className={inputCls} value={eta} onChange={(e) => setEta(e.target.value)} /></Field>
-        <Field label="Loading Point"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
 
         <div className="mt-4 pt-3 border-t border-slate-800 space-y-2">
           <div className="grid grid-cols-2 gap-2">
@@ -5203,7 +5181,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
               </select>
             </Field>
           </div>
-          <Field label="Supplier"><input className={inputCls} value={dc.supplier || ""} onChange={(e) => setContainerField(dc.id, "supplier", e.target.value)} /></Field>
+          <Field label="Loading Point"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
           <Field label="Destination"><input className={inputCls} value={dc.destination} onChange={(e) => setContainerField(dc.id, "destination", e.target.value)} /></Field>
         </div>
 
