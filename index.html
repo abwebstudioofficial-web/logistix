@@ -2958,7 +2958,6 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                 {isDomestic ? (
                   <>
                     <th className={thCls}>Customer</th>
-                    <th className={thCls}>Sender</th>
                     <th className={thCls}>PO / SAP No.</th>
                     <th className={thCls}>Movement Through</th>
                     <th className={thCls}>Loading Date</th>
@@ -2995,7 +2994,6 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                     {isDomestic ? (
                       <>
                         <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
-                        <td className={tdCls}>{(data.senders || []).find((s) => s.id === o.senderId)?.name || "—"}</td>
                         <td className={cx(tdCls, "font-mono text-slate-200")}>{c ? (c.poSapNo || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.movementThrough || "—") : "—"}</td>
                         <td className={tdCls}>{c && c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</td>
@@ -4390,7 +4388,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               actionLabel="Log first swap"
               onAction={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}
             />
-          ) : swapMonthFilter === "all" ? (
+          ) : (
             <div className={tableWrap}>
               <table className="w-full text-sm">
                 <thead className={theadCls}>
@@ -4405,17 +4403,11 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                   </tr>
                 </thead>
                 <tbody>
-                  {swaps.map((s) => (
+                  {(swapMonthFilter === "all" ? swaps : (swapGroups.find(([key]) => key === swapMonthFilter)?.[1] || [])).map((s) => (
                     <SwapRow key={s.id} s={s} dateLabel={s.swapDate ? fmtDate(s.swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
                   ))}
                 </tbody>
               </table>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {(swapGroups.find(([key]) => key === swapMonthFilter)?.[1] || []).map((s) => (
-                <SwapTile key={s.id} s={s} openModal={openModal} askDelete={askDelete} />
-              ))}
             </div>
           )}
         </div>
@@ -4580,27 +4572,6 @@ function SwapRow({ s, dateLabel, openModal, askDelete }) {
         </div>
       </td>
     </tr>
-  );
-}
-
-// One compact tile per entry, used by the month-filtered tile view — shows only
-// Date, Card No., Qty, Amount at a glance, with edit/delete on the tile itself.
-function SwapTile({ s, openModal, askDelete }) {
-  return (
-    <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 flex items-center gap-3 text-xs">
-      <div>
-        <div className="text-slate-500">{s.swapDate ? fmtDate(s.swapDate) : "—"}</div>
-        <div className="text-slate-300 font-mono">{s.cardNumber || "—"}</div>
-      </div>
-      <div className="text-right">
-        <div className="text-slate-400">{s.qtyLtr || s.qtyLtr === 0 ? `${Number(s.qtyLtr).toLocaleString()} L` : "—"}</div>
-        <div className="text-white font-medium">{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</div>
-      </div>
-      <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
-        <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={13} /></button>
-        <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={13} /></button>
-      </div>
-    </div>
   );
 }
 
