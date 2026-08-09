@@ -4419,8 +4419,10 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
       {excelMeta && excelMeta.message && (
         <p className={cx("text-xs", excelMeta.message.ok ? "text-emerald-400" : "text-red-400")}>{excelMeta.message.text}</p>
       )}
-      <div className="flex gap-3 flex-wrap items-end">
-        <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
+      <div className="flex gap-3 flex-wrap items-start">
+        <Field label="Search">
+          <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
+        </Field>
         {group && (
           <Field label="Calculate rate as of date">
             <input type="date" className={inputCls} style={{ width: 180 }} value={calcDate} onChange={(e) => setCalcDate(e.target.value)} />
@@ -4443,14 +4445,14 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className={thCls}>Loading Point</th>
-                <th className={thCls}>Destination</th>
-                <th className={thCls}>Movement Through</th>
-                <th className={thCls}>Vehicle Size</th>
-                <th className={thCls}>Weight Category</th>
-                <th className={thCls}>Axle Load Category</th>
-                <th className={thCls}>Rate (PKR)</th>
-                {canCalculate && <th className={thCls}>Adjusted Rate ({fmtDate(calcDate)})</th>}
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Loading Point</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Destination</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Movement Through</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Vehicle Size</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Axle Load Category</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Rate (PKR)</th>
+                {canCalculate && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
               </tr>
             </thead>
@@ -4459,14 +4461,14 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                 const adjusted = adjustedRateFor(k.rate);
                 return (
                   <tr key={k.id} className={trCls}>
-                    <td className={tdCls}>{k.loadingPoint}</td>
-                    <td className={tdCls}>{k.destination}</td>
-                    <td className={tdCls}>{k.movementThrough || "—"}</td>
-                    <td className={tdCls}>{k.vehicleSize || "—"}</td>
-                    <td className={tdCls}>{k.weightCategory || "—"}</td>
-                    <td className={tdCls}>{k.axleLoadCategory || "—"}</td>
-                    <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(k.rate)}</td>
-                    {canCalculate && <td className={cx(tdCls, "text-emerald-400 font-medium")}>{adjusted !== null ? formatPKR(adjusted) : "—"}</td>}
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.loadingPoint}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.destination}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.movementThrough || "—"}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{k.vehicleSize || "—"}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.weightCategory || "—"}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.axleLoadCategory || "—"}</td>
+                    <td className="px-4 py-3 whitespace-normal text-white font-medium" style={{ maxWidth: 100 }}>{formatPKR(k.rate)}</td>
+                    {canCalculate && <td className="px-4 py-3 whitespace-normal text-emerald-400 font-medium" style={{ maxWidth: 130 }}>{adjusted !== null ? formatPKR(adjusted) : "—"}</td>}
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
                         <button className={iconBtn} onClick={() => openModal({ type: "contract", mode: "edit", item: k })}><Pencil size={15} /></button>
