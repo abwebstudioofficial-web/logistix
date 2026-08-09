@@ -2459,8 +2459,8 @@ function PodModal({ containerLabel, isDomestic, existingArrivalDate, onClose, on
     <Modal title={`Confirm Delivery — ${containerLabel}`} onClose={onClose}>
       <form onSubmit={submit}>
         {isDomestic ? (
-          <Field label="Actual Arrival Date">
-            <div className={cx(inputCls, "bg-slate-900/60 text-slate-300")}>{existingArrivalDate ? fmtDate(existingArrivalDate) : "Not recorded"}</div>
+          <Field label="Actual Arrival Date &amp; Time">
+            <div className={cx(inputCls, "bg-slate-900/60 text-slate-300")}>{existingArrivalDate ? fmtDateTime(existingArrivalDate) : "Not recorded"}</div>
           </Field>
         ) : (
           <Field label="Actual Arrival Time">
@@ -3365,22 +3365,22 @@ function EmptyReturnDateField({ orderId, containerId, value, updateContainerStag
 }
 
 // Domestic-specific: the form shown when advancing In Transit -> Under Offloading. Deliberately
-// just one field, and deliberately starts blank (no auto-filled "today") so the receiver has to
-// actually pick the real arrival date rather than accept a default that might be wrong.
+// just one field, and deliberately starts blank (no auto-filled "now") so the receiver has to
+// actually pick the real arrival date and time rather than accept a default that might be wrong.
 function ArrivalDateModal({ containerLabel, onClose, onConfirm }) {
-  const [arrivalDate, setArrivalDate] = useState("");
+  const [arrivalAt, setArrivalAt] = useState("");
 
   function submit(e) {
     e.preventDefault();
-    if (!arrivalDate) return;
-    onConfirm({ podArrivalAt: arrivalDate });
+    if (!arrivalAt) return;
+    onConfirm({ podArrivalAt: new Date(arrivalAt).toISOString() });
   }
 
   return (
     <Modal title={`Confirm Arrival — ${containerLabel}`} onClose={onClose}>
       <form onSubmit={submit}>
-        <Field label="Actual Arrival Date">
-          <input type="date" className={inputCls} value={arrivalDate} onChange={(e) => setArrivalDate(e.target.value)} required />
+        <Field label="Actual Arrival Date &amp; Time">
+          <input type="datetime-local" className={inputCls} value={arrivalAt} onChange={(e) => setArrivalAt(e.target.value)} required />
         </Field>
         <div className="flex justify-end gap-2 mt-2">
           <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
