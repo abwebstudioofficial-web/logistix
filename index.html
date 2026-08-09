@@ -5096,7 +5096,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
   function submit(e) {
     e.preventDefault();
     if (!customerId || !origin.trim()) return;
-    const cleanContainers = containers.filter((c) => c.containerNumber.trim() || c.sealNumber.trim() || (c.poSapNo || "").trim());
+    const cleanContainers = containers.filter((c) => c.containerNumber.trim() || c.sealNumber.trim());
     onSave({
       id: o.id || uid("ord"),
       orderNumber: o.orderNumber || genOrderNumber(),
@@ -5113,19 +5113,113 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
     });
   }
 
-  return (
-    <form onSubmit={submit}>
-      <div className="mb-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-600/10 text-blue-400 border border-blue-800/50">
-        {resolvedShipmentType} Order
-      </div>
-      {resolvedShipmentType === "Domestic" && (
+  if (resolvedShipmentType === "Domestic") {
+    // Domestic Orders (Finished Goods / Wrapping Materials) get their own minimal form —
+    // only Customer, Sender, and the fields the data entry operator is responsible for.
+    // No repeatable container/shipment structure here — just one flat set of fields.
+    // Vehicle No. and Transporter Name are deliberately absent here: those are the
+    // dispatcher's fields, entered later through the dispatch form (see DispatchModal).
+    const dc = containers[0] || emptyContainer();
+    function submitDomestic(e) {
+      e.preventDefault();
+      if (!customerId || !origin.trim()) return;
+      onSave({
+        id: o.id || uid("ord"),
+        orderNumber: o.orderNumber || genOrderNumber(),
+        customerId, origin: origin.trim(), description: "",
+        createdDate: o.createdDate || todayISO(),
+        eta,
+        cargoType: "Domestic", shipmentType: "Domestic",
+        domesticCategory,
+        bondedStatus: "Non-Bonded",
+        senderId, senderAddress,
+        containers: [dc],
+      });
+    }
+    return (
+      <form onSubmit={submitDomestic}>
+        <div className="mb-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-600/10 text-blue-400 border border-blue-800/50">
+          Domestic Order
+        </div>
         <Field label="Domestic Category">
           <select className={inputCls} value={domesticCategory} onChange={(e) => setDomesticCategory(e.target.value)}>
             <option value="">Select category</option>
             {DOMESTIC_CATEGORIES.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         </Field>
-      )}
+        <Field label="Customer">
+          <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+            <option value="">Select customer</option>
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {customers.length === 0 && <p className="text-amber-500 text-xs mt-1.5">Add a customer first from the Customers page.</p>}
+        </Field>
+        <Field label="Sender Name">
+          <select className={inputCls} value={senderId} onChange={(e) => { setSenderId(e.target.value); setSenderAddress(""); }}>
+            <option value="">Select sender (optional)</option>
+            {senderList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Sender Address">
+          {senderAddresses.length > 0 && (
+            <select
+              className={inputCls}
+              value={senderAddresses.some((a) => a.address === senderAddress) ? senderAddress : "__custom__"}
+              onChange={(e) => setSenderAddress(e.target.value === "__custom__" ? "" : e.target.value)}
+            >
+              <option value="__custom__">— Type a custom address —</option>
+              {senderAddresses.map((a) => <option key={a.id} value={a.address}>{a.label ? `${a.label}: ` : ""}{a.address}</option>)}
+            </select>
+          )}
+          {(senderAddresses.length === 0 || !senderAddresses.some((a) => a.address === senderAddress)) && (
+            <input
+              className={inputCls}
+              style={senderAddresses.length > 0 ? { marginTop: 8 } : undefined}
+              value={senderAddress}
+              onChange={(e) => setSenderAddress(e.target.value)}
+              placeholder="Full pickup / warehouse address"
+            />
+          )}
+        </Field>
+        <Field label="Est. Delivery Date"><input type="date" className={inputCls} value={eta} onChange={(e) => setEta(e.target.value)} /></Field>
+        <Field label="Loading Point"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
+
+        <div className="mt-4 pt-3 border-t border-slate-800 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="PO / SAP No."><input className={inputCls} value={dc.poSapNo || ""} onChange={(e) => setContainerField(dc.id, "poSapNo", e.target.value)} /></Field>
+            <Field label="Movement Through">
+              <select className={inputCls} value={dc.movementThrough || ""} onChange={(e) => setContainerField(dc.id, "movementThrough", e.target.value)}>
+                <option value="">Select</option>
+                {MOVEMENT_THROUGH_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Loading Date"><input type="date" className={inputCls} value={dc.loadingDate || ""} onChange={(e) => setContainerField(dc.id, "loadingDate", e.target.value)} /></Field>
+            <Field label="Vehicle Size">
+              <select className={inputCls} value={dc.vehicleSize || ""} onChange={(e) => setContainerField(dc.id, "vehicleSize", e.target.value)}>
+                <option value="">Select</option>
+                {CONTAINER_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Supplier"><input className={inputCls} value={dc.supplier || ""} onChange={(e) => setContainerField(dc.id, "supplier", e.target.value)} /></Field>
+          <Field label="Destination"><input className={inputCls} value={dc.destination} onChange={(e) => setContainerField(dc.id, "destination", e.target.value)} /></Field>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button type="button" onClick={onCancel} className={btnSecondary}>Cancel</button>
+          <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Create Order"}</button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="mb-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-600/10 text-blue-400 border border-blue-800/50">
+        {resolvedShipmentType} Order
+      </div>
       <Field label="Customer">
         <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
           <option value="">Select customer</option>
@@ -5252,26 +5346,6 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     placeholder="Container Type"
                   />
                 </div>
-                {resolvedShipmentType === "Domestic" && domesticCategory && role !== "dispatcher_domestic" && (
-                  <div className="mb-2 p-2 bg-slate-950/40 rounded border border-slate-800 space-y-2">
-                    <div className="text-slate-500 text-[11px] font-semibold">{domesticCategory} details</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input className={inputCls} value={c.poSapNo || ""} onChange={(e) => setContainerField(c.id, "poSapNo", e.target.value)} placeholder="PO / SAP No." />
-                      <select className={inputCls} value={c.movementThrough || ""} onChange={(e) => setContainerField(c.id, "movementThrough", e.target.value)}>
-                        <option value="">Movement Through</option>
-                        {MOVEMENT_THROUGH_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input type="date" className={inputCls} value={c.loadingDate || ""} onChange={(e) => setContainerField(c.id, "loadingDate", e.target.value)} placeholder="Loading Date" />
-                      <select className={inputCls} value={c.vehicleSize || ""} onChange={(e) => setContainerField(c.id, "vehicleSize", e.target.value)}>
-                        <option value="">Vehicle Size</option>
-                        {CONTAINER_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <input className={inputCls} value={c.supplier || ""} onChange={(e) => setContainerField(c.id, "supplier", e.target.value)} placeholder="Supplier" />
-                  </div>
-                )}
                 {role !== "data_entry" && (
                   <div className="mb-2">
                     <input className={inputCls} value={c.vehiclePlate || ""} onChange={(e) => setContainerField(c.id, "vehiclePlate", e.target.value)} placeholder="Vehicle No." />
