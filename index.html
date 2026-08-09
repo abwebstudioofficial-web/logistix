@@ -339,7 +339,7 @@ function createLiteClient(url, anonKey) {
 
 const supabaseClient = createLiteClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const DATA_TABLES = ["customers", "senders", "transporters", "drivers", "vehicles", "orders", "invoices", "contracts", "fuel_allocations", "fuel_card_swaps", "fuel_prices"];
+const DATA_TABLES = ["customers", "senders", "transporters", "drivers", "vehicles", "orders", "invoices", "contracts", "contract_groups", "fuel_allocations", "fuel_card_swaps", "fuel_prices"];
 
 // Generic camelCase <-> snake_case conversion so every entity's field names
 // line up with the Postgres columns without hand-writing per-table maps.
@@ -4243,29 +4243,24 @@ function ContractsView({ data, openModal, askDelete }) {
 }
 
 function CustomerContractsDetail({ customer, data, openModal, askDelete, onBack }) {
-  const [selectedContractName, setSelectedContractName] = useState(null);
-  const rows = (data.contracts || []).filter((k) => k.customerId === customer.id);
-  const existingNames = Array.from(new Set(rows.map((k) => k.contractName).filter(Boolean)));
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const groups = (data.contract_groups || []).filter((g) => g.customerId === customer.id);
+  const allRates = (data.contracts || []).filter((k) => k.customerId === customer.id);
+  const groupIds = new Set(groups.map((g) => g.id));
+  // Rate rows saved before contracts had a proper title/id (or whose parent contract was
+  // deleted) fall into a single "Unassigned Rates" bucket so nothing gets hidden.
+  const orphanRates = allRates.filter((k) => !k.contractGroupId || !groupIds.has(k.contractGroupId));
 
-  if (selectedContractName) {
+  if (selectedGroupId) {
+    const group = selectedGroupId === "__orphan__" ? null : groups.find((g) => g.id === selectedGroupId);
     return (
       <ContractDetail
-        customer={customer} contractName={selectedContractName} data={data}
+        customer={customer} group={group} data={data}
         openModal={openModal} askDelete={askDelete}
-        onBack={() => setSelectedContractName(null)}
+        onBack={() => setSelectedGroupId(null)}
       />
     );
   }
-
-  // Group rate rows by contract name — rows without one yet (pre-existing data from before
-  // this feature) fall into a single "Unnamed Contract" bucket so nothing gets hidden.
-  const groups = new Map();
-  rows.forEach((k) => {
-    const name = k.contractName || "Unnamed Contract";
-    if (!groups.has(name)) groups.set(name, []);
-    groups.get(name).push(k);
-  });
-  const groupList = Array.from(groups.entries());
 
   return (
     <div className="space-y-5">
@@ -4273,56 +4268,87 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, onBack 
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-white">{customer.name}</h2>
-          <p className="text-slate-500 text-sm mt-1">Agreed freight rate contracts for this customer</p>
+          <p className="text-slate-500 text-sm mt-1">Freight rate contracts for this customer</p>
         </div>
-        <button className={btnPrimary} onClick={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id }, meta: { existingNames } })}>
+        <button className={btnPrimary} onClick={() => openModal({ type: "contract_group", mode: "add", item: null, prefill: { customerId: customer.id } })}>
           <Plus size={16} /> Add Contract
         </button>
       </div>
-      {groupList.length === 0 ? (
+      {groups.length === 0 && orphanRates.length === 0 ? (
         <EmptyState
           icon={FileSpreadsheet} text="No contracts yet for this customer."
           actionLabel="Add first contract"
-          onAction={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id }, meta: { existingNames } })}
+          onAction={() => openModal({ type: "contract_group", mode: "add", item: null, prefill: { customerId: customer.id } })}
         />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {groupList.map(([name, groupRows]) => (
-            <button key={name} onClick={() => setSelectedContractName(name)} className={cx(cardCls, "p-5 text-left")}>
+          {groups.map((g) => {
+            const count = allRates.filter((k) => k.contractGroupId === g.id).length;
+            return (
+              <button key={g.id} onClick={() => setSelectedGroupId(g.id)} className={cx(cardCls, "p-5 text-left")}>
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><FileSpreadsheet size={18} className="text-white" /></div>
+                  <div className="min-w-0">
+                    <div className="text-white font-semibold truncate">{g.contractTitle}</div>
+                    <div className="text-slate-500 text-xs">{count} rate{count !== 1 ? "s" : ""} on file</div>
+                  </div>
+                </div>
+                {(g.commencementDate || g.expiryDate) && (
+                  <div className="text-slate-500 text-xs mt-2">{g.commencementDate ? fmtDate(g.commencementDate) : "—"} → {g.expiryDate ? fmtDate(g.expiryDate) : "—"}</div>
+                )}
+              </button>
+            );
+          })}
+          {orphanRates.length > 0 && (
+            <button onClick={() => setSelectedGroupId("__orphan__")} className={cx(cardCls, "p-5 text-left")}>
               <div className="flex items-center gap-3 mb-1">
-                <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><FileSpreadsheet size={18} className="text-white" /></div>
+                <div className="w-10 h-10 rounded-lg bg-slate-600 flex items-center justify-center shrink-0"><FileSpreadsheet size={18} className="text-white" /></div>
                 <div className="min-w-0">
-                  <div className="text-white font-semibold truncate">{name}</div>
-                  <div className="text-slate-500 text-xs">{groupRows.length} rate{groupRows.length !== 1 ? "s" : ""} on file</div>
+                  <div className="text-white font-semibold truncate">Unassigned Rates</div>
+                  <div className="text-slate-500 text-xs">{orphanRates.length} rate{orphanRates.length !== 1 ? "s" : ""} from before contracts had titles</div>
                 </div>
               </div>
             </button>
-          ))}
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ContractDetail({ customer, contractName, data, openModal, askDelete, onBack }) {
-  const rows = (data.contracts || []).filter((k) => k.customerId === customer.id && (k.contractName || "Unnamed Contract") === contractName);
+function ContractDetail({ customer, group, data, openModal, askDelete, onBack }) {
+  const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
+  const rows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
+  const title = group ? group.contractTitle : "Unassigned Rates";
   return (
     <div className="space-y-5">
       <button onClick={onBack} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> Back to {customer.name}</button>
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">{contractName}</h2>
+          <h2 className="text-2xl font-bold text-white">{title}</h2>
           <p className="text-slate-500 text-sm mt-1">{customer.name} — agreed freight rates</p>
+          {group && (
+            <div className="flex items-center gap-4 text-slate-500 text-xs mt-2 flex-wrap">
+              <span>Commencement: {group.commencementDate ? fmtDate(group.commencementDate) : "—"}</span>
+              <span>Expiry: {group.expiryDate ? fmtDate(group.expiryDate) : "—"}</span>
+              <span>Fuel Base Rate: {group.fuelBaseRate !== "" && group.fuelBaseRate !== undefined && group.fuelBaseRate !== null ? `${formatPKR(group.fuelBaseRate)} / litre` : "—"}</span>
+            </div>
+          )}
         </div>
-        <button className={btnPrimary} onClick={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id, contractName } })}>
-          <Plus size={16} /> Add Rate
-        </button>
+        <div className="flex items-center gap-2">
+          {group && (
+            <button className={btnSecondary} onClick={() => openModal({ type: "contract_group", mode: "edit", item: group })}><Pencil size={14} /> Edit Contract</button>
+          )}
+          <button className={btnPrimary} onClick={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id, contractGroupId: group ? group.id : "" } })}>
+            <Plus size={16} /> Add Rate
+          </button>
+        </div>
       </div>
       {rows.length === 0 ? (
         <EmptyState
           icon={FileSpreadsheet} text="No rates yet in this contract."
           actionLabel="Add first rate"
-          onAction={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id, contractName } })}
+          onAction={() => openModal({ type: "contract", mode: "add", item: null, prefill: { customerId: customer.id, contractGroupId: group ? group.id : "" } })}
         />
       ) : (
         <div className={tableWrap}>
@@ -4363,13 +4389,9 @@ function ContractDetail({ customer, contractName, data, openModal, askDelete, on
   );
 }
 
-function ContractForm({ initial, prefill, existingNames, onSave, onCancel }) {
+function ContractForm({ initial, prefill, onSave, onCancel }) {
   const isEdit = !!initial;
   const k = initial || prefill || {};
-  const contractNameLocked = isEdit || (!!prefill && !!prefill.contractName); // editing a rate, or adding a rate inside an already-open contract
-  // Rates created before Contract Name existed have no name stored — fall back to "Unnamed
-  // Contract" (matching how they're grouped/displayed elsewhere) rather than showing blank.
-  const [contractName, setContractName] = useState(k.contractName || (contractNameLocked ? "Unnamed Contract" : ""));
   const [loadingPoint, setLoadingPoint] = useState(k.loadingPoint || "");
   const [destination, setDestination] = useState(k.destination || "");
   const [vehicleSize, setVehicleSize] = useState(k.vehicleSize || "");
@@ -4379,13 +4401,9 @@ function ContractForm({ initial, prefill, existingNames, onSave, onCancel }) {
 
   function submit(e) {
     e.preventDefault();
-    // When locked, the name is either already valid or was just defaulted above — either
-    // way there's nothing more the user can provide, so only block on a genuinely empty,
-    // user-editable name.
-    if ((!contractNameLocked && !contractName.trim()) || !loadingPoint.trim() || !destination.trim() || rate === "") return;
+    if (!loadingPoint.trim() || !destination.trim() || rate === "") return;
     onSave({
-      id: k.id || genUUID(), customerId: k.customerId,
-      contractName: contractName.trim() || "Unnamed Contract",
+      id: k.id || genUUID(), customerId: k.customerId, contractGroupId: k.contractGroupId,
       loadingPoint: loadingPoint.trim(), destination: destination.trim(),
       vehicleSize: vehicleSize.trim(), weightCategory: weightCategory.trim(), axleLoadCategory: axleLoadCategory.trim(),
       rate: Number(rate),
@@ -4394,18 +4412,6 @@ function ContractForm({ initial, prefill, existingNames, onSave, onCancel }) {
 
   return (
     <form onSubmit={submit}>
-      <Field label="Contract Name">
-        {contractNameLocked ? (
-          <div className={cx(inputCls, "bg-slate-900/60 text-slate-300")}>{contractName}</div>
-        ) : (
-          <input className={inputCls} value={contractName} onChange={(e) => setContractName(e.target.value)} placeholder="e.g. 2026 Annual Rates" list="contract-name-options" />
-        )}
-        {!contractNameLocked && existingNames && existingNames.length > 0 && (
-          <datalist id="contract-name-options">
-            {existingNames.map((n) => <option key={n} value={n} />)}
-          </datalist>
-        )}
-      </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Loading Point"><input className={inputCls} value={loadingPoint} onChange={(e) => setLoadingPoint(e.target.value)} placeholder="e.g. Karachi Port" /></Field>
         <Field label="Destination"><input className={inputCls} value={destination} onChange={(e) => setDestination(e.target.value)} placeholder="e.g. Lahore" /></Field>
@@ -4433,7 +4439,44 @@ function ContractForm({ initial, prefill, existingNames, onSave, onCancel }) {
       <Field label="Agreed Rate (PKR)"><input type="number" min="0" className={inputCls} value={rate} onChange={(e) => setRate(e.target.value)} /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
-        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Contract"}</button>
+        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Rate"}</button>
+      </div>
+    </form>
+  );
+}
+
+// The contract itself — created once, up front, before any rate rows exist. Rate rows
+// (ContractForm above) link to it via contractGroupId rather than repeating its details.
+function ContractGroupForm({ initial, prefill, onSave, onCancel }) {
+  const isEdit = !!initial;
+  const g = initial || prefill || {};
+  const [contractTitle, setContractTitle] = useState(g.contractTitle || "");
+  const [commencementDate, setCommencementDate] = useState(g.commencementDate || "");
+  const [expiryDate, setExpiryDate] = useState(g.expiryDate || "");
+  const [fuelBaseRate, setFuelBaseRate] = useState(g.fuelBaseRate ?? "");
+
+  function submit(e) {
+    e.preventDefault();
+    if (!contractTitle.trim()) return;
+    onSave({
+      id: g.id || genUUID(), customerId: g.customerId,
+      contractTitle: contractTitle.trim(),
+      commencementDate, expiryDate,
+      fuelBaseRate: fuelBaseRate === "" ? "" : Number(fuelBaseRate),
+    });
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <Field label="Contract Title"><input className={inputCls} value={contractTitle} onChange={(e) => setContractTitle(e.target.value)} placeholder="e.g. 2026 Annual Rates" /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Commencement Date"><input type="date" className={inputCls} value={commencementDate} onChange={(e) => setCommencementDate(e.target.value)} /></Field>
+        <Field label="Expiry Date"><input type="date" className={inputCls} value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} /></Field>
+      </div>
+      <Field label="Fuel Base Rate (PKR per Litre)"><input type="number" min="0" step="0.01" className={inputCls} value={fuelBaseRate} onChange={(e) => setFuelBaseRate(e.target.value)} /></Field>
+      <div className="flex justify-end gap-2 mt-2">
+        <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
+        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Create Contract"}</button>
       </div>
     </form>
   );
@@ -6327,6 +6370,7 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
     sender: mode === "edit" ? "Edit Sender" : "Add Sender",
     transporter: mode === "edit" ? "Edit Transporter" : "Add Transporter",
     contract: mode === "edit" ? "Edit Contract Rate" : "Add Contract Rate",
+    contract_group: mode === "edit" ? "Edit Contract" : "Create Contract",
     fuel: mode === "edit" ? "Edit Fuel Card" : "Add Fuel Card",
     fuel_card_swap: mode === "edit" ? "Edit Fuel Card Swap" : "Log Fuel Card Swap",
     fuel_price: mode === "edit" ? "Edit Fuel Price" : "Add Fuel Price",
@@ -6344,7 +6388,8 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
       {type === "customer" && <CustomerForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("customers", i)} onCancel={onClose} />}
       {type === "sender" && <SenderForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("senders", i)} onCancel={onClose} />}
       {type === "transporter" && <TransporterForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("transporters", i)} onCancel={onClose} />}
-      {type === "contract" && <ContractForm initial={mode === "edit" ? item : null} prefill={modal.prefill} existingNames={modal.meta ? modal.meta.existingNames : null} onSave={(i) => onSave("contracts", i)} onCancel={onClose} />}
+      {type === "contract" && <ContractForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("contracts", i)} onCancel={onClose} />}
+      {type === "contract_group" && <ContractGroupForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("contract_groups", i)} onCancel={onClose} />}
       {type === "fuel" && <FuelForm initial={mode === "edit" ? item : null} prefill={modal.prefill} vehicles={data.vehicles} onSave={(i) => onSave("fuel_allocations", i)} onCancel={onClose} />}
       {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} transporters={data.transporters} fuelPrices={data.fuel_prices} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
       {type === "fuel_price" && <FuelPriceForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("fuel_prices", i)} onCancel={onClose} />}
