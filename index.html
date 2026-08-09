@@ -4330,9 +4330,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       .sort((a, b) => (b.swapDate || "").localeCompare(a.swapDate || "")),
     [data.fuel_card_swaps, customer.id]
   );
-  // Group by month just to build the filter dropdown's options — the actual
-  // display switches between the plain table (all months) and a tile grid
-  // (one specific month), it no longer groups rows in the table itself.
+  // Group by month just to build the month filter dropdown's options.
   const swapGroups = useMemo(() => {
     const map = new Map();
     swaps.forEach((s) => {
@@ -4343,6 +4341,26 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [swaps]);
   const [swapMonthFilter, setSwapMonthFilter] = useState("all");
+  const [swapDeptFilter, setSwapDeptFilter] = useState("all");
+  const [swapSwappedByFilter, setSwapSwappedByFilter] = useState("all");
+  const [swapCardFilter, setSwapCardFilter] = useState("all");
+  // Scan every swap entry for this customer to build the Swapped By / Card No. filter
+  // options — no fixed list, whatever's actually been entered shows up to pick from.
+  const swappedByOptions = useMemo(
+    () => Array.from(new Set(swaps.map((s) => s.swappedBy).filter(Boolean))).sort(),
+    [swaps]
+  );
+  const cardNumberOptions = useMemo(
+    () => Array.from(new Set(swaps.map((s) => s.cardNumber).filter(Boolean))).sort(),
+    [swaps]
+  );
+  const filteredSwaps = useMemo(() => {
+    let list = swapMonthFilter === "all" ? swaps : (swapGroups.find(([key]) => key === swapMonthFilter)?.[1] || []);
+    if (swapDeptFilter !== "all") list = list.filter((s) => s.department === swapDeptFilter);
+    if (swapSwappedByFilter !== "all") list = list.filter((s) => s.swappedBy === swapSwappedByFilter);
+    if (swapCardFilter !== "all") list = list.filter((s) => s.cardNumber === swapCardFilter);
+    return list;
+  }, [swaps, swapGroups, swapMonthFilter, swapDeptFilter, swapSwappedByFilter, swapCardFilter]);
 
   const tabBtnCls = (active) => cx(
     "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
@@ -4372,12 +4390,26 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       {tab === "swap_report" ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <select className={inputCls} style={{ width: 220 }} value={swapMonthFilter} onChange={(e) => setSwapMonthFilter(e.target.value)}>
-              <option value="all">All months</option>
-              {swapGroups.map(([key]) => (
-                <option key={key} value={key}>{key === "unknown" ? "No date" : fmtMonthYear(new Date(key + "-01T00:00:00"))}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select className={inputCls} style={{ width: 180 }} value={swapMonthFilter} onChange={(e) => setSwapMonthFilter(e.target.value)}>
+                <option value="all">All months</option>
+                {swapGroups.map(([key]) => (
+                  <option key={key} value={key}>{key === "unknown" ? "No date" : fmtMonthYear(new Date(key + "-01T00:00:00"))}</option>
+                ))}
+              </select>
+              <select className={inputCls} style={{ width: 170 }} value={swapDeptFilter} onChange={(e) => setSwapDeptFilter(e.target.value)}>
+                <option value="all">All departments</option>
+                {SWAP_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+              <select className={inputCls} style={{ width: 170 }} value={swapSwappedByFilter} onChange={(e) => setSwapSwappedByFilter(e.target.value)}>
+                <option value="all">All swapped by</option>
+                {swappedByOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <select className={inputCls} style={{ width: 170 }} value={swapCardFilter} onChange={(e) => setSwapCardFilter(e.target.value)}>
+                <option value="all">All card numbers</option>
+                {cardNumberOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}>
               <Plus size={16} /> Log Swap
             </button>
@@ -4388,6 +4420,8 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               actionLabel="Log first swap"
               onAction={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}
             />
+          ) : filteredSwaps.length === 0 ? (
+            <EmptyState icon={Fuel} text="No swaps match these filters." />
           ) : (
             <div className={tableWrap}>
               <table className="w-full text-sm">
@@ -4403,7 +4437,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                   </tr>
                 </thead>
                 <tbody>
-                  {(swapMonthFilter === "all" ? swaps : (swapGroups.find(([key]) => key === swapMonthFilter)?.[1] || [])).map((s) => (
+                  {filteredSwaps.map((s) => (
                     <SwapRow key={s.id} s={s} dateLabel={s.swapDate ? fmtDate(s.swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
                   ))}
                 </tbody>
