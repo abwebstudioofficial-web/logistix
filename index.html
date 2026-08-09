@@ -524,9 +524,17 @@ const TAB_EXCEL_CONFIG = {
 
 const STAGES = ["Confirmed", "Picked Up", "In Transit", "Delivered"];
 // Only Import orders go through the empty-return "Completed" step (a rented container must be
-// returned to the empty yard) — Domestic/Export orders stop at "Delivered".
+// returned to the empty yard) — Export stops at "Delivered". Domestic has its own 5-step flow
+// with an extra "Under Offloading" step between In Transit and Delivered.
 const IMPORT_STAGES = [...STAGES, "Completed"];
+const DOMESTIC_STAGES = ["Confirmed", "Picked Up", "In Transit", "Under Offloading", "Delivered"];
+function stagesFor(shipmentType) {
+  if (shipmentType === "Import") return IMPORT_STAGES;
+  if (shipmentType === "Domestic") return DOMESTIC_STAGES;
+  return STAGES;
+}
 const STAGE_MESSAGES = ["Order confirmed", "Shipment picked up from origin", "Shipment in transit to destination", "Shipment delivered", "Empty container returned — order completed"];
+const DOMESTIC_STAGE_MESSAGES = ["Order confirmed", "Shipment picked up from origin", "Shipment in transit to destination", "Shipment under offloading", "Shipment delivered"];
 const ORDER_STATUSES = ["Confirmed", "In Transit", "Delivered", "Cancelled"];
 const PRIORITIES = ["Low", "Normal", "Urgent"];
 const VEHICLE_STATUSES = ["active", "maintenance", "idle"];
@@ -547,6 +555,7 @@ const orderStatusColor = {
   Confirmed: "bg-sky-950 text-sky-400 border-sky-800",
   "Picked Up": "bg-indigo-950 text-indigo-400 border-indigo-800",
   "In Transit": "bg-blue-950 text-blue-400 border-blue-800",
+  "Under Offloading": "bg-amber-950 text-amber-400 border-amber-800",
   Delivered: "bg-emerald-950 text-emerald-400 border-emerald-800",
   Completed: "bg-violet-950 text-violet-400 border-violet-800",
   Cancelled: "bg-slate-800 text-slate-400 border-slate-700",
@@ -800,9 +809,16 @@ function orderStatus(o) {
   return "In Transit";
 }
 
-function containerStatus(c) {
+function containerStatus(c, shipmentType) {
   if (c.cancelled) return "Cancelled";
   const si = c.stageIndex ?? 0;
+  if (shipmentType === "Domestic") {
+    if (si >= 4) return "Delivered";
+    if (si === 3) return "Under Offloading";
+    if (si === 2) return "In Transit";
+    if (si === 1) return "Picked Up";
+    return "Confirmed";
+  }
   if (si >= 4) return "Completed";
   if (si === 3) return "Delivered";
   if (si === 2) return "In Transit";
@@ -814,9 +830,12 @@ function containerStatus(c) {
 // empty-return "Completed" step has happened yet. Use this (not a straight "Delivered"
 // equality check) anywhere delivery itself is what matters, e.g. invoicing eligibility
 // or delivery-count stats, so those don't wrongly shrink once an order completes.
-function isDeliveredOrCompleted(c) {
+// Domestic needs its shipmentType passed in — its stage 3 is "Under Offloading", not
+// delivered yet, so it shouldn't count as delivered until stage 4 like Import/Export's 3.
+function isDeliveredOrCompleted(c, shipmentType) {
   if (c.cancelled) return false;
-  return (c.stageIndex ?? 0) >= 3;
+  const deliveredAt = shipmentType === "Domestic" ? 4 : 3;
+  return (c.stageIndex ?? 0) >= deliveredAt;
 }
 
 // Import-only: once a container is Delivered it's "In Process" for empty return,
@@ -872,8 +891,8 @@ function isSettledOut(c) {
 // Kept as an alias so any existing references keep working — containerStatus
 // itself is now the single, consistent source of truth used everywhere
 // (Orders table, order view tab, Tracking page, customer portal, etc.)
-function trackingDisplayStatus(c) {
-  return containerStatus(c);
+function trackingDisplayStatus(c, shipmentType) {
+  return containerStatus(c, shipmentType);
 }
 
 function orderContainers(order) {
@@ -888,6 +907,13 @@ function orderAggregateStatus(order) {
   if (cs.every((c) => c.cancelled)) return "Cancelled";
   const active = cs.filter((c) => !c.cancelled);
   if (active.length === 0) return "Cancelled";
+  if ((order.shipmentType || "Import") === "Domestic") {
+    if (active.every((c) => (c.stageIndex ?? 0) >= 4)) return "Delivered";
+    if (active.every((c) => (c.stageIndex ?? 0) >= 3)) return "Under Offloading";
+    if (active.some((c) => (c.stageIndex ?? 0) === 2)) return "In Transit";
+    if (active.some((c) => (c.stageIndex ?? 0) === 1)) return "Picked Up";
+    return "Confirmed";
+  }
   if (active.every((c) => (c.stageIndex ?? 0) >= 4)) return "Completed";
   if (active.every((c) => (c.stageIndex ?? 0) >= 3)) return "Delivered";
   if (active.some((c) => (c.stageIndex ?? 0) === 2)) return "In Transit";
@@ -2833,20 +2859,52 @@ function Dashboard({ data }) {
 function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("All Status");
-  const [domesticTab, setDomesticTab] = useState(DOMESTIC_CATEGORIES[0]);
+  const [domesticCategory, setDomesticCategory] = useState(null); // null = show category tiles
   const typeLabel = { Domestic: "Domestic", Import: "Import", Export: "Export" }[shipmentType] || "";
   const isDomestic = shipmentType === "Domestic";
-  // Only the Import page gets the full status block row (it's the only shipment type that
-  // ever reaches Completed), and per spec it's dispatcher/admin only.
-  const showStatusBlocks = shipmentType === "Import" && (role === "admin" || role === "dispatcher_import");
+  // Import and (once a category is picked) Domestic both get the full status block row —
+  // dispatcher/admin only. Export never reaches beyond Delivered so it doesn't get one.
+  const showStatusBlocks = (shipmentType === "Import" && (role === "admin" || role === "dispatcher_import"))
+    || (isDomestic && !!domesticCategory && (role === "admin" || role === "dispatcher_domestic"));
+
+  // Domestic Orders opens on a category picker (tiles, like the Customers page) rather
+  // than straight into a table — pick Finished Goods or Wrapping Materials to go further.
+  if (isDomestic && !domesticCategory) {
+    const counts = {};
+    DOMESTIC_CATEGORIES.forEach((cat) => {
+      counts[cat] = data.orders.filter((o) => (o.shipmentType || "Import") === "Domestic" && (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === cat).length;
+    });
+    const tileIcons = { [DOMESTIC_CATEGORIES[0]]: { icon: Package, bg: "bg-blue-600" }, [DOMESTIC_CATEGORIES[1]]: { icon: Package, bg: "bg-purple-600" } };
+    return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Domestic Orders</h2>
+          <p className="text-slate-500 text-sm mt-1">Choose a category to view its orders</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {DOMESTIC_CATEGORIES.map((cat) => {
+            const { icon: Icon, bg } = tileIcons[cat];
+            const count = counts[cat];
+            return (
+              <div key={cat} className={cx(cardCls, "p-6 cursor-pointer")} onClick={() => setDomesticCategory(cat)}>
+                <div className={cx("w-12 h-12 rounded-lg flex items-center justify-center mb-3", bg)}><Icon size={22} className="text-white" /></div>
+                <div className="text-white font-semibold text-lg mb-1">{cat}</div>
+                <div className="text-slate-500 text-sm">{count} order{count === 1 ? "" : "s"}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   // Flatten to one row per container so Job No / Container No / Vehicle No
   // can be real table columns, and orders with multiple containers just get
   // multiple rows instead of being crammed into one cell.
-  // For Data Entry specifically, anything Completed for 2+ days has "settled" and moves
+  // For Data Entry specifically, anything settled for 2+ days has "settled" and moves
   // to Order History (admin-only) instead of lingering in their day-to-day orders table.
   const flat = [];
-  data.orders.filter((o) => (o.shipmentType || "Import") === shipmentType).filter((o) => !isDomestic || (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === domesticTab).forEach((o) => {
+  data.orders.filter((o) => (o.shipmentType || "Import") === shipmentType).filter((o) => !isDomestic || (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === domesticCategory).forEach((o) => {
     const containers = orderContainers(o);
     if (containers.length === 0) {
       flat.push({ order: o, container: null });
@@ -2858,18 +2916,19 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
     }
   });
 
-  const statusOf = ({ order: o, container: c }) => (c ? containerStatus(c) : orderAggregateStatus(o));
+  const statusOf = ({ order: o, container: c }) => (c ? containerStatus(c, shipmentType) : orderAggregateStatus(o));
   const confirmedCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Confirmed").length : 0;
   const pickedUpCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Picked Up").length : 0;
   const inTransitCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "In Transit").length : 0;
+  const underOffloadingCount = showStatusBlocks && isDomestic ? flat.filter((r) => statusOf(r) === "Under Offloading").length : 0;
   const deliveredCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Delivered").length : 0;
-  const completedCount = showStatusBlocks ? flat.filter((r) => statusOf(r) === "Completed").length : 0;
+  const completedCount = showStatusBlocks && !isDomestic ? flat.filter((r) => statusOf(r) === "Completed").length : 0;
 
   const rows = flat.filter(({ order: o, container: c }) => {
     const cust = getCustomer(data, o.customerId);
     const text = `${o.orderNumber} ${cust ? cust.name : ""} ${cust ? cust.shortName || "" : ""} ${o.origin} ${o.jobNumber || ""} ${o.poNumber || ""} ${c ? c.containerNumber || "" : ""} ${o.blNumber || ""}`.toLowerCase();
     const matchesQ = !q || text.includes(q.toLowerCase());
-    const st = c ? containerStatus(c) : orderAggregateStatus(o);
+    const st = c ? containerStatus(c, shipmentType) : orderAggregateStatus(o);
     const matchesStatus = status === "All Status" || st === status;
     return matchesQ && matchesStatus;
   });
@@ -2878,7 +2937,10 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
     <div className="space-y-5">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">{typeLabel} Orders</h2>
+          {isDomestic && (
+            <button onClick={() => setDomesticCategory(null)} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1 mb-2"><ArrowLeft size={14} /> Back to categories</button>
+          )}
+          <h2 className="text-2xl font-bold text-white">{isDomestic ? domesticCategory : `${typeLabel} Orders`}</h2>
           <p className="text-slate-500 text-sm mt-1">Manage your {typeLabel.toLowerCase()} shipment orders</p>
         </div>
         <button className={btnPrimary} onClick={() => openModal({ type: "order", mode: "add", item: null, presetShipmentType: shipmentType })}>
@@ -2886,25 +2948,8 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
         </button>
       </div>
 
-      {isDomestic && (
-        <div className="flex border-b border-slate-800">
-          {DOMESTIC_CATEGORIES.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setDomesticTab(cat)}
-              className={cx(
-                "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
-                domesticTab === cat ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
-              )}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-      )}
-
       {showStatusBlocks && (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className={cx("grid grid-cols-2 gap-4", isDomestic ? "lg:grid-cols-5" : "lg:grid-cols-5")}>
           <MiniStat
             label="Confirmed" value={confirmedCount} color="text-blue-400"
             onClick={() => setStatus(status === "Confirmed" ? "All Status" : "Confirmed")}
@@ -2920,23 +2965,34 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
             onClick={() => setStatus(status === "In Transit" ? "All Status" : "In Transit")}
             active={status === "In Transit"}
           />
+          {isDomestic ? (
+            <MiniStat
+              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
+              onClick={() => setStatus(status === "Under Offloading" ? "All Status" : "Under Offloading")}
+              active={status === "Under Offloading"}
+            />
+          ) : null}
           <MiniStat
             label="Delivered" value={deliveredCount} color="text-emerald-400"
             onClick={() => setStatus(status === "Delivered" ? "All Status" : "Delivered")}
             active={status === "Delivered"}
           />
-          <MiniStat
-            label="Completed" value={completedCount} color="text-violet-400"
-            onClick={() => setStatus(status === "Completed" ? "All Status" : "Completed")}
-            active={status === "Completed"}
-          />
+          {!isDomestic && (
+            <MiniStat
+              label="Completed" value={completedCount} color="text-violet-400"
+              onClick={() => setStatus(status === "Completed" ? "All Status" : "Completed")}
+              active={status === "Completed"}
+            />
+          )}
         </div>
       )}
 
       <div className="flex gap-3 flex-wrap">
         <SearchBox value={q} onChange={setQ} placeholder="Search orders, customers, containers..." />
         <select className={inputCls} style={{ width: 170 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {(showStatusBlocks
+          {(isDomestic
+            ? ["All Status", "Confirmed", "Picked Up", "In Transit", "Under Offloading", "Delivered", "Cancelled"]
+            : showStatusBlocks
             ? ["All Status", "Confirmed", "Picked Up", "In Transit", "Delivered", "Completed", "Cancelled"]
             : ["All Status", "Confirmed", "Picked Up", "In Transit", "Delivered", "Cancelled"]
           ).map((s) => <option key={s} value={s}>{s}</option>)}
@@ -2987,7 +3043,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
             <tbody>
               {rows.map(({ order: o, container: c }, idx) => {
                 const cust = getCustomer(data, o.customerId);
-                const st = c ? containerStatus(c) : orderAggregateStatus(o);
+                const st = c ? containerStatus(c, shipmentType) : orderAggregateStatus(o);
                 const emptyStatus = c ? emptyStatusOf(c) : "—";
                 return (
                   <tr key={c ? c.id : o.id + "-" + idx} className={trCls}>
@@ -3320,17 +3376,21 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
   const showCompletedBlock = isAdmin || isEmptyReturnReceiver;
 
   // Dispatchers can move a container up through In Transit, but not all the way to Delivered.
-  // Receivers can only take the final step (In Transit -> Delivered).
+  // Receivers take it from there — for Import/Export that's the single final step (In Transit
+  // -> Delivered); for Domestic there's an extra Under Offloading step in between.
   // Empty Return Receiver no longer advances via a button — see the inline Empty Return
   // Date field below, which drives Received/Completed automatically.
   function canAdvance(c, o) {
     const si = c.stageIndex ?? 0;
     if (isDispatcher) return si < 2;
-    if (isReceiver) return si === 2;
+    if (isReceiver) return si === 2 || (si === 3 && (o.shipmentType || "Import") === "Domestic");
     return true;
   }
   function maxStageIndex(o) {
-    return (o.shipmentType || "Import") === "Import" ? 4 : 3;
+    const st = o.shipmentType || "Import";
+    if (st === "Import") return 4;
+    if (st === "Domestic") return 4;
+    return 3;
   }
 
   // Flatten every order's containers into individual trackable rows, scoped to this
@@ -3345,7 +3405,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
         const si = r.container.stageIndex ?? 0;
         if (r.container.cancelled) return false;
         if (isSettledOut(r.container)) return false;
-        return si >= 1 && si <= 3; // Picked Up / In Transit / Delivered — categorized into tabs below
+        return si >= 1 && si <= (shipmentTypeFilter === "Domestic" ? 4 : 3); // Picked Up / In Transit / (Under Offloading) / Delivered — categorized into tabs below
       })
     : isEmptyReturnReceiver
     ? flat.filter((r) => {
@@ -3359,21 +3419,23 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
     ? flat.filter((r) => !r.container.cancelled && (r.container.stageIndex ?? 0) < 2) // gone once advanced to In Transit
     : flat; // admin/staff see everything, unrestricted — Order History is the archive for them
 
-  const confirmedCount = visible.filter((r) => trackingDisplayStatus(r.container) === "Confirmed").length;
-  const pickedUpCount = visible.filter((r) => trackingDisplayStatus(r.container) === "Picked Up").length;
-  const inTransitCount = visible.filter((r) => trackingDisplayStatus(r.container) === "In Transit").length;
+  const confirmedCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Confirmed").length;
+  const pickedUpCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Picked Up").length;
+  const inTransitCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "In Transit").length;
+  const underOffloadingCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Under Offloading").length;
   const deliveredTodayCount = visible.filter((r) => r.container.deliveredDate === today).length;
-  const deliveredAllCount = visible.filter((r) => trackingDisplayStatus(r.container) === "Delivered").length;
-  const completedCount = visible.filter((r) => trackingDisplayStatus(r.container) === "Completed").length;
+  const deliveredAllCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Delivered").length;
+  const completedCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Completed").length;
 
   const rows = visible.filter(({ order, container }) => {
-    const st = trackingDisplayStatus(container);
+    const st = trackingDisplayStatus(container, shipmentTypeFilter);
     const cust = getCustomer(data, order.customerId);
     const text = `${order.orderNumber} ${cust ? cust.name : ""} ${container.containerNumber || ""}`.toLowerCase();
     const matchesQ = !q || text.includes(q.toLowerCase());
     if (isReceiver) {
       const si = container.stageIndex ?? 0;
-      const tabSi = receiverTab === "picked_up" ? 1 : receiverTab === "in_transit" ? 2 : 3;
+      const isDomesticFilter = shipmentTypeFilter === "Domestic";
+      const tabSi = receiverTab === "picked_up" ? 1 : receiverTab === "in_transit" ? 2 : isDomesticFilter && receiverTab === "under_offloading" ? 3 : isDomesticFilter ? 4 : 3;
       if (si !== tabSi) return false;
       return matchesQ;
     }
@@ -3399,7 +3461,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
         </p>
       </div>
       {isReceiver ? (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className={cx("grid grid-cols-2 gap-4", shipmentTypeFilter === "Domestic" ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
           <MiniStat
             label="Picked Up" value={pickedUpCount} color="text-indigo-400"
             onClick={() => setReceiverTab("picked_up")}
@@ -3410,6 +3472,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             onClick={() => setReceiverTab("in_transit")}
             active={receiverTab === "in_transit"}
           />
+          {shipmentTypeFilter === "Domestic" && (
+            <MiniStat
+              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
+              onClick={() => setReceiverTab("under_offloading")}
+              active={receiverTab === "under_offloading"}
+            />
+          )}
           <MiniStat
             label="Delivered" value={deliveredAllCount} color="text-emerald-400"
             onClick={() => setReceiverTab("delivered")}
@@ -3471,7 +3540,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
       ) : (
         <div className="space-y-3">
           {rows.map(({ order: o, container: c }) => {
-            const st = trackingDisplayStatus(c);
+            const st = trackingDisplayStatus(c, shipmentTypeFilter);
             const cust = getCustomer(data, o.customerId);
             const maxIdx = maxStageIndex(o);
             const showPod = (isAdmin || isEmptyReturnReceiver) && c.podPhoto && (c.stageIndex ?? 0) >= 3;
@@ -3495,7 +3564,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     <span>Vehicle Size: {c.vehicleSize || "—"}</span>
                   </div>
                 )}
-                <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={o.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
+                <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={stagesFor(o.shipmentType)} />
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 flex-wrap gap-3">
                   <div className="flex items-center gap-4 text-slate-500 text-xs flex-wrap">
                     <span className="flex items-center gap-1"><Send size={12} />{c.transporter || "No transporter"}</span>
@@ -3535,12 +3604,14 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                         className={btnPrimary}
                         onClick={() => {
                           const nextIdx = si + 1;
-                          if (nextIdx === 3) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
+                          const isDomesticOrder = (o.shipmentType || "Import") === "Domestic";
+                          const podStageIndex = isDomesticOrder ? 4 : 3;
+                          if (nextIdx === podStageIndex) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, stageIndex: podStageIndex });
                           else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
                       >
-                        Advance to {(o.shipmentType === "Import" ? IMPORT_STAGES : STAGES)[si + 1]}
+                        Advance to {(stagesFor(o.shipmentType))[si + 1]}
                       </button>
                     )}
                     {!c.cancelled && si < 3 && !canAdvance(c, o) && isDispatcher && (
@@ -3571,7 +3642,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
           containerLabel={podTarget.label}
           onClose={() => setPodTarget(null)}
           onConfirm={(podData) => {
-            updateContainerStage(podTarget.orderId, podTarget.containerId, 3, podData);
+            updateContainerStage(podTarget.orderId, podTarget.containerId, podTarget.stageIndex, podData);
             setPodTarget(null);
           }}
         />
@@ -3607,7 +3678,7 @@ function InvoicesView({ data, openModal, askDelete }) {
   const eligibleContainers = [];
   data.orders.forEach((o) => {
     orderContainers(o).forEach((c) => {
-      if (isDeliveredOrCompleted(c) && !invoicedContainerIds.has(c.id)) {
+      if (isDeliveredOrCompleted(c, o.shipmentType) && !invoicedContainerIds.has(c.id)) {
         eligibleContainers.push({ order: o, container: c });
       }
     });
@@ -4773,7 +4844,7 @@ function OrderHistoryView({ data, openModal }) {
   data.orders.forEach((o) => {
     const cust = getCustomer(data, o.customerId);
     orderContainers(o).forEach((c) => {
-      if (containerStatus(c) === "Completed") {
+      if (containerStatus(c, o.shipmentType) === "Completed") {
         rows.push({ order: o, container: c, customerName: cust ? cust.name : "Unknown" });
       }
     });
@@ -5882,6 +5953,37 @@ function OrderDetail({ order, data }) {
   const sender = (data.senders || []).find((s) => s.id === order.senderId) || null;
   const st = orderAggregateStatus(order);
   const containers = orderContainers(order);
+
+  if ((order.shipmentType || "Import") === "Domestic") {
+    const dc = containers[0] || {};
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="font-mono text-blue-400">{order.orderNumber}</div>
+          <Badge text={st} className={orderStatusColor[st]} />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div><div className="text-slate-500 text-xs mb-1">Domestic Category</div><div className="text-slate-200">{order.domesticCategory || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Customer</div><div className="text-slate-200">{cust ? cust.name : "Unknown"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Sender Name</div><div className="text-slate-200">{sender ? sender.name : "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Sender Address</div><div className="text-slate-200">{order.senderAddress || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Est. Delivery Date</div><div className="text-slate-200">{fmtDate(order.eta)}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Loading Point</div><div className="text-slate-200">{order.origin || "—"}</div></div>
+        </div>
+        <div className="pt-3 border-t border-slate-800 grid grid-cols-2 gap-4">
+          <div><div className="text-slate-500 text-xs mb-1">PO / SAP No.</div><div className="text-slate-200 font-mono">{dc.poSapNo || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Movement Through</div><div className="text-slate-200">{dc.movementThrough || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Loading Date</div><div className="text-slate-200">{dc.loadingDate ? fmtDate(dc.loadingDate) : "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Vehicle Size</div><div className="text-slate-200">{dc.vehicleSize || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Destination</div><div className="text-slate-200">{dc.destination || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Vehicle No.</div><div className="text-slate-200">{dc.vehiclePlate || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Transporter Name</div><div className="text-slate-200">{dc.transporter || "—"}</div></div>
+          <div><div className="text-slate-500 text-xs mb-1">Freight Amount</div><div className="text-slate-200">{dc.freightAmount !== "" && dc.freightAmount !== undefined && dc.freightAmount !== null ? formatPKR(dc.freightAmount) : "—"}</div></div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -6129,9 +6231,9 @@ function CustomerPortal({ data, customerId }) {
                       <div key={c.id} className="bg-slate-900/50 border border-slate-800 rounded-lg p-3">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-slate-200 font-mono text-sm">{c.containerNumber || "—"} → {c.destination || "—"}</span>
-                          <Badge text={containerStatus(c)} className={orderStatusColor[containerStatus(c)]} />
+                          <Badge text={containerStatus(c, o.shipmentType)} className={orderStatusColor[containerStatus(c, o.shipmentType)]} />
                         </div>
-                        <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={o.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
+                        <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={stagesFor(o.shipmentType)} />
                         <div className="mt-3 pt-3 border-t border-slate-800">
                           <div className="text-slate-500 text-xs">ETA {fmtDateISO(o.eta)}</div>
                         </div>
@@ -6691,15 +6793,17 @@ function LogistixERP() {
   async function updateContainerStage(orderId, containerId, newStageIndex, extraData) {
     const order = data.orders.find((o) => o.id === orderId);
     if (!order) return;
+    const isDomesticOrder = (order.shipmentType || "Import") === "Domestic";
+    const deliveredAtIndex = isDomesticOrder ? 4 : 3; // which stageIndex actually means "Delivered" for this shipment type
     const actor = (profile && profile.name) || "Someone";
     const containers = orderContainers(order).map((c) => {
       if (c.id !== containerId) return c;
-      const deliveredDate = newStageIndex >= 3 ? (c.deliveredDate || todayISO()) : c.deliveredDate;
-      let message = STAGE_MESSAGES[newStageIndex] || "Status updated";
-      if (newStageIndex === 3 && extraData && extraData.podReceivedBy) message = `Delivered — received by ${extraData.podReceivedBy}`;
+      const deliveredDate = newStageIndex >= deliveredAtIndex ? (c.deliveredDate || todayISO()) : c.deliveredDate;
+      let message = isDomesticOrder ? (DOMESTIC_STAGE_MESSAGES[newStageIndex] || "Status updated") : (STAGE_MESSAGES[newStageIndex] || "Status updated");
+      if (newStageIndex === deliveredAtIndex && extraData && extraData.podReceivedBy) message = `Delivered — received by ${extraData.podReceivedBy}`;
       if (newStageIndex === 1 && extraData && extraData.dispatchedBy) message = `Picked up — dispatched by ${extraData.dispatchedBy}`;
-      if (newStageIndex === 4 && extraData && extraData.emptyReturnDate) message = `Completed — empty returned ${fmtDate(extraData.emptyReturnDate)}`;
-      const location = newStageIndex === 4 ? (c.emptyReturnLocation || c.destination || order.origin) : newStageIndex >= 3 ? (c.destination || order.origin) : order.origin;
+      if (!isDomesticOrder && newStageIndex === 4 && extraData && extraData.emptyReturnDate) message = `Completed — empty returned ${fmtDate(extraData.emptyReturnDate)}`;
+      const location = (!isDomesticOrder && newStageIndex === 4) ? (c.emptyReturnLocation || c.destination || order.origin) : newStageIndex >= 3 ? (c.destination || order.origin) : order.origin;
       const newEvent = { id: uid("evt"), message, at: new Date().toISOString(), location, by: actor };
       const history = [...(Array.isArray(c.history) ? c.history : []), newEvent];
       const mergedFields = extraData || {};
