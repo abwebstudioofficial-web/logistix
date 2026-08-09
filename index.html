@@ -2414,7 +2414,7 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
   );
 }
 
-function PodModal({ containerLabel, onClose, onConfirm }) {
+function PodModal({ containerLabel, isDomestic, existingArrivalDate, onClose, onConfirm }) {
   const [photo, setPhoto] = useState("");
   const [notes, setNotes] = useState("");
   const [receivedBy, setReceivedBy] = useState("");
@@ -2448,7 +2448,9 @@ function PodModal({ containerLabel, onClose, onConfirm }) {
       podPhoto: photo,
       podNotes: notes.trim(),
       podReceivedBy: receivedBy.trim(),
-      podArrivalAt: new Date(arrivalAt).toISOString(),
+      // Domestic already recorded its arrival date during Under Offloading - keep that
+      // value rather than overwriting it with "now".
+      ...(isDomestic ? {} : { podArrivalAt: new Date(arrivalAt).toISOString() }),
       podOffloadingAt: offloadingAt ? new Date(offloadingAt).toISOString() : "",
     });
   }
@@ -2456,9 +2458,15 @@ function PodModal({ containerLabel, onClose, onConfirm }) {
   return (
     <Modal title={`Confirm Delivery — ${containerLabel}`} onClose={onClose}>
       <form onSubmit={submit}>
-        <Field label="Actual Arrival Time">
-          <input type="datetime-local" className={inputCls} value={arrivalAt} onChange={(e) => setArrivalAt(e.target.value)} required />
-        </Field>
+        {isDomestic ? (
+          <Field label="Actual Arrival Date">
+            <div className={cx(inputCls, "bg-slate-900/60 text-slate-300")}>{existingArrivalDate ? fmtDate(existingArrivalDate) : "Not recorded"}</div>
+          </Field>
+        ) : (
+          <Field label="Actual Arrival Time">
+            <input type="datetime-local" className={inputCls} value={arrivalAt} onChange={(e) => setArrivalAt(e.target.value)} required />
+          </Field>
+        )}
         <Field label="Offloading Date & Time">
           <input type="datetime-local" className={inputCls} value={offloadingAt} onChange={(e) => setOffloadingAt(e.target.value)} />
         </Field>
@@ -3356,37 +3364,30 @@ function EmptyReturnDateField({ orderId, containerId, value, updateContainerStag
   );
 }
 
-// Domestic-specific: entering an Actual Arrival Time is itself what advances a container
-// from In Transit to Under Offloading — no button, no other fields required. Clearing it
-// reverts back to In Transit. Same local-state + onBlur + validation pattern as above, for
-// the same reason (datetime inputs fire onChange on every digit typed, so committing
-// straight to the database on every keystroke risks garbage intermediate values as writes).
-function ArrivalTimeField({ orderId, containerId, value, updateContainerStage }) {
-  const [local, setLocal] = useState(value ? value.slice(0, 16) : "");
-  useEffect(() => { setLocal(value ? value.slice(0, 16) : ""); }, [value]);
+// Domestic-specific: the form shown when advancing In Transit -> Under Offloading. Deliberately
+// just one field, and deliberately starts blank (no auto-filled "today") so the receiver has to
+// actually pick the real arrival date rather than accept a default that might be wrong.
+function ArrivalDateModal({ containerLabel, onClose, onConfirm }) {
+  const [arrivalDate, setArrivalDate] = useState("");
 
-  function commit(val) {
-    if (val === "") {
-      updateContainerStage(orderId, containerId, 2, { podArrivalAt: "" });
-      return;
-    }
-    const year = Number(val.slice(0, 4));
-    const isCompleteDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(val) && year >= 2000 && year <= 2100;
-    if (isCompleteDateTime) {
-      updateContainerStage(orderId, containerId, 3, { podArrivalAt: new Date(val).toISOString() });
-    } else {
-      setLocal(value ? value.slice(0, 16) : ""); // not a complete, plausible datetime yet - discard and revert
-    }
+  function submit(e) {
+    e.preventDefault();
+    if (!arrivalDate) return;
+    onConfirm({ podArrivalAt: arrivalDate });
   }
 
   return (
-    <input
-      type="datetime-local"
-      className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-600"
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={(e) => commit(e.target.value)}
-    />
+    <Modal title={`Confirm Arrival — ${containerLabel}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <Field label="Actual Arrival Date">
+          <input type="date" className={inputCls} value={arrivalDate} onChange={(e) => setArrivalDate(e.target.value)} required />
+        </Field>
+        <div className="flex justify-end gap-2 mt-2">
+          <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+          <button type="submit" className={btnPrimary}>Confirm</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -3395,6 +3396,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
   const [filter, setFilter] = useState("all");
   const [receiverTab, setReceiverTab] = useState("picked_up"); // Picked Up / In Transit / Delivered
   const [podTarget, setPodTarget] = useState(null); // { orderId, containerId, label }
+  const [arrivalTarget, setArrivalTarget] = useState(null); // { orderId, containerId, label } - Domestic's In Transit -> Under Offloading step
   const [dispatchTarget, setDispatchTarget] = useState(null); // { orderId, containerId, label }
   const today = todayISO();
   const isDispatcher = role === "dispatcher_import" || role === "dispatcher_domestic" || role === "dispatcher_export";
@@ -3410,15 +3412,14 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
   const showCompletedBlock = isAdmin || isEmptyReturnReceiver;
 
   // Dispatchers can move a container up through In Transit, but not all the way to Delivered.
-  // Receivers take it from there. For Import/Export that's a single button-driven final step
-  // (In Transit -> Delivered). For Domestic, In Transit -> Under Offloading is no longer a
-  // button at all — see ArrivalTimeField below, which auto-advances the moment an arrival
-  // time is entered — but Under Offloading -> Delivered still goes through the button + POD.
+  // Receivers take it from there — for Import/Export that's the single final step (In Transit
+  // -> Delivered); for Domestic there's an extra Under Offloading step in between, both
+  // button-driven with their own small confirmation forms (see ArrivalDateModal / PodModal).
   function canAdvance(c, o) {
     const si = c.stageIndex ?? 0;
     const isDomesticOrder = (o.shipmentType || "Import") === "Domestic";
     if (isDispatcher) return si < 2;
-    if (isReceiver) return (si === 2 && !isDomesticOrder) || (si === 3 && isDomesticOrder);
+    if (isReceiver) return si === 2 || (si === 3 && isDomesticOrder);
     return true;
   }
   function maxStageIndex(o) {
@@ -3641,7 +3642,9 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                           const nextIdx = si + 1;
                           const isDomesticOrder = (o.shipmentType || "Import") === "Domestic";
                           const podStageIndex = isDomesticOrder ? 4 : 3;
-                          if (nextIdx === podStageIndex) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, stageIndex: podStageIndex });
+                          const arrivalStageIndex = isDomesticOrder ? 3 : -1;
+                          if (nextIdx === arrivalStageIndex) setArrivalTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
+                          else if (nextIdx === podStageIndex) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, stageIndex: podStageIndex });
                           else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
@@ -3651,12 +3654,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     )}
                     {!c.cancelled && si < 3 && !canAdvance(c, o) && isDispatcher && (
                       <span className="text-slate-500 text-xs italic">Awaiting Receiver to confirm delivery</span>
-                    )}
-                    {!c.cancelled && isReceiver && (o.shipmentType || "Import") === "Domestic" && (si === 2 || si === 3) && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-500 text-xs">Actual Arrival Time</span>
-                        <ArrivalTimeField orderId={o.id} containerId={c.id} value={c.podArrivalAt} updateContainerStage={updateContainerStage} />
-                      </div>
                     )}
                     {!c.cancelled && isEmptyReturnReceiver && (si === 3 || si === 4) && (
                       <div className="flex items-center gap-2">
@@ -3678,13 +3675,30 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
           })}
         </div>
       )}
-      {podTarget && (
-        <PodModal
-          containerLabel={podTarget.label}
-          onClose={() => setPodTarget(null)}
-          onConfirm={(podData) => {
-            updateContainerStage(podTarget.orderId, podTarget.containerId, podTarget.stageIndex, podData);
-            setPodTarget(null);
+      {podTarget && (() => {
+        const podOrder = data.orders.find((o) => o.id === podTarget.orderId);
+        const podContainer = podOrder ? orderContainers(podOrder).find((c) => c.id === podTarget.containerId) : null;
+        const isDomesticPod = podOrder && (podOrder.shipmentType || "Import") === "Domestic";
+        return (
+          <PodModal
+            containerLabel={podTarget.label}
+            isDomestic={isDomesticPod}
+            existingArrivalDate={podContainer ? podContainer.podArrivalAt : ""}
+            onClose={() => setPodTarget(null)}
+            onConfirm={(podData) => {
+              updateContainerStage(podTarget.orderId, podTarget.containerId, podTarget.stageIndex, podData);
+              setPodTarget(null);
+            }}
+          />
+        );
+      })()}
+      {arrivalTarget && (
+        <ArrivalDateModal
+          containerLabel={arrivalTarget.label}
+          onClose={() => setArrivalTarget(null)}
+          onConfirm={(arrivalData) => {
+            updateContainerStage(arrivalTarget.orderId, arrivalTarget.containerId, 3, arrivalData);
+            setArrivalTarget(null);
           }}
         />
       )}
