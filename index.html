@@ -3356,6 +3356,40 @@ function EmptyReturnDateField({ orderId, containerId, value, updateContainerStag
   );
 }
 
+// Domestic-specific: entering an Actual Arrival Time is itself what advances a container
+// from In Transit to Under Offloading — no button, no other fields required. Clearing it
+// reverts back to In Transit. Same local-state + onBlur + validation pattern as above, for
+// the same reason (datetime inputs fire onChange on every digit typed, so committing
+// straight to the database on every keystroke risks garbage intermediate values as writes).
+function ArrivalTimeField({ orderId, containerId, value, updateContainerStage }) {
+  const [local, setLocal] = useState(value ? value.slice(0, 16) : "");
+  useEffect(() => { setLocal(value ? value.slice(0, 16) : ""); }, [value]);
+
+  function commit(val) {
+    if (val === "") {
+      updateContainerStage(orderId, containerId, 2, { podArrivalAt: "" });
+      return;
+    }
+    const year = Number(val.slice(0, 4));
+    const isCompleteDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(val) && year >= 2000 && year <= 2100;
+    if (isCompleteDateTime) {
+      updateContainerStage(orderId, containerId, 3, { podArrivalAt: new Date(val).toISOString() });
+    } else {
+      setLocal(value ? value.slice(0, 16) : ""); // not a complete, plausible datetime yet - discard and revert
+    }
+  }
+
+  return (
+    <input
+      type="datetime-local"
+      className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-600"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={(e) => commit(e.target.value)}
+    />
+  );
+}
+
 function TrackingView({ data, updateContainerStage, updateContainerFields, role, shipmentTypeFilter }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
@@ -3376,14 +3410,15 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
   const showCompletedBlock = isAdmin || isEmptyReturnReceiver;
 
   // Dispatchers can move a container up through In Transit, but not all the way to Delivered.
-  // Receivers take it from there — for Import/Export that's the single final step (In Transit
-  // -> Delivered); for Domestic there's an extra Under Offloading step in between.
-  // Empty Return Receiver no longer advances via a button — see the inline Empty Return
-  // Date field below, which drives Received/Completed automatically.
+  // Receivers take it from there. For Import/Export that's a single button-driven final step
+  // (In Transit -> Delivered). For Domestic, In Transit -> Under Offloading is no longer a
+  // button at all — see ArrivalTimeField below, which auto-advances the moment an arrival
+  // time is entered — but Under Offloading -> Delivered still goes through the button + POD.
   function canAdvance(c, o) {
     const si = c.stageIndex ?? 0;
+    const isDomesticOrder = (o.shipmentType || "Import") === "Domestic";
     if (isDispatcher) return si < 2;
-    if (isReceiver) return si === 2 || (si === 3 && (o.shipmentType || "Import") === "Domestic");
+    if (isReceiver) return (si === 2 && !isDomesticOrder) || (si === 3 && isDomesticOrder);
     return true;
   }
   function maxStageIndex(o) {
@@ -3616,6 +3651,12 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     )}
                     {!c.cancelled && si < 3 && !canAdvance(c, o) && isDispatcher && (
                       <span className="text-slate-500 text-xs italic">Awaiting Receiver to confirm delivery</span>
+                    )}
+                    {!c.cancelled && isReceiver && (o.shipmentType || "Import") === "Domestic" && (si === 2 || si === 3) && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500 text-xs">Actual Arrival Time</span>
+                        <ArrivalTimeField orderId={o.id} containerId={c.id} value={c.podArrivalAt} updateContainerStage={updateContainerStage} />
+                      </div>
                     )}
                     {!c.cancelled && isEmptyReturnReceiver && (si === 3 || si === 4) && (
                       <div className="flex items-center gap-2">
