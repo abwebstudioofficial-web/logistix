@@ -2996,7 +2996,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                         <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
                         <td className={cx(tdCls, "font-mono text-slate-200")}>{c ? (c.poSapNo || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.movementThrough || "—") : "—"}</td>
-                        <td className={tdCls}>{c && c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</td>
+                        <td className={tdCls}>{c && c.loadingDate ? fmtDate(c.loadingDate) : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>
                         <td className={tdCls}>{o.origin || "—"}</td>
@@ -3491,7 +3491,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-500 text-xs mb-4 -mt-2">
                     <span>PO/SAP: {c.poSapNo || "—"}</span>
                     <span>Via: {c.movementThrough || "—"}</span>
-                    <span>Loading: {c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</span>
+                    <span>Loading: {c.loadingDate ? fmtDate(c.loadingDate) : "—"}</span>
                     <span>Vehicle Size: {c.vehicleSize || "—"}</span>
                   </div>
                 )}
@@ -6397,6 +6397,7 @@ function PublicTrackingPage() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [lightMode, setLightMode] = useState(false);
 
   async function doTrack(e) {
     if (e) e.preventDefault();
@@ -6429,102 +6430,106 @@ function PublicTrackingPage() {
   const containers = result && Array.isArray(result.containers) ? result.containers : [];
   const customerLike = { deliveryAddresses: (result && Array.isArray(result.customer_addresses)) ? result.customer_addresses : [] };
 
+  // This page is public-facing, so it gets its own light/dark styling rather than
+  // touching the shared cardCls/inputCls constants used everywhere else in the app.
+  const pageBg = lightMode ? "bg-white text-slate-800" : "bg-slate-950 text-slate-200";
+  const headerBorder = lightMode ? "border-slate-200" : "border-slate-800";
+  const titleText = lightMode ? "text-slate-900" : "text-white";
+  const mutedText = lightMode ? "text-slate-500" : "text-slate-400";
+  const subtleText = lightMode ? "text-slate-400" : "text-slate-500";
+  const cardLocal = lightMode
+    ? "bg-white border border-slate-200 rounded-xl shadow-sm"
+    : "bg-slate-900 border border-slate-800 rounded-xl";
+  const inputLocal = lightMode
+    ? "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 transition-shadow duration-150"
+    : inputCls;
+  const boxBg = lightMode ? "bg-slate-50" : "bg-slate-900/60";
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col">
-      <div className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <div className={cx("min-h-screen flex flex-col", pageBg)}>
+      <div className={cx("border-b px-6 py-4 flex items-center justify-between", headerBorder)}>
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><Truck size={18} className="text-white" /></div>
-          <div className="text-white font-bold text-base tracking-wide">LOGISTIX</div>
+          <div className={cx("font-bold text-base tracking-wide", titleText)}>LOGISTIX</div>
         </div>
-        <div className="text-slate-500 text-sm">Shipment Tracking</div>
+        <div className="flex items-center gap-3">
+          <div className={cx("text-sm", mutedText)}>Shipment Tracking</div>
+          <button
+            className={cx("p-2 rounded-lg border", lightMode ? "border-slate-300 text-slate-600 hover:bg-slate-100" : "border-slate-700 text-slate-400 hover:bg-slate-900")}
+            title={lightMode ? "Switch to dark mode" : "Switch to light mode"}
+            onClick={() => setLightMode((v) => !v)}
+          >
+            {lightMode ? <Moon size={15} /> : <Sun size={15} />}
+          </button>
+        </div>
       </div>
       <div className="flex-1 max-w-2xl w-full mx-auto px-6 py-12">
         <div className="text-center mb-8">
           <div className="w-14 h-14 rounded-full bg-blue-600/10 flex items-center justify-center mx-auto mb-4"><MapPin size={26} className="text-blue-500" /></div>
-          <h1 className="text-white text-3xl font-bold mb-2">Track Your Shipment</h1>
-          <p className="text-slate-400 text-sm">Enter your order number to get live updates</p>
+          <h1 className={cx("text-3xl font-bold mb-2", titleText)}>Track Your Shipment</h1>
+          <p className={cx("text-sm", mutedText)}>Enter your order number to get live updates</p>
         </div>
         <form onSubmit={doTrack} className="flex gap-2 mb-8">
-          <input className={inputCls} style={{ flex: 1 }} value={orderNumberInput} onChange={(e) => setOrderNumberInput(e.target.value)} placeholder="e.g. ORD-MS1REP4K-BTJ" />
+          <input className={inputLocal} style={{ flex: 1 }} value={orderNumberInput} onChange={(e) => setOrderNumberInput(e.target.value)} placeholder="e.g. ORD-MS1REP4K-BTJ" />
           <button type="submit" className={cx(btnPrimary, "flex items-center gap-1.5")} disabled={loading}>
             <Search size={15} />{loading ? "Searching…" : "Track"}
           </button>
         </form>
 
-        {error && <div className={cx(cardCls, "p-4 text-red-400 text-sm text-center mb-6")}>{error}</div>}
+        {error && <div className={cx(cardLocal, "p-4 text-red-400 text-sm text-center mb-6")}>{error}</div>}
 
         {result && (
           <div className="space-y-6">
-            <div className={cx(cardCls, "p-5")}>
-              <div className="text-slate-500 text-xs">ORDER</div>
-              <div className="text-white font-bold font-mono mb-2">{result.order_number}</div>
-              {result.description && <div className="text-slate-300 text-sm mb-3">{result.description}</div>}
-              <div className="text-slate-400 text-sm flex items-center gap-1.5"><MapPin size={13} />From: {result.origin}</div>
+            <div className={cx(cardLocal, "p-5")}>
+              <div className={cx("text-xs", subtleText)}>ORDER</div>
+              <div className={cx("font-bold font-mono mb-2", titleText)}>{result.order_number}</div>
+              {result.description && <div className={cx("text-sm mb-3", lightMode ? "text-slate-700" : "text-slate-300")}>{result.description}</div>}
+              <div className={cx("text-sm flex items-center gap-1.5", mutedText)}><MapPin size={13} />From: {result.origin}</div>
             </div>
 
             {containers.length === 0 ? (
-              <div className={cx(cardCls, "p-5 text-slate-500 text-sm text-center")}>No containers on this shipment yet.</div>
+              <div className={cx(cardLocal, "p-5 text-sm text-center", subtleText)}>No containers on this shipment yet.</div>
             ) : (
               containers.map((c, idx) => {
                 const cancelled = !!c.cancelled;
                 const publicIndex = PUBLIC_STAGE_MAP[c.stageIndex ?? 0] ?? 3;
                 const statusLabel = cancelled ? "Cancelled" : ["Pending", "Confirmed", "In Transit", "Delivered"][publicIndex];
                 const statusInfo = PUBLIC_STATUS_INFO[statusLabel] || PUBLIC_STATUS_INFO.Pending;
-                const history = Array.isArray(c.history) ? c.history : [];
                 const receiverAddr = resolveReceiverAddress(c, customerLike);
                 return (
                   <div key={c.id || idx} className="space-y-4">
-                    <div className="text-slate-300 text-sm font-semibold">Container: {c.containerNumber || "—"}</div>
+                    <div className={cx("text-sm font-semibold", lightMode ? "text-slate-700" : "text-slate-300")}>Container: {c.containerNumber || "—"}</div>
                     <div className="rounded-lg p-4 border" style={{ background: statusInfo.bg, borderColor: statusInfo.border }}>
                       <div className="font-bold text-lg mb-1" style={{ color: statusInfo.color }}>{statusLabel}</div>
-                      <div className="text-slate-300 text-sm">{statusInfo.desc}</div>
+                      <div className={cx("text-sm", lightMode ? "text-slate-700" : "text-slate-300")}>{statusInfo.desc}</div>
                     </div>
-                    <div className={cx(cardCls, "p-5 pb-6")}>
+                    <div className={cx(cardLocal, "p-5 pb-6")}>
                       <PublicStageStepper currentIndex={publicIndex} cancelled={cancelled} />
                     </div>
-                    <div className={cx(cardCls, "p-5")}>
-                      <div className="flex items-start justify-between mb-4 pb-4 border-b border-slate-800">
-                        <div><div className="text-slate-500 text-xs">SEAL NO.</div><div className="text-white font-bold font-mono">{c.sealNumber || "—"}</div></div>
-                        {c.weight ? <div className="text-right"><div className="text-slate-500 text-xs">WEIGHT</div><div className="text-white font-bold">{Number(c.weight).toLocaleString()} kg</div></div> : null}
+                    <div className={cx(cardLocal, "p-5")}>
+                      <div className={cx("flex items-start justify-between mb-4 pb-4 border-b", headerBorder)}>
+                        <div><div className={cx("text-xs", subtleText)}>SEAL NO.</div><div className={cx("font-bold font-mono", titleText)}>{c.sealNumber || "—"}</div></div>
+                        {c.weight ? <div className="text-right"><div className={cx("text-xs", subtleText)}>WEIGHT</div><div className={cx("font-bold", titleText)}>{Number(c.weight).toLocaleString()} kg</div></div> : null}
                       </div>
                       <div className="grid grid-cols-2 gap-3 mb-4 items-center">
-                        <div className="bg-slate-900/60 rounded-lg p-3">
-                          <div className="text-slate-500 text-xs mb-1">FROM</div>
-                          <div className="text-white font-semibold">{result.origin}</div>
-                          {result.sender_address && <div className="text-slate-400 text-xs mt-0.5">{result.sender_address}</div>}
+                        <div className={cx("rounded-lg p-3", boxBg)}>
+                          <div className={cx("text-xs mb-1", subtleText)}>FROM</div>
+                          <div className={cx("font-semibold", titleText)}>{result.origin}</div>
+                          {result.sender_address && <div className={cx("text-xs mt-0.5", mutedText)}>{result.sender_address}</div>}
                         </div>
-                        <div className="bg-slate-900/60 rounded-lg p-3">
-                          <div className="text-slate-500 text-xs mb-1">TO</div>
-                          <div className="text-white font-semibold">{c.destination || "—"}</div>
-                          {receiverAddr && <div className="text-slate-400 text-xs mt-0.5">{receiverAddr}</div>}
+                        <div className={cx("rounded-lg p-3", boxBg)}>
+                          <div className={cx("text-xs mb-1", subtleText)}>TO</div>
+                          <div className={cx("font-semibold", titleText)}>{c.destination || "—"}</div>
+                          {receiverAddr && <div className={cx("text-xs mt-0.5", mutedText)}>{receiverAddr}</div>}
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div><div className="text-slate-500 text-xs">Expected Pickup</div><div className="text-white font-medium">{fmtDateISO(result.created_date)}</div></div>
-                        <div><div className="text-slate-500 text-xs">Expected Delivery</div><div className="text-white font-medium">{fmtDateISO(result.eta)}</div></div>
-                        <div><div className="text-slate-500 text-xs">Vehicle</div><div className="text-white font-medium">{c.vehiclePlate || "Unassigned"}</div></div>
+                        <div><div className={cx("text-xs", subtleText)}>Expected Pickup</div><div className={cx("font-medium", titleText)}>{fmtDateISO(result.created_date)}</div></div>
+                        <div><div className={cx("text-xs", subtleText)}>Expected Delivery</div><div className={cx("font-medium", titleText)}>{fmtDateISO(result.eta)}</div></div>
+                        <div><div className={cx("text-xs", subtleText)}>Vehicle</div><div className={cx("font-medium", titleText)}>{c.vehiclePlate || "Unassigned"}</div></div>
                       </div>
                     </div>
-                    {history.length > 0 && (
-                      <div className={cx(cardCls, "p-5")}>
-                        <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><Clock size={16} />Tracking History</h3>
-                        <div className="space-y-4">
-                          {[...history].reverse().map((h, i) => (
-                            <div key={h.id || i} className="flex gap-3">
-                              <div className="flex flex-col items-center">
-                                <span className={cx("w-2.5 h-2.5 rounded-full mt-1.5", i === 0 ? "bg-blue-500" : "bg-slate-600")} />
-                                {i < history.length - 1 && <span className="w-px flex-1 bg-slate-800 mt-1" />}
-                              </div>
-                              <div className="pb-4">
-                                <div className="text-white text-sm font-medium">{h.message}</div>
-                                <div className="text-slate-500 text-xs mt-0.5">{h.location ? `${h.location} · ` : ""}{fmtDateTime(h.at)}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {idx < containers.length - 1 && <div className="border-t border-slate-800 pt-2" />}
+                    {idx < containers.length - 1 && <div className={cx("border-t pt-2", headerBorder)} />}
                   </div>
                 );
               })
@@ -6532,7 +6537,7 @@ function PublicTrackingPage() {
           </div>
         )}
       </div>
-      <div className="text-center text-slate-600 text-xs py-6 border-t border-slate-800">© {new Date().getFullYear()} LOGISTIX Transport ERP</div>
+      <div className={cx("text-center text-xs py-6 border-t", subtleText, headerBorder)}>© {new Date().getFullYear()} LOGISTIX Transport ERP</div>
     </div>
   );
 }
