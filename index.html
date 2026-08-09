@@ -2275,12 +2275,16 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
   function submit(e) {
     e.preventDefault();
     setFormError(null);
-    if (!photo) { setPhotoError("A loading photo or document is required to confirm dispatch."); return; }
-    if (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "" || !emptyReturnLocation.trim()) {
+    if (!isDomestic && !photo) { setPhotoError("A loading photo or document is required to confirm dispatch."); return; }
+    if (!isDomestic && (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "" || !emptyReturnLocation.trim())) {
       setFormError("Transporter, Vehicle No., Freight Amount, and Empty Return Location are all required.");
       return;
     }
-    if (shifting === "yes" && (!shiftedContainerNo.trim() || !shiftEmptyReturnDate)) {
+    if (isDomestic && (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "")) {
+      setFormError("Transporter, Vehicle No., and Freight Amount are all required.");
+      return;
+    }
+    if (!isDomestic && shifting === "yes" && (!shiftedContainerNo.trim() || !shiftEmptyReturnDate)) {
       setFormError("Shifted Container No. and Empty Return Date are required when Shifting is Yes.");
       return;
     }
@@ -2332,44 +2336,50 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
           </Field>
           <Field label="Vehicle No."><input className={inputCls} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="Vehicle number" /></Field>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className={cx("grid gap-3", isDomestic ? "grid-cols-1" : "grid-cols-2")}>
           <Field label="Freight Amount (PKR)">
             <input type="number" min="0" className={inputCls} value={freightAmount} onChange={(e) => setFreightAmount(e.target.value)} />
           </Field>
-          <Field label="Empty Return Location"><input className={inputCls} value={emptyReturnLocation} onChange={(e) => setEmptyReturnLocation(e.target.value)} /></Field>
-        </div>
-        <Field label="Shifting">
-          <select className={inputCls} value={shifting} onChange={(e) => setShifting(e.target.value)}>
-            <option value="no">No</option>
-            <option value="yes">Yes</option>
-          </select>
-        </Field>
-        {shifting === "yes" && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Shifted Container No."><input className={inputCls} value={shiftedContainerNo} onChange={(e) => setShiftedContainerNo(e.target.value)} /></Field>
-            <Field label="Empty Return Date"><input type="date" className={inputCls} value={shiftEmptyReturnDate} onChange={(e) => setShiftEmptyReturnDate(e.target.value)} /></Field>
-          </div>
-        )}
-        <Field label="Dispatched By (name)">
-          <input className={inputCls} value={dispatchedBy} onChange={(e) => setDispatchedBy(e.target.value)} placeholder="Who released/loaded it at origin" />
-        </Field>
-        <Field label="Loading Photo or Document (required)">
-          <input type="file" accept="image/*,application/pdf" onChange={handleFile} className={inputCls} required={!photo} />
-          {photoError && <p className="text-red-400 text-xs mt-1">{photoError}</p>}
-          {photo && !isPdfDataUrl(photo) && <img src={photo} alt="Dispatch photo" className="mt-2 rounded-lg border border-slate-800 max-h-40 animate-fade-in" />}
-          {photo && isPdfDataUrl(photo) && (
-            <a href={photo} download="dispatch-document.pdf" className="mt-2 flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2 animate-fade-in">
-              <FileText size={16} /> PDF attached — click to view
-            </a>
+          {!isDomestic && (
+            <Field label="Empty Return Location"><input className={inputCls} value={emptyReturnLocation} onChange={(e) => setEmptyReturnLocation(e.target.value)} /></Field>
           )}
-        </Field>
+        </div>
+        {!isDomestic && (
+          <>
+            <Field label="Shifting">
+              <select className={inputCls} value={shifting} onChange={(e) => setShifting(e.target.value)}>
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </Field>
+            {shifting === "yes" && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Shifted Container No."><input className={inputCls} value={shiftedContainerNo} onChange={(e) => setShiftedContainerNo(e.target.value)} /></Field>
+                <Field label="Empty Return Date"><input type="date" className={inputCls} value={shiftEmptyReturnDate} onChange={(e) => setShiftEmptyReturnDate(e.target.value)} /></Field>
+              </div>
+            )}
+            <Field label="Dispatched By (name)">
+              <input className={inputCls} value={dispatchedBy} onChange={(e) => setDispatchedBy(e.target.value)} placeholder="Who released/loaded it at origin" />
+            </Field>
+            <Field label="Loading Photo or Document (required)">
+              <input type="file" accept="image/*,application/pdf" onChange={handleFile} className={inputCls} required={!photo} />
+              {photoError && <p className="text-red-400 text-xs mt-1">{photoError}</p>}
+              {photo && !isPdfDataUrl(photo) && <img src={photo} alt="Dispatch photo" className="mt-2 rounded-lg border border-slate-800 max-h-40 animate-fade-in" />}
+              {photo && isPdfDataUrl(photo) && (
+                <a href={photo} download="dispatch-document.pdf" className="mt-2 flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2 animate-fade-in">
+                  <FileText size={16} /> PDF attached — click to view
+                </a>
+              )}
+            </Field>
+          </>
+        )}
         <Field label="Notes (seal check, loading discrepancies, etc.)">
           <textarea className={inputCls} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Seal verified and matches manifest, loaded on schedule" />
         </Field>
         {formError && <p className="text-red-400 text-xs mb-2">{formError}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
-          <button type="submit" disabled={busy || !photo} className={cx(btnPrimary, (busy || !photo) && "opacity-60 cursor-not-allowed")}>
+          <button type="submit" disabled={busy || (!isDomestic && !photo)} className={cx(btnPrimary, (busy || (!isDomestic && !photo)) && "opacity-60 cursor-not-allowed")}>
             {busy ? "Processing…" : isEdit ? "Save Changes" : "Confirm Dispatch"}
           </button>
         </div>
