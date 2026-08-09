@@ -3401,19 +3401,22 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
         </p>
       </div>
       {isReceiver ? (
-        <div className="flex border-b border-slate-800">
-          {[["picked_up", "Picked Up", pickedUpCount], ["in_transit", "In Transit", inTransitCount], ["delivered", "Delivered", deliveredAllCount]].map(([key, label, count]) => (
-            <button
-              key={key}
-              onClick={() => setReceiverTab(key)}
-              className={cx(
-                "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
-                receiverTab === key ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
-              )}
-            >
-              {label} <span className="ml-1 text-xs opacity-70">({count})</span>
-            </button>
-          ))}
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <MiniStat
+            label="Picked Up" value={pickedUpCount} color="text-indigo-400"
+            onClick={() => setReceiverTab("picked_up")}
+            active={receiverTab === "picked_up"}
+          />
+          <MiniStat
+            label="In Transit" value={inTransitCount} color="text-blue-400"
+            onClick={() => setReceiverTab("in_transit")}
+            active={receiverTab === "in_transit"}
+          />
+          <MiniStat
+            label="Delivered" value={deliveredAllCount} color="text-emerald-400"
+            onClick={() => setReceiverTab("delivered")}
+            active={receiverTab === "delivered"}
+          />
         </div>
       ) : (
         <div className={cx("grid grid-cols-2 gap-4", showCompletedBlock ? "lg:grid-cols-5" : showDeliveredBlock ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
@@ -3502,7 +3505,9 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     {c.freightAmount !== "" && c.freightAmount !== undefined && c.freightAmount !== null && (
                       <span className="flex items-center gap-1"><Banknote size={12} />{formatPKR(c.freightAmount)}</span>
                     )}
-                    <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
+                    {shipmentTypeFilter !== "Domestic" && (
+                      <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
+                    )}
                     {c.shifting === "yes" && (
                       <>
                         <span className="flex items-center gap-1"><ArrowLeft size={12} className="rotate-90" />Shifted: {c.shiftedContainerNo || "—"}</span>
