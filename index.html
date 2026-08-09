@@ -1707,7 +1707,25 @@ function coerceFuelPrices(rows) {
     // saved, so drop it here rather than sending null and having the whole import fail.
     .filter((row) => row.effectiveDate);
 }
-const COERCE_FUNCTIONS = { coerceOrders, coerceCustomers, coerceSenders, coerceTransporters, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices };
+// customerId/contractGroupId are intentionally NOT read from the file — the caller always
+// stamps them onto every row afterward, since this import is scoped to one specific contract
+// (the file is not expected to carry that context, and shouldn't be able to move a rate
+// into a different customer's or contract's rates just by what's typed in a spreadsheet).
+function coerceContractRates(rows) {
+  return rows
+    .map((r) => ({
+      id: xstr(readField(r, "id")) || genUUID(),
+      loadingPoint: xstr(readField(r, "loadingPoint")),
+      destination: xstr(readField(r, "destination")),
+      movementThrough: xstr(readField(r, "movementThrough")),
+      vehicleSize: xstr(readField(r, "vehicleSize")),
+      weightCategory: xstr(readField(r, "weightCategory")),
+      axleLoadCategory: xstr(readField(r, "axleLoadCategory")),
+      rate: xnum(readField(r, "rate")),
+    }))
+    .filter((row) => row.loadingPoint && row.destination);
+}
+const COERCE_FUNCTIONS = { coerceOrders, coerceCustomers, coerceSenders, coerceTransporters, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices, coerceContractRates };
 
 /* ---- Bilty receipt generator (downloads a PDF, styled like a real bilty form) ---- */
 
@@ -4200,13 +4218,20 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
 
 /* ==================== Contracts (Finance Manager + Admin) ==================== */
 
-function ContractsView({ data, openModal, askDelete, role }) {
+function ContractsView({ data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
   if (selectedCustomerId) {
     const cust = data.customers.find((c) => c.id === selectedCustomerId);
-    if (cust) return <CustomerContractsDetail customer={cust} data={data} openModal={openModal} askDelete={askDelete} role={role} onBack={() => setSelectedCustomerId(null)} />;
+    if (cust) return (
+      <CustomerContractsDetail
+        customer={cust} data={data} openModal={openModal} askDelete={askDelete} role={role}
+        contractExcel={contractExcel} onContractRatesExport={onContractRatesExport}
+        onContractRatesAttach={onContractRatesAttach} onContractRatesRevert={onContractRatesRevert}
+        onBack={() => setSelectedCustomerId(null)}
+      />
+    );
   }
 
   const rows = data.customers.filter((c) => `${c.name} ${c.shortName || ""}`.toLowerCase().includes(q.toLowerCase()));
@@ -4242,7 +4267,7 @@ function ContractsView({ data, openModal, askDelete, role }) {
   );
 }
 
-function CustomerContractsDetail({ customer, data, openModal, askDelete, role, onBack }) {
+function CustomerContractsDetail({ customer, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const groups = (data.contract_groups || []).filter((g) => g.customerId === customer.id);
   const allRates = (data.contracts || []).filter((k) => k.customerId === customer.id);
@@ -4258,6 +4283,8 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, o
       <ContractDetail
         customer={customer} group={group} data={data}
         openModal={openModal} askDelete={askDelete} role={role}
+        contractExcel={contractExcel} onContractRatesExport={onContractRatesExport}
+        onContractRatesAttach={onContractRatesAttach} onContractRatesRevert={onContractRatesRevert}
         onBack={() => setSelectedGroupId(null)}
       />
     );
@@ -4326,10 +4353,12 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, o
   );
 }
 
-function ContractDetail({ customer, group, data, openModal, askDelete, role, onBack }) {
+function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
   const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
   const rows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
   const title = group ? group.contractTitle : "Unassigned Rates";
+  const excelKey = group ? group.id : "orphan";
+  const excelMeta = (contractExcel || {})[excelKey];
   return (
     <div className="space-y-5">
       <button onClick={onBack} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> Back to {customer.name}</button>
@@ -4354,6 +4383,16 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, onB
           </button>
         </div>
       </div>
+      <TabExcelBar
+        label="Rates"
+        meta={excelMeta}
+        onAttachFile={(file) => onContractRatesAttach(customer.id, group ? group.id : "", file)}
+        onExport={() => onContractRatesExport(customer.id, group ? group.id : "", title)}
+        onRevert={() => onContractRatesRevert(group ? group.id : "")}
+      />
+      {excelMeta && excelMeta.message && (
+        <p className={cx("text-xs", excelMeta.message.ok ? "text-emerald-400" : "text-red-400")}>{excelMeta.message.text}</p>
+      )}
       {rows.length === 0 ? (
         <EmptyState
           icon={FileSpreadsheet} text="No rates yet in this contract."
@@ -6916,6 +6955,7 @@ function LogistixERP() {
   const [importMsg, setImportMsg] = useState(null);
   const [excelBusy, setExcelBusy] = useState(false);
   const [tabExcel, setTabExcel] = useState({}); // { [viewKey]: { attached, filename, snapshot, busy, message } }
+  const [contractExcel, setContractExcel] = useState({}); // { [contractGroupId||"orphan"]: { attached, filename, snapshot, busy, message } } - per-contract, so this can't use the generic viewKey-based system above
   const [fleetUrl, setFleetUrl] = useState(null);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("logistix-theme") || "dark"; } catch (e) { return "dark"; }
@@ -7328,6 +7368,107 @@ function LogistixERP() {
     XLSX.writeFile(wb, `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
+  // Rate rows for one specific contract (or the "Unassigned Rates" bucket when
+  // contractGroupId is falsy) — used by all three contract-rates Excel handlers below.
+  function contractRatesFor(customerId, contractGroupId) {
+    const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
+    return (data.contracts || []).filter((k) => k.customerId === customerId
+      && (contractGroupId ? k.contractGroupId === contractGroupId : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
+  }
+
+  function handleContractRatesExport(customerId, contractGroupId, contractTitle) {
+    const rows = contractRatesFor(customerId, contractGroupId);
+    const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "rate"];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, null, "ContractRates"), "ContractRates");
+    XLSX.writeFile(wb, `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
+  }
+
+  function handleContractRatesAttach(customerId, contractGroupId, file) {
+    const key = contractGroupId || "orphan";
+    setContractExcel((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), busy: true, message: null } }));
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const arr = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(arr, { type: "array" });
+        const wsName = wb.Sheets["ContractRates"] ? "ContractRates" : wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        if (!ws) throw new Error("That file doesn't have a readable sheet.");
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+        const rawCoerced = coerceContractRates(rows);
+        const skippedCount = rows.length - rawCoerced.length;
+        // Always stamped onto every row, never read from the file — see coerceContractRates.
+        const coerced = rawCoerced.map((r) => ({ ...r, customerId, contractGroupId: contractGroupId || "" }));
+
+        const existingList = data.contracts || [];
+        const existingById = new Map(existingList.map((r) => [r.id, r]));
+        const priorMeta = contractExcel[key] || {};
+        const priorEntries = priorMeta.snapshot || [];
+        const alreadyTracked = new Set(priorEntries.map((en) => en.id));
+        const tableSnapshot = [...priorEntries];
+        const mergedList = [...existingList];
+        let updatedCount = 0, addedCount = 0;
+
+        coerced.forEach((row) => {
+          const prev = existingById.get(row.id) || null;
+          if (prev) updatedCount++; else addedCount++;
+          if (!alreadyTracked.has(row.id)) tableSnapshot.push({ id: row.id, prev });
+          const idx = mergedList.findIndex((r) => r.id === row.id);
+          if (idx >= 0) mergedList[idx] = row; else mergedList.push(row);
+        });
+
+        const { error } = coerced.length ? await supabaseClient.from("contracts").upsert(coerced.map(toDbRow)) : { error: null };
+        setDataState((prevData) => ({ ...prevData, contracts: mergedList }));
+        setContractExcel((prev) => ({
+          ...prev,
+          [key]: {
+            attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
+            message: error
+              ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
+              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}` },
+          },
+        }));
+      } catch (err) {
+        setContractExcel((prev) => ({
+          ...prev,
+          [key]: { ...(prev[key] || {}), busy: false, message: { ok: false, text: "Couldn't read that file — make sure it's a valid .xlsx workbook." } },
+        }));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function handleContractRatesRevert(contractGroupId) {
+    const key = contractGroupId || "orphan";
+    const meta = contractExcel[key];
+    if (!meta || !meta.snapshot) {
+      setContractExcel((prev) => ({ ...prev, [key]: { attached: false, filename: null, snapshot: null } }));
+      return;
+    }
+    setContractExcel((prev) => ({ ...prev, [key]: { ...meta, busy: true } }));
+    try {
+      const list = [...(data.contracts || [])];
+      const writes = [];
+      const deletes = [];
+      meta.snapshot.forEach(({ id, prev }) => {
+        const idx = list.findIndex((r) => r.id === id);
+        if (prev) {
+          if (idx >= 0) list[idx] = prev; else list.push(prev);
+          writes.push(supabaseClient.from("contracts").upsert(toDbRow(prev)));
+        } else {
+          if (idx >= 0) list.splice(idx, 1);
+          deletes.push(supabaseClient.from("contracts").delete().eq("id", id));
+        }
+      });
+      await Promise.all([...writes, ...deletes]);
+      setDataState((prevData) => ({ ...prevData, contracts: list }));
+      setContractExcel((prev) => ({ ...prev, [key]: { attached: false, filename: null, snapshot: null, message: { ok: true, text: "Reverted — back to how this contract's rates were before that file was attached." } } }));
+    } catch (err) {
+      setContractExcel((prev) => ({ ...prev, [key]: { ...meta, busy: false, message: { ok: false, text: "Couldn't fully revert: " + err.message } } }));
+    }
+  }
+
   function handleDownloadExcel() {
     const wb = buildWorkbook(data);
     const name = excelMeta.filename ? excelMeta.filename.replace(/\.xlsx?$/i, "") + "-updated.xlsx" : "logistix-data.xlsx";
@@ -7443,7 +7584,15 @@ function LogistixERP() {
               {view === "tracking_import" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Import" />}
               {view === "tracking_domestic" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Domestic" />}
               {view === "tracking_export" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Export" />}
-              {view === "contracts" && <ContractsView data={data} openModal={setModal} askDelete={setConfirm} role={viewSession.role} />}
+              {view === "contracts" && (
+                <ContractsView
+                  data={data} openModal={setModal} askDelete={setConfirm} role={viewSession.role}
+                  contractExcel={contractExcel}
+                  onContractRatesExport={handleContractRatesExport}
+                  onContractRatesAttach={handleContractRatesAttach}
+                  onContractRatesRevert={handleContractRatesRevert}
+                />
+              )}
               {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "fuel_management" && (
                 <FuelManagementView
