@@ -430,6 +430,8 @@ function allowedViewsForRole(role) {
 
 const CONTAINER_TYPES = ["Standard", "High Cube", "Reefer", "Open Top", "Flat Rack", "Tank"];
 const CONTAINER_SIZES = ["20'", "40'", "45'"];
+const MOVEMENT_THROUGH_OPTIONS = ["GT Road", "Motorway"];
+const DOMESTIC_CATEGORIES = ["Finished Goods (FG)", "Wrapping Materials"];
 const WEIGHT_CATEGORIES = ["Under 10 tons", "10-20 tons", "20-30 tons", "30+ tons"];
 const AXLE_LOAD_CATEGORIES = ["1x", "2x", "3x", "4x", "6x"];
 
@@ -736,6 +738,8 @@ const FIELD_LABELS = {
   charges: "Charges", containerType: "Container Type", containerSize: "Container Size", qtyLabel: "Qty",
   emptyReturnLocation: "Empty Return Location", emptyReturnDate: "Empty Return Date", emptyReturnTime: "Empty Return Time",
   emptyReturnDescription: "Empty Return Notes", amount: "Amount", weight: "Weight", priority: "Priority", destination: "Destination", shifting: "Shifting",
+  shiftedContainerNo: "Shifted Container No.", shiftEmptyReturnDate: "Shift Empty Return Date",
+  poSapNo: "PO / SAP No.", movementThrough: "Movement Through", loadingDate: "Loading Date", vehicleSize: "Vehicle Size", supplier: "Supplier",
 };
 function describeFieldChange(fields) {
   const keys = Object.keys(fields || {});
@@ -762,12 +766,14 @@ function emptyContainer() {
   return {
     id: uid("cnt"), containerNumber: "", sealNumber: "", qtyLabel: "", containerType: "", containerSize: "",
     driverName: "", vehiclePlate: "", priority: "Normal", stageIndex: 0, cancelled: false, deliveredDate: null,
-    amount: "", transporter: "", freightAmount: "", fuelAmount: "", emptyReturnLocation: "", emptyReturnDate: "", emptyReturnTime: "", emptyReturnDescription: "", shifting: "", shiftedContainerNo: "",
+    amount: "", transporter: "", freightAmount: "", fuelAmount: "", emptyReturnLocation: "", emptyReturnDate: "", emptyReturnTime: "", emptyReturnDescription: "", shifting: "", shiftedContainerNo: "", shiftEmptyReturnDate: "",
     biltyNumber: genBiltyNumber(),
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
     podPhoto: "", podNotes: "", podArrivalAt: "", podOffloadingAt: "", podReceivedBy: "",
     transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", charges: [],
+    // Domestic Finished Goods / Wrapping Materials fields
+    poSapNo: "", movementThrough: "", loadingDate: "", vehicleSize: "", supplier: "",
     history: [{ id: uid("evt"), message: "Container created and pending confirmation", at: new Date().toISOString(), location: "" }],
   };
 }
@@ -2224,7 +2230,7 @@ function ConfirmModal({ title, message, onConfirm, onCancel }) {
   );
 }
 
-function DispatchModal({ containerLabel, initial, transporters, onClose, onConfirm }) {
+function DispatchModal({ containerLabel, initial, transporters, isDomestic, onClose, onConfirm }) {
   const c = initial || {};
   const isEdit = !!initial;
   const [photo, setPhoto] = useState(c.dispatchPhoto || "");
@@ -2240,9 +2246,11 @@ function DispatchModal({ containerLabel, initial, transporters, onClose, onConfi
   const [transporterCustomMode, setTransporterCustomMode] = useState(false);
   const [vehiclePlate, setVehiclePlate] = useState(c.vehiclePlate || "");
   const [freightAmount, setFreightAmount] = useState(c.freightAmount ?? "");
+  const [loadingDate, setLoadingDate] = useState(c.loadingDate || "");
+  const [emptyReturnLocation, setEmptyReturnLocation] = useState(c.emptyReturnLocation || "");
   const [shifting, setShifting] = useState(c.shifting || "no");
   const [shiftedContainerNo, setShiftedContainerNo] = useState(c.shiftedContainerNo || "");
-  const [emptyReturnLocation, setEmptyReturnLocation] = useState(c.emptyReturnLocation || "");
+  const [shiftEmptyReturnDate, setShiftEmptyReturnDate] = useState(c.shiftEmptyReturnDate || "");
   const [busy, setBusy] = useState(false);
   const [photoError, setPhotoError] = useState(null);
   const [formError, setFormError] = useState(null);
@@ -2268,12 +2276,12 @@ function DispatchModal({ containerLabel, initial, transporters, onClose, onConfi
     e.preventDefault();
     setFormError(null);
     if (!photo) { setPhotoError("A loading photo or document is required to confirm dispatch."); return; }
-    if (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "") {
-      setFormError("Transporter, Vehicle No., and Freight Amount are all required.");
+    if (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "" || !emptyReturnLocation.trim()) {
+      setFormError("Transporter, Vehicle No., Freight Amount, and Empty Return Location are all required.");
       return;
     }
-    if (shifting === "yes" && (!shiftedContainerNo.trim() || !emptyReturnLocation.trim())) {
-      setFormError("Shifted Container No. and Empty Return Location are required when Shifting is Yes.");
+    if (shifting === "yes" && (!shiftedContainerNo.trim() || !shiftEmptyReturnDate)) {
+      setFormError("Shifted Container No. and Empty Return Date are required when Shifting is Yes.");
       return;
     }
     onConfirm({
@@ -2284,9 +2292,11 @@ function DispatchModal({ containerLabel, initial, transporters, onClose, onConfi
       transporter: transporter.trim(),
       vehiclePlate: vehiclePlate.trim(),
       freightAmount: Number(freightAmount),
+      emptyReturnLocation: emptyReturnLocation.trim(),
+      ...(isDomestic ? { loadingDate } : {}),
       shifting,
       shiftedContainerNo: shifting === "yes" ? shiftedContainerNo.trim() : "",
-      emptyReturnLocation: shifting === "yes" ? emptyReturnLocation.trim() : "",
+      shiftEmptyReturnDate: shifting === "yes" ? shiftEmptyReturnDate : "",
     });
   }
 
@@ -2296,6 +2306,11 @@ function DispatchModal({ containerLabel, initial, transporters, onClose, onConfi
         <Field label="Actual Dispatch / Pickup Time">
           <input type="datetime-local" className={inputCls} value={dispatchAt} onChange={(e) => setDispatchAt(e.target.value)} required />
         </Field>
+        {isDomestic && (
+          <Field label="Loading Date (viewable and editable by dispatcher)">
+            <input type="date" className={inputCls} value={loadingDate} onChange={(e) => setLoadingDate(e.target.value)} />
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Transporter">
             {!transporterCustomMode ? (
@@ -2317,9 +2332,12 @@ function DispatchModal({ containerLabel, initial, transporters, onClose, onConfi
           </Field>
           <Field label="Vehicle No."><input className={inputCls} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="Vehicle number" /></Field>
         </div>
-        <Field label="Freight Amount (PKR)">
-          <input type="number" min="0" className={inputCls} value={freightAmount} onChange={(e) => setFreightAmount(e.target.value)} />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Freight Amount (PKR)">
+            <input type="number" min="0" className={inputCls} value={freightAmount} onChange={(e) => setFreightAmount(e.target.value)} />
+          </Field>
+          <Field label="Empty Return Location"><input className={inputCls} value={emptyReturnLocation} onChange={(e) => setEmptyReturnLocation(e.target.value)} /></Field>
+        </div>
         <Field label="Shifting">
           <select className={inputCls} value={shifting} onChange={(e) => setShifting(e.target.value)}>
             <option value="no">No</option>
@@ -2329,7 +2347,7 @@ function DispatchModal({ containerLabel, initial, transporters, onClose, onConfi
         {shifting === "yes" && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="Shifted Container No."><input className={inputCls} value={shiftedContainerNo} onChange={(e) => setShiftedContainerNo(e.target.value)} /></Field>
-            <Field label="Empty Return Location"><input className={inputCls} value={emptyReturnLocation} onChange={(e) => setEmptyReturnLocation(e.target.value)} /></Field>
+            <Field label="Empty Return Date"><input type="date" className={inputCls} value={shiftEmptyReturnDate} onChange={(e) => setShiftEmptyReturnDate(e.target.value)} /></Field>
           </div>
         )}
         <Field label="Dispatched By (name)">
@@ -2805,7 +2823,9 @@ function Dashboard({ data }) {
 function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("All Status");
+  const [domesticTab, setDomesticTab] = useState(DOMESTIC_CATEGORIES[0]);
   const typeLabel = { Domestic: "Domestic", Import: "Import", Export: "Export" }[shipmentType] || "";
+  const isDomestic = shipmentType === "Domestic";
   // Only the Import page gets the full status block row (it's the only shipment type that
   // ever reaches Completed), and per spec it's dispatcher/admin only.
   const showStatusBlocks = shipmentType === "Import" && (role === "admin" || role === "dispatcher_import");
@@ -2816,7 +2836,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
   // For Data Entry specifically, anything Completed for 2+ days has "settled" and moves
   // to Order History (admin-only) instead of lingering in their day-to-day orders table.
   const flat = [];
-  data.orders.filter((o) => (o.shipmentType || "Import") === shipmentType).forEach((o) => {
+  data.orders.filter((o) => (o.shipmentType || "Import") === shipmentType).filter((o) => !isDomestic || (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === domesticTab).forEach((o) => {
     const containers = orderContainers(o);
     if (containers.length === 0) {
       flat.push({ order: o, container: null });
@@ -2855,6 +2875,23 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
           <Plus size={16} /> New {typeLabel} Order
         </button>
       </div>
+
+      {isDomestic && (
+        <div className="flex border-b border-slate-800">
+          {DOMESTIC_CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setDomesticTab(cat)}
+              className={cx(
+                "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+                domesticTab === cat ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
+              )}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
 
       {showStatusBlocks && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -2908,15 +2945,33 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className={thCls}>Job No.</th>
-                <th className={thCls}>Customer</th>
-                <th className={thCls}>Destination</th>
-                <th className={thCls}>Description</th>
-                <th className={thCls}>Container No.</th>
-                <th className={thCls}>Vehicle No.</th>
-                <th className={thCls}>Status</th>
-                {shipmentType === "Import" && <th className={thCls}>Empty Status</th>}
-                <th className={thCls}></th>
+                {isDomestic ? (
+                  <>
+                    <th className={thCls}>PO / SAP No.</th>
+                    <th className={thCls}>Movement Through</th>
+                    <th className={thCls}>Loading Date</th>
+                    <th className={thCls}>Vehicle No.</th>
+                    <th className={thCls}>Vehicle Size</th>
+                    {domesticTab === "Wrapping Materials" && <th className={thCls}>Supplier</th>}
+                    <th className={thCls}>Loading Point</th>
+                    <th className={thCls}>Destination</th>
+                    <th className={thCls}>Transporter Name</th>
+                    <th className={thCls}>Status</th>
+                    <th className={thCls}></th>
+                  </>
+                ) : (
+                  <>
+                    <th className={thCls}>Job No.</th>
+                    <th className={thCls}>Customer</th>
+                    <th className={thCls}>Destination</th>
+                    <th className={thCls}>Description</th>
+                    <th className={thCls}>Container No.</th>
+                    <th className={thCls}>Vehicle No.</th>
+                    <th className={thCls}>Status</th>
+                    {shipmentType === "Import" && <th className={thCls}>Empty Status</th>}
+                    <th className={thCls}></th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -2926,15 +2981,32 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                 const emptyStatus = c ? emptyStatusOf(c) : "—";
                 return (
                   <tr key={c ? c.id : o.id + "-" + idx} className={trCls}>
-                    <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
-                    <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
-                    <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
-                    <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 220 }}>{o.description || "—"}</td>
-                    <td className={cx(tdCls, "font-mono")}>{c ? (c.containerNumber || "—") : "—"}</td>
-                    <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
-                    <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>
-                    {shipmentType === "Import" && (
-                      <td className={tdCls}>{emptyStatus === "—" ? "—" : <Badge text={emptyStatus} className={emptyStatusColor[emptyStatus]} />}</td>
+                    {isDomestic ? (
+                      <>
+                        <td className={cx(tdCls, "font-mono text-slate-200")}>{c ? (c.poSapNo || "—") : "—"}</td>
+                        <td className={tdCls}>{c ? (c.movementThrough || "—") : "—"}</td>
+                        <td className={tdCls}>{c && c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</td>
+                        <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
+                        <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>
+                        {domesticTab === "Wrapping Materials" && <td className={tdCls}>{c ? (c.supplier || "—") : "—"}</td>}
+                        <td className={tdCls}>{o.origin || "—"}</td>
+                        <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
+                        <td className={tdCls}>{c ? (c.transporter || "—") : "—"}</td>
+                        <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>
+                      </>
+                    ) : (
+                      <>
+                        <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
+                        <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
+                        <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
+                        <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 220 }}>{o.description || "—"}</td>
+                        <td className={cx(tdCls, "font-mono")}>{c ? (c.containerNumber || "—") : "—"}</td>
+                        <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
+                        <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>
+                        {shipmentType === "Import" && (
+                          <td className={tdCls}>{emptyStatus === "—" ? "—" : <Badge text={emptyStatus} className={emptyStatusColor[emptyStatus]} />}</td>
+                        )}
+                      </>
                     )}
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
@@ -3402,6 +3474,15 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                   <div className="flex gap-2"><Badge text={st} className={orderStatusColor[st]} /><Badge text={c.priority || "Normal"} className={priorityColor[c.priority || "Normal"]} /></div>
                 </div>
                 <div className="text-slate-400 text-sm mb-4 flex items-center gap-1.5"><MapPin size={13} />{o.origin} → {c.destination || "—"}</div>
+                {shipmentTypeFilter === "Domestic" && o.domesticCategory && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-500 text-xs mb-4 -mt-2">
+                    <span>PO/SAP: {c.poSapNo || "—"}</span>
+                    <span>Via: {c.movementThrough || "—"}</span>
+                    <span>Loading: {c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</span>
+                    <span>Vehicle Size: {c.vehicleSize || "—"}</span>
+                    {o.domesticCategory === "Wrapping Materials" && <span>Supplier: {c.supplier || "—"}</span>}
+                  </div>
+                )}
                 <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={o.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 flex-wrap gap-3">
                   <div className="flex items-center gap-4 text-slate-500 text-xs flex-wrap">
@@ -3410,10 +3491,11 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     {c.freightAmount !== "" && c.freightAmount !== undefined && c.freightAmount !== null && (
                       <span className="flex items-center gap-1"><Banknote size={12} />{formatPKR(c.freightAmount)}</span>
                     )}
+                    <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
                     {c.shifting === "yes" && (
                       <>
                         <span className="flex items-center gap-1"><ArrowLeft size={12} className="rotate-90" />Shifted: {c.shiftedContainerNo || "—"}</span>
-                        <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
+                        <span className="flex items-center gap-1"><Clock size={12} />Shift empty return: {c.shiftEmptyReturnDate ? fmtDateISO(c.shiftEmptyReturnDate) : "—"}</span>
                       </>
                     )}
                     <span>ETA {fmtDateISO(o.eta)}</span>
@@ -3485,6 +3567,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
           containerLabel={dispatchTarget.label}
           initial={dispatchTarget.editingContainer}
           transporters={data.transporters}
+          isDomestic={shipmentTypeFilter === "Domestic"}
           onClose={() => setDispatchTarget(null)}
           onConfirm={(dispatchData) => {
             if (dispatchTarget.editingContainer) updateContainerFields(dispatchTarget.orderId, dispatchTarget.containerId, dispatchData);
@@ -4940,6 +5023,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
     return [emptyContainer()];
   });
   const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const [domesticCategory, setDomesticCategory] = useState(o.domesticCategory || "");
   const [senderId, setSenderId] = useState(o.senderId || "");
   const [senderAddress, setSenderAddress] = useState(o.senderAddress || "");
   const selectedCustomer = customers.find((cu) => cu.id === customerId);
@@ -4997,7 +5081,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
   function submit(e) {
     e.preventDefault();
     if (!customerId || !origin.trim()) return;
-    const cleanContainers = containers.filter((c) => c.containerNumber.trim() || c.sealNumber.trim());
+    const cleanContainers = containers.filter((c) => c.containerNumber.trim() || c.sealNumber.trim() || (c.poSapNo || "").trim());
     onSave({
       id: o.id || uid("ord"),
       orderNumber: o.orderNumber || genOrderNumber(),
@@ -5007,6 +5091,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
       ...shipping,
       cargoType: resolvedShipmentType, // Cargo Type always mirrors Shipment Type - not independently editable
       shipmentType: resolvedShipmentType,
+      domesticCategory: resolvedShipmentType === "Domestic" ? domesticCategory : "",
       senderId,
       senderAddress,
       containers: cleanContainers,
@@ -5018,6 +5103,14 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
       <div className="mb-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-600/10 text-blue-400 border border-blue-800/50">
         {resolvedShipmentType} Order
       </div>
+      {resolvedShipmentType === "Domestic" && (
+        <Field label="Domestic Category">
+          <select className={inputCls} value={domesticCategory} onChange={(e) => setDomesticCategory(e.target.value)}>
+            <option value="">Select category</option>
+            {DOMESTIC_CATEGORIES.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </Field>
+      )}
       <Field label="Customer">
         <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
           <option value="">Select customer</option>
@@ -5144,6 +5237,26 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     placeholder="Container Type"
                   />
                 </div>
+                {resolvedShipmentType === "Domestic" && domesticCategory && role !== "dispatcher_domestic" && (
+                  <div className="mb-2 p-2 bg-slate-950/40 rounded border border-slate-800 space-y-2">
+                    <div className="text-slate-500 text-[11px] font-semibold">{domesticCategory} details</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input className={inputCls} value={c.poSapNo || ""} onChange={(e) => setContainerField(c.id, "poSapNo", e.target.value)} placeholder="PO / SAP No." />
+                      <select className={inputCls} value={c.movementThrough || ""} onChange={(e) => setContainerField(c.id, "movementThrough", e.target.value)}>
+                        <option value="">Movement Through</option>
+                        {MOVEMENT_THROUGH_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" className={inputCls} value={c.loadingDate || ""} onChange={(e) => setContainerField(c.id, "loadingDate", e.target.value)} placeholder="Loading Date" />
+                      <select className={inputCls} value={c.vehicleSize || ""} onChange={(e) => setContainerField(c.id, "vehicleSize", e.target.value)}>
+                        <option value="">Vehicle Size</option>
+                        {CONTAINER_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <input className={inputCls} value={c.supplier || ""} onChange={(e) => setContainerField(c.id, "supplier", e.target.value)} placeholder="Supplier" />
+                  </div>
+                )}
                 {role !== "data_entry" && (
                   <div className="mb-2">
                     <input className={inputCls} value={c.vehiclePlate || ""} onChange={(e) => setContainerField(c.id, "vehiclePlate", e.target.value)} placeholder="Vehicle No." />
