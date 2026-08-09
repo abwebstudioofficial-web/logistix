@@ -4366,21 +4366,26 @@ function ContractDetail({ customer, contractName, data, openModal, askDelete, on
 function ContractForm({ initial, prefill, existingNames, onSave, onCancel }) {
   const isEdit = !!initial;
   const k = initial || prefill || {};
-  const [contractName, setContractName] = useState(k.contractName || "");
+  const contractNameLocked = isEdit || (!!prefill && !!prefill.contractName); // editing a rate, or adding a rate inside an already-open contract
+  // Rates created before Contract Name existed have no name stored — fall back to "Unnamed
+  // Contract" (matching how they're grouped/displayed elsewhere) rather than showing blank.
+  const [contractName, setContractName] = useState(k.contractName || (contractNameLocked ? "Unnamed Contract" : ""));
   const [loadingPoint, setLoadingPoint] = useState(k.loadingPoint || "");
   const [destination, setDestination] = useState(k.destination || "");
   const [vehicleSize, setVehicleSize] = useState(k.vehicleSize || "");
   const [weightCategory, setWeightCategory] = useState(k.weightCategory || "");
   const [axleLoadCategory, setAxleLoadCategory] = useState(k.axleLoadCategory || "");
   const [rate, setRate] = useState(k.rate ?? "");
-  const contractNameLocked = isEdit || (!!prefill && !!prefill.contractName); // editing a rate, or adding a rate inside an already-open contract
 
   function submit(e) {
     e.preventDefault();
-    if (!contractName.trim() || !loadingPoint.trim() || !destination.trim() || rate === "") return;
+    // When locked, the name is either already valid or was just defaulted above — either
+    // way there's nothing more the user can provide, so only block on a genuinely empty,
+    // user-editable name.
+    if ((!contractNameLocked && !contractName.trim()) || !loadingPoint.trim() || !destination.trim() || rate === "") return;
     onSave({
       id: k.id || genUUID(), customerId: k.customerId,
-      contractName: contractName.trim(),
+      contractName: contractName.trim() || "Unnamed Contract",
       loadingPoint: loadingPoint.trim(), destination: destination.trim(),
       vehicleSize: vehicleSize.trim(), weightCategory: weightCategory.trim(), axleLoadCategory: axleLoadCategory.trim(),
       rate: Number(rate),
