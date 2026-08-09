@@ -373,7 +373,9 @@ const NAV_ITEMS = [
   { key: "orders_domestic", label: "Domestic Orders", icon: Package },
   { key: "orders_import", label: "Import Orders", icon: Package },
   { key: "orders_export", label: "Export Orders", icon: Package },
-  { key: "tracking", label: "Tracking", icon: Navigation },
+  { key: "tracking_import", label: "Import Tracking", icon: Navigation },
+  { key: "tracking_domestic", label: "Domestic Tracking", icon: Navigation },
+  { key: "tracking_export", label: "Export Tracking", icon: Navigation },
   { key: "contracts", label: "Contracts", icon: FileSpreadsheet },
   { key: "invoices", label: "Invoices", icon: FileText },
   { key: "fuel_management", label: "Fuel Management", icon: Fuel },
@@ -390,7 +392,8 @@ const NAV_ITEMS = [
 const VIEW_TITLES = {
   dashboard: "Dashboard",
   orders_domestic: "Domestic Orders", orders_import: "Import Orders", orders_export: "Export Orders",
-  tracking: "Tracking", contracts: "Contracts", invoices: "Invoices", fuel_management: "Fuel Management",
+  tracking_import: "Import Tracking", tracking_domestic: "Domestic Tracking", tracking_export: "Export Tracking",
+  contracts: "Contracts", invoices: "Invoices", fuel_management: "Fuel Management",
   customers: "Customers", senders: "Senders", transporters: "Transporters",
   bill_checker: "Transporter Bills",
   analytics: "Analytics",
@@ -400,17 +403,24 @@ const VIEW_TITLES = {
 };
 
 // Which pages each restricted role is allowed to see. null/admin/staff = everything.
+// Dispatcher and Receiver each now come in shipment-type-specific variants — each only
+// ever sees the one Tracking page matching their type, never the other two.
 const ROLE_ALLOWED_VIEWS = {
-  dispatcher: ["tracking"],
-  receiver: ["tracking"],
-  empty_return_receiver: ["tracking"],
+  dispatcher_import: ["tracking_import"],
+  dispatcher_domestic: ["tracking_domestic"],
+  dispatcher_export: ["tracking_export"],
+  receiver_import_domestic: ["tracking_import", "tracking_domestic"],
+  receiver_export: ["tracking_export"],
+  empty_return_receiver: ["tracking_import"],
   data_entry: ["orders_domestic", "orders_import", "orders_export", "customers", "senders", "transporters"],
   finance_manager: ["invoices", "contracts", "fuel_management"],
   bill_checker: ["bill_checker"],
 };
 const ROLE_LABELS = {
   admin: "Admin", staff: "Staff", customer: "Customer",
-  dispatcher: "Dispatcher", receiver: "Receiver", empty_return_receiver: "Empty Return Receiver",
+  dispatcher_import: "Import Dispatcher", dispatcher_domestic: "Domestic Dispatcher", dispatcher_export: "Export Dispatcher",
+  receiver_import_domestic: "Import & Domestic Receiver", receiver_export: "Export Receiver",
+  empty_return_receiver: "Empty Return Receiver",
   data_entry: "Data Entry Operator", finance_manager: "Finance Manager",
   bill_checker: "Transporter Bill Checker",
 };
@@ -2513,7 +2523,7 @@ function Sidebar({
             value={session.role !== "customer" ? session.role : session.customerId}
             onChange={(e) => {
               const v = e.target.value;
-              const staffRoles = ["admin", "staff", "dispatcher", "receiver", "empty_return_receiver", "data_entry", "finance_manager", "bill_checker"];
+              const staffRoles = ["admin", "staff", "dispatcher_import", "dispatcher_domestic", "dispatcher_export", "receiver_import_domestic", "receiver_export", "empty_return_receiver", "data_entry", "finance_manager", "bill_checker"];
               if (staffRoles.includes(v)) {
                 setSession({ role: v, customerId: null });
                 const allowed = allowedViewsForRole(v);
@@ -2525,8 +2535,11 @@ function Sidebar({
             }}
           >
             <option value="admin">Admin ({profile.name || "you"})</option>
-            <option value="dispatcher">Preview: Dispatcher</option>
-            <option value="receiver">Preview: Receiver</option>
+            <option value="dispatcher_import">Preview: Import Dispatcher</option>
+            <option value="dispatcher_domestic">Preview: Domestic Dispatcher</option>
+            <option value="dispatcher_export">Preview: Export Dispatcher</option>
+            <option value="receiver_import_domestic">Preview: Import &amp; Domestic Receiver</option>
+            <option value="receiver_export">Preview: Export Receiver</option>
             <option value="empty_return_receiver">Preview: Empty Return Receiver</option>
             <option value="data_entry">Preview: Data Entry Operator</option>
             <option value="finance_manager">Preview: Finance Manager</option>
@@ -2751,7 +2764,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
   const typeLabel = { Domestic: "Domestic", Import: "Import", Export: "Export" }[shipmentType] || "";
   // Only the Import page gets the full status block row (it's the only shipment type that
   // ever reaches Completed), and per spec it's dispatcher/admin only.
-  const showStatusBlocks = shipmentType === "Import" && (role === "admin" || role === "dispatcher");
+  const showStatusBlocks = shipmentType === "Import" && (role === "admin" || role === "dispatcher_import");
 
   // Flatten to one row per container so Job No / Container No / Vehicle No
   // can be real table columns, and orders with multiple containers just get
@@ -3254,41 +3267,44 @@ function TrackingAssignFields({ container, orderId, updateContainerFields, trans
   );
 }
 
-function TrackingView({ data, updateContainerStage, updateContainerFields, role }) {
+function TrackingView({ data, updateContainerStage, updateContainerFields, role, shipmentTypeFilter }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
+  const [receiverTab, setReceiverTab] = useState("picked_up"); // Picked Up / In Transit / Delivered
   const [podTarget, setPodTarget] = useState(null); // { orderId, containerId, label }
   const [dispatchTarget, setDispatchTarget] = useState(null); // { orderId, containerId, label }
-  const [emptyReturnTarget, setEmptyReturnTarget] = useState(null); // { orderId, containerId, label, location }
   const today = todayISO();
-  const isReceiver = role === "receiver";
-  const isDispatcher = role === "dispatcher";
+  const isDispatcher = role === "dispatcher_import" || role === "dispatcher_domestic" || role === "dispatcher_export";
+  const isReceiver = role === "receiver_import_domestic" || role === "receiver_export";
   const isEmptyReturnReceiver = role === "empty_return_receiver";
   const isAdmin = role === "admin";
-  // Admin and the Empty Return Receiver are the two roles that actually need to look back
-  // through *all* delivered containers (not just today's) to find what still needs its
-  // empty box returned — everyone else only cares about today's deliveries.
+  // Admin and the Empty Return Receiver look back through all delivered containers (not
+  // just today's) to find what still needs its empty box returned.
   const showAllDelivered = isAdmin || isEmptyReturnReceiver;
-  // Only dispatcher/admin get the Completed block (per spec) — and only Import orders ever reach it.
-  const showCompletedBlock = isDispatcher || isAdmin || isEmptyReturnReceiver;
+  // Dispatcher no longer sees Delivered or Completed at all — their containers leave their
+  // view entirely once advanced to In Transit, so those two blocks would always read zero.
+  const showDeliveredBlock = !isDispatcher;
+  const showCompletedBlock = isAdmin || isEmptyReturnReceiver;
 
   // Dispatchers can move a container up through In Transit, but not all the way to Delivered.
   // Receivers can only take the final step (In Transit -> Delivered).
-  // Empty Return Receivers take the final Import-only step (Delivered -> Completed) via button.
+  // Empty Return Receiver no longer advances via a button — see the inline Empty Return
+  // Date field below, which drives Received/Completed automatically.
   function canAdvance(c, o) {
     const si = c.stageIndex ?? 0;
     if (isDispatcher) return si < 2;
     if (isReceiver) return si === 2;
-    if (isEmptyReturnReceiver) return si === 3 && (o.shipmentType || "Import") === "Import";
     return true;
   }
   function maxStageIndex(o) {
     return (o.shipmentType || "Import") === "Import" ? 4 : 3;
   }
 
-  // Flatten every order's containers into individual trackable rows.
+  // Flatten every order's containers into individual trackable rows, scoped to this
+  // page's shipment type (Import/Domestic/Export each get their own Tracking page).
   const flat = [];
   data.orders.forEach((o) => {
+    if (shipmentTypeFilter && (o.shipmentType || "Import") !== shipmentTypeFilter) return;
     orderContainers(o).forEach((c) => flat.push({ order: o, container: c }));
   });
   const visible = isReceiver
@@ -3296,9 +3312,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
         const si = r.container.stageIndex ?? 0;
         if (r.container.cancelled) return false;
         if (isSettledOut(r.container)) return false;
-        if (si >= 1 && si < 3) return true; // Picked Up / In Transit — their active work
-        if (si >= 3 && r.container.deliveredDate === today) return true; // delivered today by them
-        return false;
+        return si >= 1 && si <= 3; // Picked Up / In Transit / Delivered — categorized into tabs below
       })
     : isEmptyReturnReceiver
     ? flat.filter((r) => {
@@ -3306,13 +3320,10 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
         if ((r.order.shipmentType || "Import") !== "Import") return false;
         if (isSettledOut(r.container)) return false;
         const si = r.container.stageIndex ?? 0;
-        // Delivered (awaiting return) and Completed both stay visible for the same
-        // 2-day grace window as everyone else — previously Completed was wrongly
-        // limited to "today only", making it disappear for this role a day early.
         return si === 3 || si === 4;
       })
     : isDispatcher
-    ? flat.filter((r) => !isSettledOut(r.container))
+    ? flat.filter((r) => !r.container.cancelled && (r.container.stageIndex ?? 0) < 2) // gone once advanced to In Transit
     : flat; // admin/staff see everything, unrestricted — Order History is the archive for them
 
   const confirmedCount = visible.filter((r) => trackingDisplayStatus(r.container) === "Confirmed").length;
@@ -3325,8 +3336,14 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
   const rows = visible.filter(({ order, container }) => {
     const st = trackingDisplayStatus(container);
     const cust = getCustomer(data, order.customerId);
-    const text = `${order.orderNumber} ${cust ? cust.name : ""} ${container.driverName || ""} ${container.containerNumber || ""}`.toLowerCase();
+    const text = `${order.orderNumber} ${cust ? cust.name : ""} ${container.containerNumber || ""}`.toLowerCase();
     const matchesQ = !q || text.includes(q.toLowerCase());
+    if (isReceiver) {
+      const si = container.stageIndex ?? 0;
+      const tabSi = receiverTab === "picked_up" ? 1 : receiverTab === "in_transit" ? 2 : 3;
+      if (si !== tabSi) return false;
+      return matchesQ;
+    }
     let matchesFilter = true;
     if (filter === "active") matchesFilter = st === "Confirmed" || st === "Picked Up" || st === "In Transit";
     else if (filter === "delivered") matchesFilter = st === "Delivered";
@@ -3348,45 +3365,62 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
             : "Monitor active containers and update delivery status"}
         </p>
       </div>
-      <div className={cx("grid grid-cols-2 gap-4", showCompletedBlock ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
-        <MiniStat
-          label="Confirmed" value={confirmedCount} color="text-blue-400"
-          onClick={() => setFilter(filter === "confirmed" ? "all" : "confirmed")}
-          active={filter === "confirmed"}
-        />
-        <MiniStat
-          label="Picked Up" value={pickedUpCount} color="text-indigo-400"
-          onClick={() => setFilter(filter === "picked_up" ? "all" : "picked_up")}
-          active={filter === "picked_up"}
-        />
-        <MiniStat
-          label="In Transit" value={inTransitCount} color="text-blue-400"
-          onClick={() => setFilter(filter === "in_transit" ? "all" : "in_transit")}
-          active={filter === "in_transit"}
-        />
-        {showAllDelivered ? (
+      {isReceiver ? (
+        <div className="flex border-b border-slate-800">
+          {[["picked_up", "Picked Up", pickedUpCount], ["in_transit", "In Transit", inTransitCount], ["delivered", "Delivered", deliveredAllCount]].map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setReceiverTab(key)}
+              className={cx(
+                "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+                receiverTab === key ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
+              )}
+            >
+              {label} <span className="ml-1 text-xs opacity-70">({count})</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className={cx("grid grid-cols-2 gap-4", showCompletedBlock ? "lg:grid-cols-5" : showDeliveredBlock ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
           <MiniStat
-            label="Delivered" value={deliveredAllCount} color="text-emerald-400"
-            onClick={() => setFilter(filter === "delivered" ? "all" : "delivered")}
-            active={filter === "delivered"}
+            label="Confirmed" value={confirmedCount} color="text-blue-400"
+            onClick={() => setFilter(filter === "confirmed" ? "all" : "confirmed")}
+            active={filter === "confirmed"}
           />
-        ) : (
           <MiniStat
-            label="Delivered Today" value={deliveredTodayCount} color="text-emerald-400"
-            onClick={() => setFilter(filter === "delivered_today" ? "all" : "delivered_today")}
-            active={filter === "delivered_today"}
+            label="Picked Up" value={pickedUpCount} color="text-indigo-400"
+            onClick={() => setFilter(filter === "picked_up" ? "all" : "picked_up")}
+            active={filter === "picked_up"}
           />
-        )}
-        {showCompletedBlock && (
           <MiniStat
-            label="Completed" value={completedCount} color="text-violet-400"
-            onClick={() => setFilter(filter === "completed" ? "all" : "completed")}
-            active={filter === "completed"}
+            label="In Transit" value={inTransitCount} color="text-blue-400"
+            onClick={() => setFilter(filter === "in_transit" ? "all" : "in_transit")}
+            active={filter === "in_transit"}
           />
-        )}
-      </div>
+          {showDeliveredBlock && (showAllDelivered ? (
+            <MiniStat
+              label="Delivered" value={deliveredAllCount} color="text-emerald-400"
+              onClick={() => setFilter(filter === "delivered" ? "all" : "delivered")}
+              active={filter === "delivered"}
+            />
+          ) : (
+            <MiniStat
+              label="Delivered" value={deliveredTodayCount} color="text-emerald-400"
+              onClick={() => setFilter(filter === "delivered_today" ? "all" : "delivered_today")}
+              active={filter === "delivered_today"}
+            />
+          ))}
+          {showCompletedBlock && (
+            <MiniStat
+              label="Completed" value={completedCount} color="text-violet-400"
+              onClick={() => setFilter(filter === "completed" ? "all" : "completed")}
+              active={filter === "completed"}
+            />
+          )}
+        </div>
+      )}
       <div className="flex gap-3 flex-wrap">
-        <SearchBox value={q} onChange={setQ} placeholder="Search orders, drivers, containers..." />
+        <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
         {!isReceiver && !isDispatcher && !isEmptyReturnReceiver && (
           <select className={inputCls} style={{ width: 240 }} value={filter} onChange={(e) => setFilter(e.target.value)}>
             <option value="active">Active (Confirmed + Picked Up + In Transit)</option>
@@ -3426,7 +3460,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                     ) : (
                       <>
                         <span className="flex items-center gap-1"><Send size={12} />{c.transporter || "No transporter"}</span>
-                        <span className="flex items-center gap-1"><Users size={12} />{c.driverName || "Unassigned"}</span>
                         <span className="flex items-center gap-1"><Truck size={12} />{c.vehiclePlate || "Unassigned"}</span>
                         <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
                       </>
@@ -3447,12 +3480,11 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                       <button
                         className={cx(btnPrimary, blockedByRequiredFields && "opacity-40 cursor-not-allowed hover:bg-blue-600")}
                         disabled={blockedByRequiredFields}
-                        title={blockedByRequiredFields ? "Fill in driver, vehicle, transporter, freight, and empty return location first" : undefined}
+                        title={blockedByRequiredFields ? "Fill in vehicle, transporter, freight, and empty return location first" : undefined}
                         onClick={() => {
                           if (blockedByRequiredFields) return;
                           const nextIdx = si + 1;
-                          if (nextIdx === 4) setEmptyReturnTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, location: c.emptyReturnLocation });
-                          else if (nextIdx === 3) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
+                          if (nextIdx === 3) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
@@ -3466,11 +3498,23 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
                     {!c.cancelled && si < 3 && !canAdvance(c, o) && isDispatcher && (
                       <span className="text-slate-500 text-xs italic">Awaiting Receiver to confirm delivery</span>
                     )}
-                    {!c.cancelled && si === 3 && isDispatcher && (o.shipmentType || "Import") === "Import" && (
-                      <span className="text-slate-500 text-xs italic">Awaiting Empty Return Receiver to advance to Completed</span>
-                    )}
-                    {!c.cancelled && si === 3 && !canAdvance(c, o) && isEmptyReturnReceiver && (o.shipmentType || "Import") !== "Import" && (
-                      <span className="text-slate-500 text-xs italic">Not an import shipment</span>
+                    {!c.cancelled && isEmptyReturnReceiver && (si === 3 || si === 4) && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500 text-xs">Empty Return Date</span>
+                        <input
+                          type="date"
+                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-600"
+                          value={c.emptyReturnDate || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            // Date-driven status: adding a date marks it Received and completes
+                            // the container; clearing it puts it back to In Process / Delivered.
+                            if (val) updateContainerStage(o.id, c.id, 4, { emptyReturnDate: val });
+                            else updateContainerStage(o.id, c.id, 3, { emptyReturnDate: "" });
+                          }}
+                        />
+                        <Badge text={c.emptyReturnDate ? "Received" : "In Process"} className={c.emptyReturnDate ? "bg-emerald-950 text-emerald-400 border-emerald-800" : "bg-amber-950 text-amber-400 border-amber-800"} />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -3492,17 +3536,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role 
           onConfirm={(podData) => {
             updateContainerStage(podTarget.orderId, podTarget.containerId, 3, podData);
             setPodTarget(null);
-          }}
-        />
-      )}
-      {emptyReturnTarget && (
-        <EmptyReturnModal
-          containerLabel={emptyReturnTarget.label}
-          defaultLocation={emptyReturnTarget.location}
-          onClose={() => setEmptyReturnTarget(null)}
-          onConfirm={(returnData) => {
-            updateContainerStage(emptyReturnTarget.orderId, emptyReturnTarget.containerId, 4, returnData);
-            setEmptyReturnTarget(null);
           }}
         />
       )}
@@ -4535,7 +4568,7 @@ function SwapMonthGroupRow({ entries, openModal, askDelete }) {
   );
 }
 
-function FuelCardSwapForm({ initial, prefill, transporters, onSave, onCancel }) {
+function FuelCardSwapForm({ initial, prefill, transporters, fuelPrices, onSave, onCancel }) {
   const isEdit = !!initial;
   const f = initial || prefill || {};
   const [swapDate, setSwapDate] = useState(f.swapDate || todayISO());
@@ -4543,7 +4576,11 @@ function FuelCardSwapForm({ initial, prefill, transporters, onSave, onCancel }) 
   const [swappedBy, setSwappedBy] = useState(f.swappedBy || "");
   const [cardNumber, setCardNumber] = useState(f.cardNumber || "");
   const [qtyLtr, setQtyLtr] = useState(f.qtyLtr ?? "");
-  const [amountPkr, setAmountPkr] = useState(f.amountPkr ?? "");
+
+  // Amount is no longer typed in directly — it's Qty (Ltr) x whichever fuel price was on
+  // file for the swap date, same lookup used for the per-shipment Fuel Amount calculation.
+  const priceOnDate = fuelPriceOnDate(fuelPrices, swapDate);
+  const computedAmount = priceOnDate && qtyLtr !== "" ? Number(qtyLtr) * priceOnDate : null;
 
   function submit(e) {
     e.preventDefault();
@@ -4551,7 +4588,7 @@ function FuelCardSwapForm({ initial, prefill, transporters, onSave, onCancel }) 
     onSave({
       id: f.id || genUUID(), customerId: f.customerId,
       swapDate, department, swappedBy: swappedBy.trim(), cardNumber: cardNumber.trim(),
-      qtyLtr: qtyLtr === "" ? "" : Number(qtyLtr), amountPkr: amountPkr === "" ? "" : Number(amountPkr),
+      qtyLtr: qtyLtr === "" ? "" : Number(qtyLtr), amountPkr: computedAmount === null ? "" : computedAmount,
     });
   }
 
@@ -4576,7 +4613,11 @@ function FuelCardSwapForm({ initial, prefill, transporters, onSave, onCancel }) 
         <Field label="Card No."><input className={inputCls} value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} placeholder="e.g. 7001 0003 6875 3657" /></Field>
         <Field label="Qty (Ltr)"><input type="number" min="0" step="0.01" className={inputCls} value={qtyLtr} onChange={(e) => setQtyLtr(e.target.value)} /></Field>
       </div>
-      <Field label="Amount in PKR"><input type="number" min="0" className={inputCls} value={amountPkr} onChange={(e) => setAmountPkr(e.target.value)} /></Field>
+      <Field label="Amount in PKR (calculated automatically)">
+        <div className={cx(inputCls, "bg-slate-900/60 text-slate-300")}>
+          {computedAmount === null ? "No fuel price on file for this date" : formatPKR(computedAmount)}
+        </div>
+      </Field>
       <div className="flex justify-end gap-2 mt-2">
         <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
         <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Log Swap"}</button>
@@ -5902,7 +5943,7 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
       {type === "transporter" && <TransporterForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("transporters", i)} onCancel={onClose} />}
       {type === "contract" && <ContractForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("contracts", i)} onCancel={onClose} />}
       {type === "fuel" && <FuelForm initial={mode === "edit" ? item : null} prefill={modal.prefill} vehicles={data.vehicles} onSave={(i) => onSave("fuel_allocations", i)} onCancel={onClose} />}
-      {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} transporters={data.transporters} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
+      {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} transporters={data.transporters} fuelPrices={data.fuel_prices} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
       {type === "fuel_price" && <FuelPriceForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("fuel_prices", i)} onCancel={onClose} />}
     </Modal>
   );
@@ -6887,7 +6928,9 @@ function LogistixERP() {
               {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} />}
               {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} />}
               {view === "orders_export" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Export" role={viewSession.role} />}
-              {view === "tracking" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} />}
+              {view === "tracking_import" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Import" />}
+              {view === "tracking_domestic" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Domestic" />}
+              {view === "tracking_export" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Export" />}
               {view === "contracts" && <ContractsView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "fuel_management" && (
