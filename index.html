@@ -2947,6 +2947,8 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
               <tr>
                 {isDomestic ? (
                   <>
+                    <th className={thCls}>Customer</th>
+                    <th className={thCls}>Sender</th>
                     <th className={thCls}>PO / SAP No.</th>
                     <th className={thCls}>Movement Through</th>
                     <th className={thCls}>Loading Date</th>
@@ -2983,6 +2985,8 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                   <tr key={c ? c.id : o.id + "-" + idx} className={trCls}>
                     {isDomestic ? (
                       <>
+                        <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
+                        <td className={tdCls}>{(data.senders || []).find((s) => s.id === o.senderId)?.name || "—"}</td>
                         <td className={cx(tdCls, "font-mono text-slate-200")}>{c ? (c.poSapNo || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.movementThrough || "—") : "—"}</td>
                         <td className={tdCls}>{c && c.loadingDate ? fmtDateISO(c.loadingDate) : "—"}</td>
@@ -4557,41 +4561,52 @@ function SwapRow({ s, dateLabel, openModal, askDelete }) {
   );
 }
 
-// A month with more than one swap collapses into one row — the date cell shows "Month
-// YYYY" plus a dropdown listing every entry that month; picking one updates the rest of
-// the row (and its edit/delete buttons) to that entry, instead of listing every row out.
+// A month with more than one swap collapses into one row with a "+" toggle. Clicking it
+// expands a row of compact tiles, one per date, each showing only what's needed at a
+// glance — Date, Card No., Qty, Amount — with edit/delete on the tile itself.
 function SwapMonthGroupRow({ entries, openModal, askDelete }) {
-  const [idx, setIdx] = useState(0);
-  const s = entries[idx];
-  const monthLabel = fmtMonthYear(new Date(s.swapDate + "T00:00:00"));
+  const [expanded, setExpanded] = useState(false);
+  const first = entries[0];
+  const monthLabel = fmtMonthYear(new Date(first.swapDate + "T00:00:00"));
   return (
-    <tr className={trCls}>
-      <td className={tdCls}>
-        <div className="space-y-1">
-          <div>{monthLabel}</div>
-          <select
-            className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-300 w-full focus:outline-none focus:ring-1 focus:ring-blue-600"
-            value={idx}
-            onChange={(e) => setIdx(Number(e.target.value))}
-          >
-            {entries.map((e, i) => (
-              <option key={e.id} value={i}>{fmtDate(e.swapDate)} — {e.cardNumber || "no card"}</option>
-            ))}
-          </select>
-        </div>
-      </td>
-      <td className={tdCls}>{s.department || "—"}</td>
-      <td className={tdCls}>{s.swappedBy || "—"}</td>
-      <td className={cx(tdCls, "font-mono")}>{s.cardNumber || "—"}</td>
-      <td className={tdCls}>{s.qtyLtr || s.qtyLtr === 0 ? Number(s.qtyLtr).toLocaleString() : "—"}</td>
-      <td className={cx(tdCls, "text-white font-medium")}>{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</td>
-      <td className={tdCls}>
-        <div className="flex items-center gap-1 justify-end">
-          <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={15} /></button>
-          <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={15} /></button>
-        </div>
-      </td>
-    </tr>
+    <>
+      <tr className={trCls}>
+        <td className={tdCls}>
+          <button type="button" onClick={() => setExpanded((v) => !v)} className="flex items-center gap-1.5 text-slate-200 hover:text-white font-medium">
+            <span className={cx("inline-flex items-center justify-center w-4 h-4 rounded border border-slate-600 text-slate-400 transition-transform", expanded && "rotate-45 border-blue-500 text-blue-400")}>
+              <Plus size={11} />
+            </span>
+            {monthLabel} <span className="text-slate-500 font-normal">({entries.length} entries)</span>
+          </button>
+        </td>
+        <td className={tdCls}>{first.department || "—"}</td>
+        <td className={tdCls} colSpan={5}></td>
+      </tr>
+      {expanded && (
+        <tr className="bg-slate-900/40">
+          <td colSpan={7} className="px-4 py-3">
+            <div className="flex flex-wrap gap-2">
+              {entries.map((s) => (
+                <div key={s.id} className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 flex items-center gap-3 text-xs">
+                  <div>
+                    <div className="text-slate-500">{fmtDate(s.swapDate)}</div>
+                    <div className="text-slate-300 font-mono">{s.cardNumber || "—"}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-slate-400">{s.qtyLtr || s.qtyLtr === 0 ? `${Number(s.qtyLtr).toLocaleString()} L` : "—"}</div>
+                    <div className="text-white font-medium">{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</div>
+                  </div>
+                  <div className="flex items-center gap-1 border-l border-slate-800 pl-2">
+                    <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={13} /></button>
+                    <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
