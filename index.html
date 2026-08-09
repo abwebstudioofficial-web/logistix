@@ -762,7 +762,7 @@ function emptyContainer() {
   return {
     id: uid("cnt"), containerNumber: "", sealNumber: "", qtyLabel: "", containerType: "", containerSize: "",
     driverName: "", vehiclePlate: "", priority: "Normal", stageIndex: 0, cancelled: false, deliveredDate: null,
-    amount: "", transporter: "", freightAmount: "", fuelAmount: "", emptyReturnLocation: "", emptyReturnDate: "", emptyReturnTime: "", emptyReturnDescription: "", shifting: "",
+    amount: "", transporter: "", freightAmount: "", fuelAmount: "", emptyReturnLocation: "", emptyReturnDate: "", emptyReturnTime: "", emptyReturnDescription: "", shifting: "", shiftedContainerNo: "",
     biltyNumber: genBiltyNumber(),
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
@@ -861,19 +861,6 @@ function isSettledOut(c) {
   if (isNaN(completedAt)) return false;
   const diffDays = (Date.now() - completedAt.getTime()) / 86400000;
   return diffDays >= 2;
-}
-
-// Required before a dispatcher can move a container from Picked Up into In Transit —
-// you shouldn't be able to mark a shipment in transit without knowing who's driving it,
-// what it's on, who's hauling it, what it's costing, and where the empty comes back to.
-function hasTrackingFieldsFilled(c) {
-  return !!(
-    (c.driverName || "").trim() &&
-    (c.vehiclePlate || "").trim() &&
-    (c.transporter || "").trim() &&
-    c.freightAmount !== "" && c.freightAmount !== null && c.freightAmount !== undefined &&
-    (c.emptyReturnLocation || "").trim()
-  );
 }
 
 // Kept as an alias so any existing references keep working — containerStatus
@@ -1965,13 +1952,6 @@ function analyticsData(data, rangeDays) {
     revenue: invoices.filter((i) => i.status === "Paid" && i.issued === iso).reduce((s, i) => s + i.total, 0),
   }));
 
-  const driverList2 = drivers.filter((d) => d.role === "Driver");
-  const driverPerformance = driverList2.map((d) => ({
-    name: d.name,
-    Active: allContainers.filter((c) => c.driverName === d.name && containerStatus(c) === "In Transit").length,
-    Delivered: allContainers.filter((c) => c.driverName === d.name && isDeliveredOrCompleted(c)).length,
-  }));
-
   const priorityColors = { Low: "#64748b", Normal: "#38bdf8", Urgent: "#ef4444" };
   const priorityCounts = {};
   allContainers.forEach((c) => { const p = c.priority || "Normal"; priorityCounts[p] = (priorityCounts[p] || 0) + 1; });
@@ -1991,7 +1971,7 @@ function analyticsData(data, rangeDays) {
     totalOrders: ordersInRange.length, delivered: deliveredInRange.length, revenue, outstanding,
     activeVehicles, totalVehicles: vehicles.length, fleetUtilPct, onTimePct, onDutyPct, paidRatePct,
     chart, statusMix: getStatusMix(orders),
-    revenueChart, driverPerformance, priorityMix, invoiceStatusMix, vehicleTypeMix,
+    revenueChart, priorityMix, invoiceStatusMix, vehicleTypeMix,
   };
 }
 
@@ -2244,17 +2224,31 @@ function ConfirmModal({ title, message, onConfirm, onCancel }) {
   );
 }
 
-function DispatchModal({ containerLabel, onClose, onConfirm }) {
-  const [photo, setPhoto] = useState("");
-  const [notes, setNotes] = useState("");
-  const [dispatchedBy, setDispatchedBy] = useState("");
+function DispatchModal({ containerLabel, initial, transporters, onClose, onConfirm }) {
+  const c = initial || {};
+  const isEdit = !!initial;
+  const [photo, setPhoto] = useState(c.dispatchPhoto || "");
+  const [notes, setNotes] = useState(c.dispatchNotes || "");
+  const [dispatchedBy, setDispatchedBy] = useState(c.dispatchedBy || "");
   const [dispatchAt, setDispatchAt] = useState(() => {
+    if (c.dispatchAt) return c.dispatchAt.slice(0, 16);
     const d = new Date();
     d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
     return d.toISOString().slice(0, 16);
   });
+  const [transporter, setTransporter] = useState(c.transporter || "");
+  const [transporterCustomMode, setTransporterCustomMode] = useState(false);
+  const [vehiclePlate, setVehiclePlate] = useState(c.vehiclePlate || "");
+  const [freightAmount, setFreightAmount] = useState(c.freightAmount ?? "");
+  const [shifting, setShifting] = useState(c.shifting || "no");
+  const [shiftedContainerNo, setShiftedContainerNo] = useState(c.shiftedContainerNo || "");
+  const [emptyReturnLocation, setEmptyReturnLocation] = useState(c.emptyReturnLocation || "");
   const [busy, setBusy] = useState(false);
   const [photoError, setPhotoError] = useState(null);
+  const [formError, setFormError] = useState(null);
+
+  const transporterNames = (transporters || []).map((t) => t.name);
+  const isKnownTransporter = !!transporter && transporterNames.includes(transporter);
 
   async function handleFile(e) {
     const file = e.target.files && e.target.files[0];
@@ -2272,21 +2266,72 @@ function DispatchModal({ containerLabel, onClose, onConfirm }) {
 
   function submit(e) {
     e.preventDefault();
+    setFormError(null);
     if (!photo) { setPhotoError("A loading photo or document is required to confirm dispatch."); return; }
+    if (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "") {
+      setFormError("Transporter, Vehicle No., and Freight Amount are all required.");
+      return;
+    }
+    if (shifting === "yes" && (!shiftedContainerNo.trim() || !emptyReturnLocation.trim())) {
+      setFormError("Shifted Container No. and Empty Return Location are required when Shifting is Yes.");
+      return;
+    }
     onConfirm({
       dispatchPhoto: photo,
       dispatchNotes: notes.trim(),
       dispatchedBy: dispatchedBy.trim(),
       dispatchAt: new Date(dispatchAt).toISOString(),
+      transporter: transporter.trim(),
+      vehiclePlate: vehiclePlate.trim(),
+      freightAmount: Number(freightAmount),
+      shifting,
+      shiftedContainerNo: shifting === "yes" ? shiftedContainerNo.trim() : "",
+      emptyReturnLocation: shifting === "yes" ? emptyReturnLocation.trim() : "",
     });
   }
 
   return (
-    <Modal title={`Confirm Dispatch — ${containerLabel}`} onClose={onClose}>
+    <Modal title={`${isEdit ? "Edit Dispatch Details" : "Confirm Dispatch"} — ${containerLabel}`} onClose={onClose}>
       <form onSubmit={submit}>
         <Field label="Actual Dispatch / Pickup Time">
           <input type="datetime-local" className={inputCls} value={dispatchAt} onChange={(e) => setDispatchAt(e.target.value)} required />
         </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Transporter">
+            {!transporterCustomMode ? (
+              <select
+                className={inputCls}
+                value={isKnownTransporter ? transporter : (transporter ? "__custom__" : "")}
+                onChange={(e) => {
+                  if (e.target.value === "__custom__") { setTransporterCustomMode(true); return; }
+                  setTransporter(e.target.value);
+                }}
+              >
+                <option value="">Select transporter</option>
+                {transporterNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value="__custom__">+ Custom...</option>
+              </select>
+            ) : (
+              <input className={inputCls} value={transporter} onChange={(e) => setTransporter(e.target.value)} placeholder="Custom transporter" autoFocus />
+            )}
+          </Field>
+          <Field label="Vehicle No."><input className={inputCls} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="Vehicle number" /></Field>
+        </div>
+        <Field label="Freight Amount (PKR)">
+          <input type="number" min="0" className={inputCls} value={freightAmount} onChange={(e) => setFreightAmount(e.target.value)} />
+        </Field>
+        <Field label="Shifting">
+          <select className={inputCls} value={shifting} onChange={(e) => setShifting(e.target.value)}>
+            <option value="no">No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </Field>
+        {shifting === "yes" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Shifted Container No."><input className={inputCls} value={shiftedContainerNo} onChange={(e) => setShiftedContainerNo(e.target.value)} /></Field>
+            <Field label="Empty Return Location"><input className={inputCls} value={emptyReturnLocation} onChange={(e) => setEmptyReturnLocation(e.target.value)} /></Field>
+          </div>
+        )}
         <Field label="Dispatched By (name)">
           <input className={inputCls} value={dispatchedBy} onChange={(e) => setDispatchedBy(e.target.value)} placeholder="Who released/loaded it at origin" />
         </Field>
@@ -2303,10 +2348,11 @@ function DispatchModal({ containerLabel, onClose, onConfirm }) {
         <Field label="Notes (seal check, loading discrepancies, etc.)">
           <textarea className={inputCls} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. Seal verified and matches manifest, loaded on schedule" />
         </Field>
+        {formError && <p className="text-red-400 text-xs mb-2">{formError}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
           <button type="submit" disabled={busy || !photo} className={cx(btnPrimary, (busy || !photo) && "opacity-60 cursor-not-allowed")}>
-            {busy ? "Processing…" : "Confirm Dispatch"}
+            {busy ? "Processing…" : isEdit ? "Save Changes" : "Confirm Dispatch"}
           </button>
         </div>
       </form>
@@ -2674,7 +2720,6 @@ function Dashboard({ data }) {
   const activeVehicles = vehicles.filter((v) => v.status === "active").length;
   const maintenanceVehicles = vehicles.filter((v) => v.status === "maintenance").length;
   const inTransit = orders.filter((o) => orderAggregateStatus(o) === "In Transit").length;
-  const driverCount = drivers.filter((d) => d.role === "Driver").length;
   const revenue = invoices.filter((i) => i.status === "Paid").reduce((s, i) => s + i.total, 0);
   const outstanding = invoices.filter((i) => i.status === "Sent" || i.status === "Overdue").reduce((s, i) => s + i.total, 0);
 
@@ -2687,10 +2732,9 @@ function Dashboard({ data }) {
         <h2 className="text-2xl font-bold text-white">Overview</h2>
         <p className="text-slate-500 text-sm mt-1">Your logistics operations at a glance</p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard icon={Package} iconBg="bg-blue-600" label="Total Orders" value={orders.length} sub={`${inTransit} in transit`} />
         <StatCard icon={Truck} iconBg="bg-indigo-600" label="Active Vehicles" value={activeVehicles} sub={`${maintenanceVehicles} in maintenance`} />
-        <StatCard icon={Users} iconBg="bg-purple-600" label="Drivers" value={driverCount} sub="registered drivers" />
         <StatCard icon={Banknote} iconBg="bg-emerald-600" label="Revenue" value={formatPKR(revenue)} sub={`${formatPKR(outstanding)} outstanding`} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -3139,131 +3183,38 @@ function RoutesView({ data, openModal, askDelete }) {
 
 /* ==================== Tracking ==================== */
 
-function TrackingAssignFields({ container, orderId, updateContainerFields, transporters }) {
-  const [driverName, setDriverName] = useState(container.driverName || "");
-  const [vehiclePlate, setVehiclePlate] = useState(container.vehiclePlate || "");
-  const [transporter, setTransporter] = useState(container.transporter || "");
-  const [freightAmount, setFreightAmount] = useState(container.freightAmount ?? "");
-  const [emptyReturnLocation, setEmptyReturnLocation] = useState(container.emptyReturnLocation || "");
-  const [shifting, setShifting] = useState(container.shifting || "");
-  const [emptyReturnDate, setEmptyReturnDate] = useState(container.emptyReturnDate || "");
-  const [transporterCustomMode, setTransporterCustomMode] = useState(false);
+// A plain <input type="date"> bound directly to onChange fires on every digit typed into
+// the year segment — including incomplete years like "0002" partway through typing "2026".
+// Wiring that straight to a database write (as this used to be) meant every keystroke sent
+// a real update, sometimes with a garbage date. This keeps the typed value in local state
+// and only commits a change once the field loses focus AND the value is a complete,
+// plausible date (a 4-digit year between 2000-2100) — anything else reverts silently.
+function EmptyReturnDateField({ orderId, containerId, value, updateContainerStage }) {
+  const [local, setLocal] = useState(value || "");
+  useEffect(() => { setLocal(value || ""); }, [value]);
 
-  useEffect(() => {
-    setDriverName(container.driverName || "");
-    setVehiclePlate(container.vehiclePlate || "");
-    setTransporter(container.transporter || "");
-    setFreightAmount(container.freightAmount ?? "");
-    setEmptyReturnLocation(container.emptyReturnLocation || "");
-    setShifting(container.shifting || "");
-    setEmptyReturnDate(container.emptyReturnDate || "");
-  }, [container.id, container.driverName, container.vehiclePlate, container.transporter, container.freightAmount, container.emptyReturnLocation, container.shifting, container.emptyReturnDate]);
-
-  function commit(field, value) {
-    if (value !== (container[field] ?? "")) updateContainerFields(orderId, container.id, { [field]: value });
+  function commit(val) {
+    if (val === "") {
+      updateContainerStage(orderId, containerId, 3, { emptyReturnDate: "" });
+      return;
+    }
+    const year = Number(val.slice(0, 4));
+    const isCompleteDate = /^\d{4}-\d{2}-\d{2}$/.test(val) && year >= 2000 && year <= 2100;
+    if (isCompleteDate) {
+      updateContainerStage(orderId, containerId, 4, { emptyReturnDate: val });
+    } else {
+      setLocal(value || ""); // not a real, complete date yet - discard and revert the field
+    }
   }
 
-  const transporterNames = (transporters || []).map((t) => t.name);
-  const isKnownTransporter = !!transporter && transporterNames.includes(transporter);
-
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <div className="flex items-center gap-1">
-        <Send size={12} className="text-slate-500 shrink-0" />
-        {!transporterCustomMode ? (
-          <select
-            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
-            value={isKnownTransporter ? transporter : (transporter ? "__custom__" : "")}
-            onChange={(e) => {
-              if (e.target.value === "__custom__") { setTransporterCustomMode(true); return; }
-              setTransporter(e.target.value);
-              commit("transporter", e.target.value);
-            }}
-          >
-            <option value="">Transporter</option>
-            {transporterNames.map((n) => <option key={n} value={n}>{n}</option>)}
-            <option value="__custom__">+ Custom...</option>
-          </select>
-        ) : (
-          <input
-            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
-            value={transporter}
-            onChange={(e) => setTransporter(e.target.value)}
-            onBlur={(e) => { commit("transporter", e.target.value); if (!e.target.value) setTransporterCustomMode(false); }}
-            placeholder="Custom transporter"
-            autoFocus
-          />
-        )}
-      </div>
-      <div className="flex items-center gap-1">
-        <Users size={12} className="text-slate-500 shrink-0" />
-        <input
-          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-28 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          value={driverName}
-          onChange={(e) => setDriverName(e.target.value)}
-          onBlur={(e) => commit("driverName", e.target.value)}
-          placeholder="Driver name"
-        />
-      </div>
-      <div className="flex items-center gap-1">
-        <Truck size={12} className="text-slate-500 shrink-0" />
-        <input
-          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-24 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          value={vehiclePlate}
-          onChange={(e) => setVehiclePlate(e.target.value)}
-          onBlur={(e) => commit("vehiclePlate", e.target.value)}
-          placeholder="Vehicle No."
-        />
-      </div>
-      <div className="flex items-center gap-1">
-        <Banknote size={12} className="text-slate-500 shrink-0" />
-        <input
-          type="number" min="0"
-          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-24 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          value={freightAmount}
-          onChange={(e) => setFreightAmount(e.target.value)}
-          onBlur={(e) => commit("freightAmount", e.target.value === "" ? "" : Number(e.target.value))}
-          placeholder="Freight (PKR)"
-        />
-      </div>
-      <div className="flex items-center gap-1">
-        <MapPin size={12} className="text-slate-500 shrink-0" />
-        <input
-          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
-          value={emptyReturnLocation}
-          onChange={(e) => setEmptyReturnLocation(e.target.value)}
-          onBlur={(e) => commit("emptyReturnLocation", e.target.value)}
-          placeholder="Empty Return Location"
-        />
-      </div>
-      {(container.stageIndex ?? 0) >= 3 && (
-        <>
-          <div className="flex items-center gap-1">
-            <ArrowLeft size={12} className="text-slate-500 shrink-0 rotate-90" />
-            <select
-              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-28 focus:outline-none focus:ring-1 focus:ring-blue-600"
-              value={shifting}
-              onChange={(e) => { setShifting(e.target.value); commit("shifting", e.target.value); }}
-            >
-              <option value="">Shifting?</option>
-              <option value="yes">Shifting: Yes</option>
-              <option value="no">Shifting: No</option>
-            </select>
-          </div>
-          {shifting === "yes" && (
-            <div className="flex items-center gap-1">
-              <Clock size={12} className="text-slate-500 shrink-0" />
-              <input
-                type="date"
-                className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-32 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                value={emptyReturnDate}
-                onChange={(e) => { setEmptyReturnDate(e.target.value); commit("emptyReturnDate", e.target.value); }}
-              />
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <input
+      type="date"
+      className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-600"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={(e) => commit(e.target.value)}
+    />
   );
 }
 
@@ -3440,8 +3391,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             const maxIdx = maxStageIndex(o);
             const showPod = (isAdmin || isEmptyReturnReceiver) && c.podPhoto && (c.stageIndex ?? 0) >= 3;
             const si = c.stageIndex ?? 0;
-            const movingToInTransit = (isDispatcher || isAdmin) && si === 1;
-            const blockedByRequiredFields = movingToInTransit && !hasTrackingFieldsFilled(c);
+            const canEditDispatch = (role === "admin" || isDispatcher) && si < 2;
             return (
               <div key={c.id} className={cx(cardCls, "p-5")}>
                 <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
@@ -3455,16 +3405,24 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                 <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={o.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
                 <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 flex-wrap gap-3">
                   <div className="flex items-center gap-4 text-slate-500 text-xs flex-wrap">
-                    {(role === "admin" || (isDispatcher && si < 2)) ? (
-                      <TrackingAssignFields container={c} orderId={o.id} updateContainerFields={updateContainerFields} transporters={data.transporters} />
-                    ) : (
+                    <span className="flex items-center gap-1"><Send size={12} />{c.transporter || "No transporter"}</span>
+                    <span className="flex items-center gap-1"><Truck size={12} />{c.vehiclePlate || "Unassigned"}</span>
+                    {c.freightAmount !== "" && c.freightAmount !== undefined && c.freightAmount !== null && (
+                      <span className="flex items-center gap-1"><Banknote size={12} />{formatPKR(c.freightAmount)}</span>
+                    )}
+                    {c.shifting === "yes" && (
                       <>
-                        <span className="flex items-center gap-1"><Send size={12} />{c.transporter || "No transporter"}</span>
-                        <span className="flex items-center gap-1"><Truck size={12} />{c.vehiclePlate || "Unassigned"}</span>
+                        <span className="flex items-center gap-1"><ArrowLeft size={12} className="rotate-90" />Shifted: {c.shiftedContainerNo || "—"}</span>
                         <span className="flex items-center gap-1"><MapPin size={12} />{c.emptyReturnLocation || "Empty return TBD"}</span>
                       </>
                     )}
                     <span>ETA {fmtDateISO(o.eta)}</span>
+                    {canEditDispatch && si >= 1 && (
+                      <button
+                        className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                        onClick={() => setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: c })}
+                      ><Pencil size={12} /> Edit</button>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -3478,22 +3436,16 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     <button className={iconBtn} title="Download Bilty Receipt" onClick={() => downloadBiltyReceipt({ ...o, containers: [c] }, data)}><Receipt size={15} /></button>
                     {!c.cancelled && si < maxIdx && canAdvance(c, o) && (
                       <button
-                        className={cx(btnPrimary, blockedByRequiredFields && "opacity-40 cursor-not-allowed hover:bg-blue-600")}
-                        disabled={blockedByRequiredFields}
-                        title={blockedByRequiredFields ? "Fill in vehicle, transporter, freight, and empty return location first" : undefined}
+                        className={btnPrimary}
                         onClick={() => {
-                          if (blockedByRequiredFields) return;
                           const nextIdx = si + 1;
                           if (nextIdx === 3) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
-                          else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
+                          else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
                       >
                         Advance to {(o.shipmentType === "Import" ? IMPORT_STAGES : STAGES)[si + 1]}
                       </button>
-                    )}
-                    {!c.cancelled && blockedByRequiredFields && (
-                      <span className="text-amber-500 text-xs italic">Fill in all fields to advance</span>
                     )}
                     {!c.cancelled && si < 3 && !canAdvance(c, o) && isDispatcher && (
                       <span className="text-slate-500 text-xs italic">Awaiting Receiver to confirm delivery</span>
@@ -3501,18 +3453,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     {!c.cancelled && isEmptyReturnReceiver && (si === 3 || si === 4) && (
                       <div className="flex items-center gap-2">
                         <span className="text-slate-500 text-xs">Empty Return Date</span>
-                        <input
-                          type="date"
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-600"
-                          value={c.emptyReturnDate || ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            // Date-driven status: adding a date marks it Received and completes
-                            // the container; clearing it puts it back to In Process / Delivered.
-                            if (val) updateContainerStage(o.id, c.id, 4, { emptyReturnDate: val });
-                            else updateContainerStage(o.id, c.id, 3, { emptyReturnDate: "" });
-                          }}
-                        />
+                        <EmptyReturnDateField orderId={o.id} containerId={c.id} value={c.emptyReturnDate} updateContainerStage={updateContainerStage} />
                         <Badge text={c.emptyReturnDate ? "Received" : "In Process"} className={c.emptyReturnDate ? "bg-emerald-950 text-emerald-400 border-emerald-800" : "bg-amber-950 text-amber-400 border-amber-800"} />
                       </div>
                     )}
@@ -3542,9 +3483,12 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
       {dispatchTarget && (
         <DispatchModal
           containerLabel={dispatchTarget.label}
+          initial={dispatchTarget.editingContainer}
+          transporters={data.transporters}
           onClose={() => setDispatchTarget(null)}
           onConfirm={(dispatchData) => {
-            updateContainerStage(dispatchTarget.orderId, dispatchTarget.containerId, 1, dispatchData);
+            if (dispatchTarget.editingContainer) updateContainerFields(dispatchTarget.orderId, dispatchTarget.containerId, dispatchData);
+            else updateContainerStage(dispatchTarget.orderId, dispatchTarget.containerId, 1, dispatchData);
             setDispatchTarget(null);
           }}
         />
@@ -4926,36 +4870,17 @@ function AnalyticsView({ data }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className={cx(cardCls, "p-5 lg:col-span-2")}>
-          <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><Banknote size={16} className="text-emerald-500" />Revenue Trend</h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={a.revenueChart}>
-              <CartesianGrid stroke="#1e293b" vertical={false} />
-              <XAxis dataKey="date" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(range / 7) - 1)} />
-              <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `Rs${v / 1000}k`} />
-              <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12, color: "#fff" }} formatter={(v) => formatPKR(v)} />
-              <Line type="monotone" dataKey="revenue" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-        <div className={cx(cardCls, "p-5")}>
-          <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><Users size={16} className="text-purple-500" />Driver Performance</h3>
-          {a.driverPerformance.length === 0 ? (
-            <div className="text-slate-500 text-sm py-14 text-center">No drivers yet.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={Math.max(180, a.driverPerformance.length * 50)}>
-              <BarChart data={a.driverPerformance} layout="vertical" margin={{ left: 10 }}>
-                <CartesianGrid stroke="#1e293b" horizontal={false} />
-                <XAxis type="number" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} width={80} />
-                <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12, color: "#fff" }} />
-                <Bar dataKey="Active" fill="#3b82f6" radius={[0, 3, 3, 0]} />
-                <Bar dataKey="Delivered" fill="#22c55e" radius={[0, 3, 3, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+      <div className={cx(cardCls, "p-5")}>
+        <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><Banknote size={16} className="text-emerald-500" />Revenue Trend</h3>
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={a.revenueChart}>
+            <CartesianGrid stroke="#1e293b" vertical={false} />
+            <XAxis dataKey="date" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(range / 7) - 1)} />
+            <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `Rs${v / 1000}k`} />
+            <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12, color: "#fff" }} formatter={(v) => formatPKR(v)} />
+            <Line type="monotone" dataKey="revenue" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -5220,8 +5145,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                   />
                 </div>
                 {role !== "data_entry" && (
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <input className={inputCls} value={c.driverName || ""} onChange={(e) => setContainerField(c.id, "driverName", e.target.value)} placeholder="Driver name" />
+                  <div className="mb-2">
                     <input className={inputCls} value={c.vehiclePlate || ""} onChange={(e) => setContainerField(c.id, "vehiclePlate", e.target.value)} placeholder="Vehicle No." />
                   </div>
                 )}
@@ -5820,7 +5744,6 @@ function OrderDetail({ order, data }) {
                     <div className="text-slate-500 text-xs">Qty</div><div className="text-slate-200 text-right">{c.qtyLabel || "—"}</div>
                     <div className="text-slate-500 text-xs">Destination</div><div className="text-slate-200 text-right">{c.destination || "—"}</div>
                     <div className="text-slate-500 text-xs">Receiver's Address</div><div className="text-slate-200 text-right">{receiverAddressShortLabel(c, cust) || "—"}</div>
-                    <div className="text-slate-500 text-xs">Driver</div><div className="text-slate-200 text-right">{c.driverName || "Unassigned"}</div>
                     <div className="text-slate-500 text-xs">Vehicle</div><div className="text-slate-200 text-right">{c.vehiclePlate || "Unassigned"}</div>
                     <div className="text-slate-500 text-xs">Priority</div><div className="text-right"><Badge text={c.priority || "Normal"} className={priorityColor[c.priority || "Normal"]} /></div>
                     <div className="text-slate-500 text-xs">Amount</div><div className="text-white font-medium text-right">{formatPKR(c.amount)}</div>
@@ -6358,7 +6281,6 @@ function PublicTrackingPage() {
                       <div className="grid grid-cols-2 gap-4 text-sm">
                         <div><div className="text-slate-500 text-xs">Expected Pickup</div><div className="text-white font-medium">{fmtDateISO(result.created_date)}</div></div>
                         <div><div className="text-slate-500 text-xs">Expected Delivery</div><div className="text-white font-medium">{fmtDateISO(result.eta)}</div></div>
-                        <div><div className="text-slate-500 text-xs">Assigned Driver</div><div className="text-white font-medium">{c.driverName || "Unassigned"}</div></div>
                         <div><div className="text-slate-500 text-xs">Vehicle</div><div className="text-white font-medium">{c.vehiclePlate || "Unassigned"}</div></div>
                       </div>
                     </div>
