@@ -7675,7 +7675,7 @@ function LogistixERP() {
     const invoice = (data.invoices || []).find((inv) => inv.containerId === c.id);
     const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for loading date" : "";
     return [
-      sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
+      sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", c.loadingDate ? fmtDate(c.loadingDate) : "",
       c.vehiclePlate || "", c.vehicleSize || "", o.origin || "", c.destination || "",
       generalComponent !== null ? generalComponent : noMatchNote,
       fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
@@ -7684,25 +7684,49 @@ function LogistixERP() {
     ];
   }
 
-  function handleTabExport(viewKey) {
+  async function handleTabExport(viewKey) {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
     if (viewKey === "orders_domestic") {
-      // Domestic exports as two sheets (Wrapping Materials / Finished Goods, matching the
+      // Domestic exports as two sheets (Finished Goods / Wrapping Materials, matching the
       // app's own page split) with the automatic contract-rate lookup and fuel-adjustment
       // calculation built in, same formula as the Fuel Management report and Contract Rates.
+      // Uses the same hand-rolled OOXML writer as the master Transportation template — plain
+      // SheetJS aoa_to_sheet in this environment doesn't actually apply cell styles (wrap
+      // text, bold, etc.) on write, only that writer does.
       const domesticOrders = (data.orders || []).filter((o) => (o.shipmentType || "Import") === "Domestic");
-      const wb = XLSX.utils.book_new();
-      DOMESTIC_CATEGORIES.forEach((category) => {
+      const headerNoWrap = new Set([1, 5, 6, 7]); // Sr.#, Loading Date, Vehicle No., Vehicle Size
+      const headerWrap = new Set(Array.from({ length: 14 }, (_, i) => i + 1).filter((c) => !headerNoWrap.has(c)));
+      const headerOverrides = buildColStyleMap(14, headerWrap, 5, 6);
+      const contentWrap = new Set([2, 3, 8, 9, 13]); // Customer, PO/SAP No., Loading Point, Destination, Transporter Name
+      const contentDefault = buildColStyleMap(14, contentWrap, 9, 8);
+      [10, 11, 12].forEach((col) => { contentDefault[col] = 22; }); // General Component / Fuel Adjustment / Full Freight — bold
+      const colWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS);
+      colWidths[0] = 6; // Sr.# — narrow, doesn't need the auto-computed width
+
+      const sheets = DOMESTIC_CATEGORIES.map((category) => {
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
         const flat = flattenContainers(catOrders, () => true);
         const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c));
         const rows = [DOMESTIC_EXPORT_HEADERS, ...dataRows];
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws["!cols"] = colWidthsFor(DOMESTIC_EXPORT_HEADERS).map((w) => ({ wch: w }));
-        XLSX.utils.book_append_sheet(wb, ws, category === DOMESTIC_CATEGORIES[0] ? "Finished Goods" : "Wrapping Materials");
+        return {
+          name: category === DOMESTIC_CATEGORIES[0] ? "Finished Goods" : "Wrapping Materials",
+          rows, headerRowIndex: 1, colWidths, freezeRows: 1,
+          headerOverrides, contentDefaultCols: contentDefault,
+        };
       });
-      XLSX.writeFile(wb, `Domestic-Orders-${todayISO()}.xlsx`);
+
+      try {
+        const buffer = await buildXlsxBuffer(sheets);
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `Domestic-Orders-${todayISO()}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        window.alert("Couldn't build the domestic orders export: " + err.message);
+      }
       return;
     }
     const allRows = data[cfg.table] || [];
