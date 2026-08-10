@@ -7645,15 +7645,23 @@ function LogistixERP() {
 
                 if (!touchedOrderIds.has(order.id)) { touchedOrderIds.add(order.id); tableSnapshot.push({ id: order.id, prev: order }); }
 
-                const newContainers = containers.map((c, i) => i !== cIdx ? c : {
-                  ...c,
-                  poSapNo: xstr(readAnyKey(row, ["PO / SAP No.", "PO/SAP No."])),
-                  movementThrough: xstr(readAnyKey(row, ["Movement Through"])),
-                  loadingDate: parseDDMMYYYY(readAnyKey(row, ["Loading Date"])),
-                  vehiclePlate: xstr(readAnyKey(row, ["Vehicle No."])),
-                  vehicleSize: xstr(readAnyKey(row, ["Vehicle Size"])),
-                  destination: xstr(readAnyKey(row, ["Destination"])),
-                  transporter: xstr(readAnyKey(row, ["Transporter Name"])),
+                const newContainers = containers.map((c, i) => {
+                  if (i !== cIdx) return c;
+                  const loadingDate = parseDDMMYYYY(readAnyKey(row, ["Loading Date"]));
+                  return {
+                    ...c,
+                    poSapNo: xstr(readAnyKey(row, ["PO / SAP No.", "PO/SAP No."])),
+                    movementThrough: xstr(readAnyKey(row, ["Movement Through"])),
+                    loadingDate,
+                    // Fuel Management's report only shows containers with dispatchAt set —
+                    // Domestic treats Loading Date as the effective dispatch date (same as
+                    // DispatchModal does), so keep dispatchAt in sync with it here too.
+                    dispatchAt: loadingDate ? new Date(loadingDate + "T00:00:00").toISOString() : c.dispatchAt,
+                    vehiclePlate: xstr(readAnyKey(row, ["Vehicle No."])),
+                    vehicleSize: xstr(readAnyKey(row, ["Vehicle Size"])),
+                    destination: xstr(readAnyKey(row, ["Destination"])),
+                    transporter: xstr(readAnyKey(row, ["Transporter Name"])),
+                  };
                 });
                 const loadingPoint = xstr(readAnyKey(row, ["Loading Point"]));
                 updatedOrders[orderIdx] = { ...order, origin: loadingPoint || order.origin, containers: newContainers };
@@ -7694,11 +7702,13 @@ function LogistixERP() {
                 }
               }
 
+              const newLoadingDate = parseDDMMYYYY(readAnyKey(row, ["Loading Date"]));
               const newContainer = {
                 ...emptyContainer(),
                 poSapNo: xstr(readAnyKey(row, ["PO / SAP No.", "PO/SAP No."])),
                 movementThrough: xstr(readAnyKey(row, ["Movement Through"])),
-                loadingDate: parseDDMMYYYY(readAnyKey(row, ["Loading Date"])),
+                loadingDate: newLoadingDate,
+                dispatchAt: newLoadingDate ? new Date(newLoadingDate + "T00:00:00").toISOString() : "",
                 vehiclePlate: xstr(readAnyKey(row, ["Vehicle No."])),
                 vehicleSize: xstr(readAnyKey(row, ["Vehicle Size"])),
                 destination,
