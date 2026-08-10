@@ -3230,7 +3230,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                     <th className={thCls}>Loading Date</th>
                     <th className={thCls}>Vehicle No.</th>
                     <th className={thCls}>Vehicle Size</th>
-                    <th className={thCls}>Sender</th>
+                    {domesticCategory === DOMESTIC_CATEGORIES[1] && <th className={thCls}>Sender</th>}
                     <th className={thCls}>Loading Point</th>
                     <th className={thCls}>Destination</th>
                     <th className={thCls}>Transporter Name</th>
@@ -3268,7 +3268,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                         <td className={tdCls}>{c && c.loadingDate ? fmtDate(c.loadingDate) : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>
-                        <td className={tdCls}>{senderShortLabel(o, sender) || "—"}</td>
+                        {domesticCategory === DOMESTIC_CATEGORIES[1] && <td className={tdCls}>{senderShortLabel(o, sender) || "—"}</td>}
                         <td className={tdCls}>{o.origin || "—"}</td>
                         <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.transporter || "—") : "—"}</td>
@@ -7681,9 +7681,10 @@ function LogistixERP() {
     }
   }
 
-  const DOMESTIC_EXPORT_HEADERS = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+  const DOMESTIC_EXPORT_HEADERS_BASE = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+  const DOMESTIC_EXPORT_HEADERS_WM = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
 
-  function buildDomesticExportRow(sr, o, c) {
+  function buildDomesticExportRow(sr, o, c, includeSender) {
     const cust = getCustomer(data, o.customerId);
     const sender = (data.senders || []).find((s) => s.id === o.senderId) || null;
     const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups);
@@ -7697,7 +7698,9 @@ function LogistixERP() {
     const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for loading date" : "";
     return [
       sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", c.loadingDate ? fmtDate(c.loadingDate) : "",
-      c.vehiclePlate || "", c.vehicleSize || "", senderShortLabel(o, sender), o.origin || "", c.destination || "",
+      c.vehiclePlate || "", c.vehicleSize || "",
+      ...(includeSender ? [senderShortLabel(o, sender)] : []),
+      o.origin || "", c.destination || "",
       generalComponent !== null ? generalComponent : noMatchNote,
       fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
       fullFreight !== null ? fullFreight : noMatchNote,
@@ -7724,24 +7727,30 @@ function LogistixERP() {
         if (domesticExportTo && loadingDate > domesticExportTo) return false;
         return true;
       }
-      const headerNoWrap = new Set([1, 5, 6, 7]); // Sr.#, Loading Date, Vehicle No., Vehicle Size
-      const headerWrap = new Set(Array.from({ length: 15 }, (_, i) => i + 1).filter((c) => !headerNoWrap.has(c)));
-      const headerOverrides = buildColStyleMap(15, headerWrap, 5, 6);
-      const contentWrap = new Set([2, 3, 8, 9, 10, 14]); // Customer, PO/SAP No., Sender, Loading Point, Destination, Transporter Name
-      const contentDefault = buildColStyleMap(15, contentWrap, 9, 8);
-      [11, 12, 13].forEach((col) => { contentDefault[col] = 22; }); // General Component / Fuel Adjustment / Full Freight — bold
-      const colWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS);
-      colWidths[0] = 6; // Sr.# — narrow, doesn't need the auto-computed width
+      function domesticSheetStyling(colCount, contentWrapCols, boldCols) {
+        const headerNoWrap = new Set([1, 5, 6, 7]); // Sr.#, Loading Date, Vehicle No., Vehicle Size
+        const headerWrap = new Set(Array.from({ length: colCount }, (_, i) => i + 1).filter((c) => !headerNoWrap.has(c)));
+        const headerOverrides = buildColStyleMap(colCount, headerWrap, 5, 6);
+        const contentDefault = buildColStyleMap(colCount, new Set(contentWrapCols), 9, 8);
+        boldCols.forEach((col) => { contentDefault[col] = 22; });
+        return { headerOverrides, contentDefault };
+      }
+      const fgStyling = domesticSheetStyling(14, [2, 3, 8, 9, 13], [10, 11, 12]);
+      const wmStyling = domesticSheetStyling(15, [2, 3, 8, 9, 10, 14], [11, 12, 13]);
+      const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 6;
+      const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 6;
 
       const sheets = DOMESTIC_CATEGORIES.map((category) => {
+        const isWM = category === DOMESTIC_CATEGORIES[1];
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
         const flat = flattenContainers(catOrders, () => true).filter(({ c }) => inExportRange(c.loadingDate));
-        const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c));
-        const rows = [DOMESTIC_EXPORT_HEADERS, ...dataRows];
+        const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c, isWM));
+        const rows = [isWM ? DOMESTIC_EXPORT_HEADERS_WM : DOMESTIC_EXPORT_HEADERS_BASE, ...dataRows];
+        const styling = isWM ? wmStyling : fgStyling;
         return {
-          name: category === DOMESTIC_CATEGORIES[0] ? "Finished Goods" : "Wrapping Materials",
-          rows, headerRowIndex: 1, colWidths, freezeRows: 1,
-          headerOverrides, contentDefaultCols: contentDefault,
+          name: isWM ? "Wrapping Materials" : "Finished Goods",
+          rows, headerRowIndex: 1, colWidths: isWM ? wmColWidths : fgColWidths, freezeRows: 1,
+          headerOverrides: styling.headerOverrides, contentDefaultCols: styling.contentDefault,
         };
       });
 
