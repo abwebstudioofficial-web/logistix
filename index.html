@@ -4595,7 +4595,7 @@ function ContractGroupForm({ initial, prefill, onSave, onCancel }) {
 function customerOrderContainers(data, customerId) {
   return data.orders
     .filter((o) => o.customerId === customerId)
-    .flatMap((o) => orderContainers(o).map((c) => ({ ...c, orderNumber: o.orderNumber, shipmentType: o.shipmentType || "Import" })));
+    .flatMap((o) => orderContainers(o).map((c) => ({ ...c, orderNumber: o.orderNumber, shipmentType: o.shipmentType || "Import", origin: o.origin })));
 }
 
 // Groups containers by rented vehicle plate (case/whitespace-normalized) and sums fuel & freight.
@@ -4674,37 +4674,96 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     () => allContainers.filter((c) => (tab === "export" ? c.shipmentType === "Export" : c.shipmentType !== "Export")),
     [allContainers, tab]
   );
-  // One row per dispatched shipment — Month/Dispatch Date only make sense once a container has actually been dispatched.
-  const rows = useMemo(() => {
-    return tabContainers
-      .filter((c) => !!c.dispatchAt)
-      .map((c) => {
-        const d = new Date(c.dispatchAt);
-        const freightAmount = xnum(c.freightAmount);
-        const price = fuelPriceOnDate(data.fuel_prices, c.dispatchAt.slice(0, 10));
-        const fuelAmount = computeFuelAmount(freightAmount, price); // null if no fuel price on file for that date
-        return {
-          id: c.id,
-          dispatchAtRaw: d.getTime(),
-          month: fmtMonthYear(d),
-          dispatchDate: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
-          vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
-          fuelAmount, freightAmount,
-          net: freightAmount - (fuelAmount || 0), // net still payable to the transporter once fuel is accounted for
-        };
-      })
-      .sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw);
-  }, [tabContainers, data.fuel_prices]);
-  const grandFuel = rows.reduce((s, r) => s + (r.fuelAmount || 0), 0);
-  const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
-  const grandNet = grandFreight - grandFuel;
-
+  // Every fuel-card-swap entry for this customer — needed early since the domestic_import
+  // tab's rows computation below nets swapped fuel out of the Receivable figures.
   const swaps = useMemo(
     () => (data.fuel_card_swaps || [])
       .filter((s) => s.customerId === customer.id)
       .sort((a, b) => (b.swapDate || "").localeCompare(a.swapDate || "")),
     [data.fuel_card_swaps, customer.id]
   );
+  // Contract rates for this customer, with their parent contract group (for Fuel Base Rate)
+  // pre-attached — used only by the domestic_import tab's automatic rate lookup below.
+  const customerRates = useMemo(() => {
+    const groupsById = new Map((data.contract_groups || []).map((g) => [g.id, g]));
+    return (data.contracts || [])
+      .filter((k) => k.customerId === customer.id)
+      .map((k) => ({ ...k, group: k.contractGroupId ? groupsById.get(k.contractGroupId) : null }));
+  }, [data.contracts, data.contract_groups, customer.id]);
+
+  // Finds the contract rate matching a shipment's Loading Point, Destination, Vehicle Size,
+  // and Movement Through. Axle Load Category is deliberately NOT part of this match — there
+  // is no such field anywhere on an order or container to compare it against, only on
+  // contract rates themselves, so it can't be used to narrow down a shipment's match.
+  function matchContractRate(c) {
+    const norm = (v) => (v || "").trim().toLowerCase();
+    const loadingPoint = norm(c.origin);
+    const destination = norm(c.destination);
+    const vehicleSize = norm(c.vehicleSize || c.containerSize);
+    const movementThrough = norm(c.movementThrough);
+    return customerRates.find((k) =>
+      norm(k.loadingPoint) === loadingPoint &&
+      norm(k.destination) === destination &&
+      norm(k.vehicleSize) === vehicleSize &&
+      norm(k.movementThrough) === movementThrough
+    ) || null;
+  }
+
+  // One row per dispatched shipment — Month/Dispatch Date only make sense once a container has actually been dispatched.
+  const rows = useMemo(() => {
+    return tabContainers
+      .filter((c) => !!c.dispatchAt)
+      .map((c) => {
+        const d = new Date(c.dispatchAt);
+        const dispatchDateISO = c.dispatchAt.slice(0, 10);
+        const freightAmount = xnum(c.freightAmount);
+        const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
+        const base = {
+          id: c.id,
+          dispatchAtRaw: d.getTime(),
+          month: fmtMonthYear(d),
+          dispatchDate: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
+          vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
+          freightAmount,
+        };
+
+        if (tab !== "domestic_import") {
+          // Export tab keeps its existing, unrelated calculation entirely as-is.
+          const fuelAmount = computeFuelAmount(freightAmount, price);
+          return { ...base, fuelAmount, net: freightAmount - (fuelAmount || 0) };
+        }
+
+        // Domestic/Import: automatic contract-rate lookup + fuel escalation, minus any fuel
+        // already swapped on the same date, matching the design set for Contract Rates.
+        const matchedRate = matchContractRate(c);
+        const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
+        const fuelComponentAmount = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
+        const impliedLitres = (fuelComponentAmount !== null && fuelBaseRate) ? fuelComponentAmount / fuelBaseRate : null;
+        const receivablePKR = (impliedLitres !== null && price) ? impliedLitres * price : null;
+        const receivableLitres = impliedLitres;
+
+        const swapsOnDate = swaps.filter((s) => s.swapDate === dispatchDateISO);
+        const swappedLitres = swapsOnDate.reduce((sum, s) => sum + (xnum(s.qtyLtr) || 0), 0);
+        const swappedPKR = swapsOnDate.reduce((sum, s) => sum + (xnum(s.amountPkr) || 0), 0);
+
+        return {
+          ...base,
+          matchedRate, fuelBaseRate, fuelComponentAmount, priceOnDate: price,
+          receivablePKR: receivablePKR !== null ? receivablePKR - swappedPKR : null,
+          receivableLitres: receivableLitres !== null ? receivableLitres - swappedLitres : null,
+          swappedLitres, swappedPKR,
+        };
+      })
+      .sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw);
+  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps]);
+  const grandFuel = rows.reduce((s, r) => s + (r.fuelAmount || 0), 0);
+  const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
+  const grandNet = grandFreight - grandFuel;
+  const grandReceivablePKR = rows.reduce((s, r) => s + (r.receivablePKR || 0), 0);
+  const grandReceivableLitres = rows.reduce((s, r) => s + (r.receivableLitres || 0), 0);
+  const grandSwappedPKR = rows.reduce((s, r) => s + (r.swappedPKR || 0), 0);
+  const grandSwappedLitres = rows.reduce((s, r) => s + (r.swappedLitres || 0), 0);
+
   // Group by month just to build the month filter dropdown's options.
   const swapGroups = useMemo(() => {
     const map = new Map();
@@ -4874,6 +4933,51 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
           icon={Fuel}
           text={`No dispatched ${tab === "export" ? "export" : "domestic or import"} shipments for this customer yet.`}
         />
+      ) : tab === "domestic_import" ? (
+        <div className={tableWrap}>
+          <table className="w-full text-sm">
+            <thead className={theadCls}>
+              <tr>
+                <th className={thCls}>Month</th>
+                <th className={thCls}>Dispatch Date</th>
+                <th className={thCls}>Vehicle No.</th>
+                <th className={thCls}>Freight (PKR)</th>
+                <th className={thCls}>Fuel Swapped (PKR)</th>
+                <th className={thCls}>Fuel Swapped (Litre)</th>
+                <th className={thCls}>Receivable (PKR)</th>
+                <th className={thCls}>Receivable (Litre)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className={trCls}>
+                  <td className={tdCls}>{r.month}</td>
+                  <td className={tdCls}>{r.dispatchDate}</td>
+                  <td className={cx(tdCls, "font-mono text-white font-medium")}>{r.vehiclePlate}</td>
+                  <td className={tdCls}>{formatPKR(r.freightAmount)}</td>
+                  <td className={tdCls}>{r.swappedPKR ? formatPKR(r.swappedPKR) : "—"}</td>
+                  <td className={tdCls}>{r.swappedLitres ? `${r.swappedLitres.toLocaleString()} L` : "—"}</td>
+                  <td className={tdCls}>
+                    {r.receivablePKR === null
+                      ? <span className="text-amber-500 italic text-xs">{!r.matchedRate ? "No matching contract rate" : !r.fuelBaseRate ? "Contract has no Fuel Base Rate" : "No fuel price set for this date"}</span>
+                      : <span className={cx("font-medium", r.receivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(r.receivablePKR)}</span>}
+                  </td>
+                  <td className={tdCls}>{r.receivableLitres !== null ? `${r.receivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-slate-800">
+                <td className={cx(tdCls, "font-semibold text-slate-300")} colSpan={3}>Total</td>
+                <td className={cx(tdCls, "font-semibold text-slate-300")}>{formatPKR(grandFreight)}</td>
+                <td className={cx(tdCls, "font-semibold text-white")}>{formatPKR(grandSwappedPKR)}</td>
+                <td className={cx(tdCls, "font-semibold text-white")}>{grandSwappedLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L</td>
+                <td className={cx(tdCls, "font-semibold", grandReceivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(grandReceivablePKR)}</td>
+                <td className={cx(tdCls, "font-semibold text-white")}>{grandReceivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       ) : (
         <div className={tableWrap}>
           <table className="w-full text-sm">
