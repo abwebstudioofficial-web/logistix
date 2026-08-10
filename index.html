@@ -7637,6 +7637,21 @@ function LogistixERP() {
   function handleTabExport(viewKey) {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
+    if (viewKey === "orders_domestic") {
+      // Domestic gets its own proper, readable export — one row per container with actual
+      // named columns (Customer, PO/SAP No., Movement Through, etc.), not a raw JSON dump
+      // of the whole order object with containers/history crammed into single cells.
+      const domesticOrders = (data.orders || []).filter((o) => (o.shipmentType || "Import") === "Domestic");
+      const flat = flattenContainers(domesticOrders, () => true);
+      const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
+      const rows = [DOMESTIC_HEADERS, ...dataRows];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = colWidthsFor(DOMESTIC_HEADERS).map((w) => ({ wch: w }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Domestic Orders");
+      XLSX.writeFile(wb, `Domestic-Orders-${todayISO()}.xlsx`);
+      return;
+    }
     const allRows = data[cfg.table] || [];
     let rows = cfg.filterFn ? allRows.filter(cfg.filterFn) : allRows;
     if (cfg.sheetName === "Orders") {
