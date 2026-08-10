@@ -7598,6 +7598,87 @@ function LogistixERP() {
     if (!cfg || !file) return;
     setTabExcel((prev) => ({ ...prev, [viewKey]: { ...(prev[viewKey] || {}), busy: true, message: null } }));
     const reader = new FileReader();
+    if (viewKey === "orders_domestic") {
+      reader.onload = async (evt) => {
+        try {
+          const arr = new Uint8Array(evt.target.result);
+          const wb = XLSX.read(arr, { type: "array" });
+          const sheetNames = ["Finished Goods", "Wrapping Materials"].filter((n) => wb.Sheets[n]);
+          if (sheetNames.length === 0) throw new Error("Expected a 'Finished Goods' or 'Wrapping Materials' sheet — that's what this report exports as.");
+
+          // Loading Date is exported as dd/mm/yyyy (matching the rest of the app), not
+          // normalizeDateStr's assumed formats — parsing "11/08/2026" with the generic
+          // Date() parser would read it as 8 November (US mm/dd/yyyy), silently swapping
+          // day and month for any day <= 12. Parse dd/mm/yyyy explicitly instead.
+          function parseDDMMYYYY(v) {
+            if (!v) return "";
+            const s = String(v).trim();
+            const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+            return normalizeDateStr(v); // fallback for ISO-style or other formats
+          }
+
+          let updatedCount = 0, skippedCount = 0;
+          let updatedOrders = [...data.orders];
+          const tableSnapshot = [];
+          const touchedOrderIds = new Set();
+
+          sheetNames.forEach((sheetName) => {
+            const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "", raw: false });
+            rows.forEach((row) => {
+              const containerId = xstr(readAnyKey(row, ["Container ID", "container id"])).trim();
+              if (!containerId) { skippedCount++; return; }
+              const orderIdx = updatedOrders.findIndex((o) => orderContainers(o).some((c) => c.id === containerId));
+              if (orderIdx === -1) { skippedCount++; return; }
+              const order = updatedOrders[orderIdx];
+              const containers = orderContainers(order);
+              const cIdx = containers.findIndex((c) => c.id === containerId);
+              if (cIdx === -1) { skippedCount++; return; }
+
+              if (!touchedOrderIds.has(order.id)) { touchedOrderIds.add(order.id); tableSnapshot.push({ id: order.id, prev: order }); }
+
+              const newContainers = containers.map((c, i) => i !== cIdx ? c : {
+                ...c,
+                poSapNo: xstr(readAnyKey(row, ["PO / SAP No.", "PO/SAP No."])),
+                movementThrough: xstr(readAnyKey(row, ["Movement Through"])),
+                loadingDate: parseDDMMYYYY(readAnyKey(row, ["Loading Date"])),
+                vehiclePlate: xstr(readAnyKey(row, ["Vehicle No."])),
+                vehicleSize: xstr(readAnyKey(row, ["Vehicle Size"])),
+                destination: xstr(readAnyKey(row, ["Destination"])),
+                transporter: xstr(readAnyKey(row, ["Transporter Name"])),
+              });
+              const loadingPoint = xstr(readAnyKey(row, ["Loading Point"]));
+              updatedOrders[orderIdx] = { ...order, origin: loadingPoint || order.origin, containers: newContainers };
+              updatedCount++;
+            });
+          });
+
+          const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id));
+          const { error } = changedOrders.length ? await supabaseClient.from("orders").upsert(changedOrders.map(toDbRow)) : { error: null };
+          setDataState((prevData) => ({ ...prevData, orders: updatedOrders }));
+          setTabExcel((prev) => ({
+            ...prev,
+            [viewKey]: {
+              attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
+              message: error
+                ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
+                : {
+                    ok: true,
+                    text: `${file.name}: updated ${updatedCount} shipment${updatedCount === 1 ? "" : "s"}.` +
+                      (skippedCount > 0 ? ` ${skippedCount} row${skippedCount === 1 ? "" : "s"} had no matching Container ID and were skipped — this report format only updates existing shipments, it can't create new ones. Export a fresh copy of this report, edit that file, and re-attach it.` : ""),
+                  },
+            },
+          }));
+        } catch (err) {
+          setTabExcel((prev) => ({
+            ...prev,
+            [viewKey]: { ...(prev[viewKey] || {}), busy: false, message: { ok: false, text: "Couldn't read that file: " + err.message } },
+          }));
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
     reader.onload = async (evt) => {
       try {
         const arr = new Uint8Array(evt.target.result);
@@ -7681,8 +7762,8 @@ function LogistixERP() {
     }
   }
 
-  const DOMESTIC_EXPORT_HEADERS_BASE = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
-  const DOMESTIC_EXPORT_HEADERS_WM = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+  const DOMESTIC_EXPORT_HEADERS_BASE = ["Container ID", "Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+  const DOMESTIC_EXPORT_HEADERS_WM = ["Container ID", "Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
 
   function buildDomesticExportRow(sr, o, c, includeSender) {
     const cust = getCustomer(data, o.customerId);
@@ -7697,7 +7778,7 @@ function LogistixERP() {
     const invoice = (data.invoices || []).find((inv) => inv.containerId === c.id);
     const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for loading date" : "";
     return [
-      sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", c.loadingDate ? fmtDate(c.loadingDate) : "",
+      c.id, sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", c.loadingDate ? fmtDate(c.loadingDate) : "",
       c.vehiclePlate || "", c.vehicleSize || "",
       ...(includeSender ? [senderShortLabel(o, sender)] : []),
       o.origin || "", c.destination || "",
@@ -7728,17 +7809,17 @@ function LogistixERP() {
         return true;
       }
       function domesticSheetStyling(colCount, contentWrapCols, boldCols) {
-        const headerNoWrap = new Set([1, 5, 6, 7]); // Sr.#, Loading Date, Vehicle No., Vehicle Size
+        const headerNoWrap = new Set([1, 2, 6, 7, 8]); // Container ID, Sr.#, Loading Date, Vehicle No., Vehicle Size
         const headerWrap = new Set(Array.from({ length: colCount }, (_, i) => i + 1).filter((c) => !headerNoWrap.has(c)));
         const headerOverrides = buildColStyleMap(colCount, headerWrap, 5, 6);
         const contentDefault = buildColStyleMap(colCount, new Set(contentWrapCols), 9, 8);
         boldCols.forEach((col) => { contentDefault[col] = 22; });
         return { headerOverrides, contentDefault };
       }
-      const fgStyling = domesticSheetStyling(14, [2, 3, 8, 9, 13], [10, 11, 12]);
-      const wmStyling = domesticSheetStyling(15, [2, 3, 8, 9, 10, 14], [11, 12, 13]);
-      const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 6;
-      const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 6;
+      const fgStyling = domesticSheetStyling(15, [3, 4, 9, 10, 14], [11, 12, 13]);
+      const wmStyling = domesticSheetStyling(16, [3, 4, 9, 10, 11, 15], [12, 13, 14]);
+      const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 20; fgColWidths[1] = 6;
+      const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 20; wmColWidths[1] = 6;
 
       const sheets = DOMESTIC_CATEGORIES.map((category) => {
         const isWM = category === DOMESTIC_CATEGORIES[1];
