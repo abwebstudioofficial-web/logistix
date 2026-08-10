@@ -866,6 +866,30 @@ function fuelPriceOnDate(fuelPrices, dateISO) {
   return best ? Number(best.pricePerLiter) || 0 : 0;
 }
 
+// Finds the contract rate matching a shipment's customer, Loading Point, Destination,
+// Vehicle Size, and Movement Through, across ALL customers at once — used by exports that
+// cover multiple customers together. Same match criteria (and same Axle Load Category
+// limitation — no such field exists on any order/container) as the per-customer version
+// used in the Fuel Management report; kept as a separate function since that one is scoped
+// to a single customer's already-filtered rates and isn't worth risking a refactor of.
+function matchContractRateAnyCustomer(customerId, c, allContracts, allGroups) {
+  const norm = (v) => (v || "").trim().toLowerCase();
+  const loadingPoint = norm(c.origin);
+  const destination = norm(c.destination);
+  const vehicleSize = norm(c.vehicleSize || c.containerSize);
+  const movementThrough = norm(c.movementThrough);
+  const match = (allContracts || []).find((k) =>
+    k.customerId === customerId &&
+    norm(k.loadingPoint) === loadingPoint &&
+    norm(k.destination) === destination &&
+    norm(k.vehicleSize) === vehicleSize &&
+    norm(k.movementThrough) === movementThrough
+  );
+  if (!match) return null;
+  const groupsById = new Map((allGroups || []).map((g) => [g.id, g]));
+  return { ...match, group: match.contractGroupId ? groupsById.get(match.contractGroupId) : null };
+}
+
 // Fuel Amount (PKR) for a shipment: half of Freight, converted to liters at the fuel
 // price in effect on its dispatch date, then back to PKR. This nets out to Freight/2,
 // but grounds the figure in an actual per-liter rate rather than an arbitrary fraction —
@@ -7637,21 +7661,47 @@ function LogistixERP() {
     }
   }
 
+  const DOMESTIC_EXPORT_HEADERS = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+
+  function buildDomesticExportRow(sr, o, c) {
+    const cust = getCustomer(data, o.customerId);
+    const matchedRate = matchContractRateAnyCustomer(o.customerId, c, data.contracts, data.contract_groups);
+    const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
+    const generalComponent = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
+    const impliedLitres = (generalComponent !== null && fuelBaseRate) ? generalComponent / fuelBaseRate : null;
+    const price = c.loadingDate ? fuelPriceOnDate(data.fuel_prices, c.loadingDate) : 0;
+    const fuelAdjustment = (impliedLitres !== null && price) ? impliedLitres * price : null;
+    const fullFreight = (generalComponent !== null && fuelAdjustment !== null) ? generalComponent + fuelAdjustment : null;
+    const invoice = (data.invoices || []).find((inv) => inv.containerId === c.id);
+    const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for loading date" : "";
+    return [
+      sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
+      c.vehiclePlate || "", c.vehicleSize || "", o.origin || "", c.destination || "",
+      generalComponent !== null ? generalComponent : noMatchNote,
+      fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
+      fullFreight !== null ? fullFreight : noMatchNote,
+      c.transporter || "", invoice ? invoice.invoiceNumber || "" : "",
+    ];
+  }
+
   function handleTabExport(viewKey) {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
     if (viewKey === "orders_domestic") {
-      // Domestic gets its own proper, readable export — one row per container with actual
-      // named columns (Customer, PO/SAP No., Movement Through, etc.), not a raw JSON dump
-      // of the whole order object with containers/history crammed into single cells.
+      // Domestic exports as two sheets (Wrapping Materials / Finished Goods, matching the
+      // app's own page split) with the automatic contract-rate lookup and fuel-adjustment
+      // calculation built in, same formula as the Fuel Management report and Contract Rates.
       const domesticOrders = (data.orders || []).filter((o) => (o.shipmentType || "Import") === "Domestic");
-      const flat = flattenContainers(domesticOrders, () => true);
-      const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
-      const rows = [DOMESTIC_HEADERS, ...dataRows];
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"] = colWidthsFor(DOMESTIC_HEADERS).map((w) => ({ wch: w }));
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Domestic Orders");
+      DOMESTIC_CATEGORIES.forEach((category) => {
+        const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
+        const flat = flattenContainers(catOrders, () => true);
+        const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c));
+        const rows = [DOMESTIC_EXPORT_HEADERS, ...dataRows];
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws["!cols"] = colWidthsFor(DOMESTIC_EXPORT_HEADERS).map((w) => ({ wch: w }));
+        XLSX.utils.book_append_sheet(wb, ws, category === DOMESTIC_CATEGORIES[0] ? "Finished Goods" : "Wrapping Materials");
+      });
       XLSX.writeFile(wb, `Domestic-Orders-${todayISO()}.xlsx`);
       return;
     }
