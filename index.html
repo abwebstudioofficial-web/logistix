@@ -872,9 +872,12 @@ function fuelPriceOnDate(fuelPrices, dateISO) {
 // limitation — no such field exists on any order/container) as the per-customer version
 // used in the Fuel Management report; kept as a separate function since that one is scoped
 // to a single customer's already-filtered rates and isn't worth risking a refactor of.
-function matchContractRateAnyCustomer(customerId, c, allContracts, allGroups) {
+// Takes origin explicitly rather than reading c.origin — origin (Loading Point) lives on
+// the order, not the container, and callers don't consistently merge it onto the container
+// object, so reading c.origin directly silently matched nothing.
+function matchContractRateAnyCustomer(customerId, origin, c, allContracts, allGroups) {
   const norm = (v) => (v || "").trim().toLowerCase();
-  const loadingPoint = norm(c.origin);
+  const loadingPoint = norm(origin);
   const destination = norm(c.destination);
   const vehicleSize = norm(c.vehicleSize || c.containerSize);
   const movementThrough = norm(c.movementThrough);
@@ -7667,7 +7670,7 @@ function LogistixERP() {
 
   function buildDomesticExportRow(sr, o, c) {
     const cust = getCustomer(data, o.customerId);
-    const matchedRate = matchContractRateAnyCustomer(o.customerId, c, data.contracts, data.contract_groups);
+    const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups);
     const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
     const generalComponent = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
     const impliedLitres = (generalComponent !== null && fuelBaseRate) ? generalComponent / fuelBaseRate : null;
