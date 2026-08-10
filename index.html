@@ -4946,31 +4946,31 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className={thCls}>Month</th>
-                <th className={thCls}>Dispatch Date</th>
-                <th className={thCls}>Vehicle No.</th>
-                <th className={thCls}>Freight (PKR)</th>
-                <th className={thCls}>Fuel Swapped (PKR)</th>
-                <th className={thCls}>Fuel Swapped (Litre)</th>
-                <th className={thCls}>Receivable (PKR)</th>
-                <th className={thCls}>Receivable (Litre)</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 80 }}>Month</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Dispatch Date</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Vehicle No.</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Freight (PKR)</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (PKR)</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (Litre)</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (PKR)</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (Litre)</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className={trCls}>
-                  <td className={tdCls}>{r.month}</td>
-                  <td className={tdCls}>{r.dispatchDate}</td>
-                  <td className={cx(tdCls, "font-mono text-white font-medium")}>{r.vehiclePlate}</td>
-                  <td className={tdCls}>{formatPKR(r.freightAmount)}</td>
-                  <td className={tdCls}>{r.swappedPKR ? formatPKR(r.swappedPKR) : "—"}</td>
-                  <td className={tdCls}>{r.swappedLitres ? `${r.swappedLitres.toLocaleString()} L` : "—"}</td>
-                  <td className={tdCls}>
+                  <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 80 }}>{r.month}</td>
+                  <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{r.dispatchDate}</td>
+                  <td className="px-4 py-3 whitespace-normal font-mono text-white font-medium" style={{ maxWidth: 90 }}>{r.vehiclePlate}</td>
+                  <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{formatPKR(r.freightAmount)}</td>
+                  <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedPKR ? formatPKR(r.swappedPKR) : "—"}</td>
+                  <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedLitres ? `${r.swappedLitres.toLocaleString()} L` : "—"}</td>
+                  <td className="px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>
                     {r.receivablePKR === null
                       ? <span className="text-amber-500 italic text-xs">{!r.matchedRate ? "No matching contract rate" : !r.fuelBaseRate ? "Contract has no Fuel Base Rate" : "No fuel price set for this date"}</span>
                       : <span className={cx("font-medium", r.receivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(r.receivablePKR)}</span>}
                   </td>
-                  <td className={tdCls}>{r.receivableLitres !== null ? `${r.receivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>
+                  <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.receivableLitres !== null ? `${r.receivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>
                 </tr>
               ))}
             </tbody>
