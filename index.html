@@ -1750,11 +1750,164 @@ function downloadBiltyReceipt(order, data) {
   try {
     const cust = getCustomer(data, order.customerId);
     const sender = (data.senders || []).find((s) => s.id === order.senderId) || null;
+    const isDomestic = (order.shipmentType || "Import") === "Domestic";
     const containers = (Array.isArray(order.containers) && order.containers.length)
       ? order.containers
       : [{ containerNumber: order.containerNumber || "", sealNumber: order.sealNumber || "", qtyLabel: order.qtyLabel || "" }];
     const container = containers[0] || {};
 
+    const SCALE = 2.5;
+    const INK = "#111827", SUB = "#4b5563", LINE = "#111827", BAR = "#111827";
+
+    function box(ctx, x, y, w, h, opts) {
+      opts = opts || {};
+      if (opts.fill) { ctx.fillStyle = opts.fill; ctx.fillRect(x, y, w, h); }
+      ctx.strokeStyle = opts.stroke || LINE;
+      ctx.lineWidth = opts.lw || 1;
+      ctx.strokeRect(x, y, w, h);
+    }
+    function line(ctx, x1, y1, x2, y2, opts) {
+      opts = opts || {};
+      ctx.strokeStyle = opts.stroke || LINE;
+      ctx.lineWidth = opts.lw || 1;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    function txt(ctx, str, x, y, opts) {
+      opts = opts || {};
+      ctx.fillStyle = opts.color || INK;
+      ctx.font = (opts.weight || "normal") + " " + (opts.size || 12) + "px Arial";
+      ctx.textAlign = opts.align || "left";
+      ctx.fillText(str || "", x, y);
+      ctx.textAlign = "left";
+    }
+
+    function finish(canvas, W, H) {
+      const imgData = canvas.toDataURL("image/jpeg", 0.85);
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        window.alert("PDF library didn't load — check your internet connection and try again.");
+        return;
+      }
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [W, H], compress: true });
+      pdf.addImage(imgData, "JPEG", 0, 0, W, H, undefined, "FAST");
+      pdf.save(`Bilty-${order.orderNumber}.pdf`);
+    }
+
+    if (isDomestic) {
+      // ---- Domestic: its own tailored layout — no Bonded Status, B/L No., Job No.,
+      // Shipping Line, Empty Return, or container/seal line items, since none of those
+      // apply to a domestic shipment. Shows Domestic Category, PO/SAP No., Movement
+      // Through, Loading Date, Vehicle Size, Transporter, and Freight Amount instead.
+      const W = 870;
+      const fieldRows = ["desc", "poSap", "movement", "loadingDate", "vehicleSize", "transporter", "freight"];
+      const pBodyH = 18 + fieldRows.length * 22 + 12;
+      const srY = 150;
+      const infoY = srY + 82;
+      const pY = infoY + 26;
+      const remY = pY + 24 + pBodyH + 24;
+      const fY = remY + 26;
+      const H = fY + 30 + 20;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = W * SCALE; canvas.height = H * SCALE;
+      const ctx = canvas.getContext("2d");
+      ctx.scale(SCALE, SCALE);
+      ctx.textBaseline = "alphabetic";
+
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+      box(ctx, 14, 14, W - 28, H - 28, { lw: 1.5 });
+
+      // header: logo + company block
+      ctx.beginPath(); ctx.arc(58, 56, 26, 0, Math.PI * 2);
+      ctx.fillStyle = "#1e3a5f"; ctx.fill();
+      txt(ctx, "IBL", 58, 63, { size: 15, weight: "bold", color: "#ffffff", align: "center" });
+      txt(ctx, COMPANY_PROFILE.name, 98, 44, { size: 19, weight: "bold" });
+      txt(ctx, COMPANY_PROFILE.tagline, 98, 60, { size: 10, color: SUB });
+      txt(ctx, COMPANY_PROFILE.addressLine1, 98, 74, { size: 9.5, color: SUB });
+      txt(ctx, COMPANY_PROFILE.addressLine2, 98, 86, { size: 9.5, color: SUB });
+      txt(ctx, COMPANY_PROFILE.phone, 98, 100, { size: 9.5, color: SUB });
+      txt(ctx, COMPANY_PROFILE.email, 98, 112, { size: 9.5, color: SUB });
+
+      // badges: DOMESTIC + Domestic Category (replaces Bonded Status, which doesn't apply here)
+      function badgeStamp(label, x, y, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, 128, 22);
+        txt(ctx, label, x + 64, y + 15, { size: 11, weight: "bold", color: "#ffffff", align: "center" });
+      }
+      badgeStamp((order.domesticCategory || "DOMESTIC").toUpperCase(), 430, 30, "#6b7280");
+      badgeStamp("DOMESTIC", 430, 58, "#111827");
+
+      // right info box: Bilty No / Loading Date / Vehicle No
+      const rbX = 606, rbW = 214;
+      box(ctx, rbX, 26, rbW, 112, { lw: 1.2 });
+      line(ctx, rbX, 26 + 37, rbX + rbW, 26 + 37);
+      line(ctx, rbX, 26 + 74, rbX + rbW, 26 + 74);
+      txt(ctx, "BILTY NO.", rbX + 10, 42, { size: 9.5, weight: "bold", color: SUB });
+      txt(ctx, container.biltyNumber || order.biltyNumber || "—", rbX + 10, 58, { size: 15, weight: "bold" });
+      txt(ctx, "LOADING DATE", rbX + 10, 79, { size: 9.5, weight: "bold", color: SUB });
+      txt(ctx, container.loadingDate ? fmtDate(container.loadingDate) : fmtDate(order.createdDate), rbX + 10, 94, { size: 13 });
+      txt(ctx, "VEHICLE NO.", rbX + 10, 116, { size: 9.5, weight: "bold", color: SUB });
+      txt(ctx, container.vehiclePlate || "Unassigned", rbX + 10, 131, { size: 13, weight: "bold" });
+
+      // sender / receiver
+      box(ctx, 32, srY, W - 64, 82, { lw: 1.2 });
+      ctx.fillStyle = BAR; ctx.fillRect(32, srY, W - 64, 22);
+      line(ctx, 32 + (W - 64) / 2, srY, 32 + (W - 64) / 2, srY + 82);
+      txt(ctx, "SENDER'S NAME & ADDRESS", 42, srY + 15, { size: 10.5, weight: "bold", color: "#ffffff" });
+      txt(ctx, "RECEIVER'S NAME & ADDRESS", 32 + (W - 64) / 2 + 10, srY + 15, { size: 10.5, weight: "bold", color: "#ffffff" });
+      txt(ctx, sender ? sender.name : COMPANY_PROFILE.name, 42, srY + 42, { size: 13, weight: "bold" });
+      txt(ctx, order.senderAddress || order.origin || "", 42, srY + 60, { size: 11, color: SUB });
+      txt(ctx, cust ? cust.name : "Unknown Customer", 32 + (W - 64) / 2 + 10, srY + 42, { size: 13, weight: "bold" });
+      txt(ctx, resolveReceiverAddress(container, cust) || (cust ? cust.location || "" : ""), 32 + (W - 64) / 2 + 10, srY + 60, { size: 11, color: SUB });
+      txt(ctx, "Contact# " + (cust ? cust.phone || "—" : "—"), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
+
+      // loading point / destination / movement through / vehicle size
+      const infoCols = [32, 244, 456, 656, W - 32];
+      box(ctx, 32, infoY, W - 64, 26, { lw: 1.2 });
+      for (let i = 1; i < infoCols.length - 1; i++) line(ctx, infoCols[i], infoY, infoCols[i], infoY + 26);
+      txt(ctx, "Loading Point:  " + (order.origin || "—"), infoCols[0] + 8, infoY + 17, { size: 10.5 });
+      txt(ctx, "Destination:  " + (container.destination || "—"), infoCols[1] + 8, infoY + 17, { size: 10.5 });
+      txt(ctx, "Movement Through:  " + (container.movementThrough || "—"), infoCols[2] + 8, infoY + 17, { size: 10.5 });
+      txt(ctx, "Vehicle Size:  " + (container.vehicleSize || "—"), infoCols[3] + 8, infoY + 17, { size: 10.5 });
+
+      // particulars — simple field list, no container/seal line items, no QTY/Amount/Weight grid
+      ctx.fillStyle = BAR; ctx.fillRect(32, pY, W - 64, 24);
+      txt(ctx, "Particulars", (32 + W - 32) / 2, pY + 16, { size: 10.5, weight: "bold", color: "#ffffff", align: "center" });
+      box(ctx, 32, pY, W - 64, 24 + pBodyH, { lw: 1.2 });
+
+      let py = pY + 24 + 18;
+      function pRow(label, value) {
+        txt(ctx, label, 32 + 8, py, { size: 10, weight: "bold" });
+        const lw = ctx.measureText(label).width;
+        txt(ctx, value || "—", 32 + 8 + lw + 6, py, { size: 10.5 });
+        py += 22;
+      }
+      pRow("Item Description:", order.description);
+      pRow("PO / SAP No.:", container.poSapNo);
+      pRow("Movement Through:", container.movementThrough);
+      pRow("Loading Date:", container.loadingDate ? fmtDate(container.loadingDate) : "");
+      pRow("Vehicle Size:", container.vehicleSize);
+      pRow("Transporter:", container.transporter);
+      pRow("Freight Amount:", container.freightAmount !== "" && container.freightAmount !== undefined && container.freightAmount !== null ? formatPKR(container.freightAmount) : "");
+
+      // remarks
+      txt(ctx, "Remarks:", 32, remY, { size: 10.5, weight: "bold" });
+      line(ctx, 32, remY + 10, W - 32, remY + 10);
+
+      // footer
+      const fCols = [32, 330, 610, W - 32];
+      box(ctx, 32, fY, W - 64, 30, { lw: 1.2 });
+      line(ctx, fCols[1], fY, fCols[1], fY + 30);
+      line(ctx, fCols[2], fY, fCols[2], fY + 30);
+      txt(ctx, "Note: Don't Deliver Goods Without Bilty", fCols[0] + 8, fY + 19, { size: 9.5, weight: "bold", color: "#b91c1c" });
+      txt(ctx, "Booking Company: " + (cust ? cust.name.toUpperCase() : "—"), fCols[1] + 8, fY + 19, { size: 10 });
+      txt(ctx, "Logistics Manager:", fCols[2] + 8, fY + 19, { size: 10 });
+
+      finish(canvas, W, H);
+      return;
+    }
+
+    // ---- Import / Export (unchanged) ----
     // ---- compute layout height up-front (depends on how many containers there are) ----
     const W = 870;
     const fixedRows = 4; // Item Description, DN/LC/SAP No., Job No., B/L No.
@@ -1767,36 +1920,12 @@ function downloadBiltyReceipt(order, data) {
     const fY = remY + 26;
     const H = fY + 30 + 20;
 
-    const SCALE = 2.5;
     const canvas = document.createElement("canvas");
     canvas.width = W * SCALE; canvas.height = H * SCALE;
     const ctx = canvas.getContext("2d");
     ctx.scale(SCALE, SCALE);
     ctx.textBaseline = "alphabetic";
 
-    const INK = "#111827", SUB = "#4b5563", LINE = "#111827", BAR = "#111827";
-
-    function box(x, y, w, h, opts) {
-      opts = opts || {};
-      if (opts.fill) { ctx.fillStyle = opts.fill; ctx.fillRect(x, y, w, h); }
-      ctx.strokeStyle = opts.stroke || LINE;
-      ctx.lineWidth = opts.lw || 1;
-      ctx.strokeRect(x, y, w, h);
-    }
-    function line(x1, y1, x2, y2, opts) {
-      opts = opts || {};
-      ctx.strokeStyle = opts.stroke || LINE;
-      ctx.lineWidth = opts.lw || 1;
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-    }
-    function txt(str, x, y, opts) {
-      opts = opts || {};
-      ctx.fillStyle = opts.color || INK;
-      ctx.font = (opts.weight || "normal") + " " + (opts.size || 12) + "px Arial";
-      ctx.textAlign = opts.align || "left";
-      ctx.fillText(str || "", x, y);
-      ctx.textAlign = "left";
-    }
     function stamp(str, cx, cy, opts) {
       opts = opts || {};
       ctx.save();
@@ -1817,60 +1946,60 @@ function downloadBiltyReceipt(order, data) {
 
     // ---- background & outer border ----
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
-    box(14, 14, W - 28, H - 28, { lw: 1.5 });
+    box(ctx, 14, 14, W - 28, H - 28, { lw: 1.5 });
 
     // ---- header: logo + company block ----
     ctx.beginPath(); ctx.arc(58, 56, 26, 0, Math.PI * 2);
     ctx.fillStyle = "#1e3a5f"; ctx.fill();
-    txt("IBL", 58, 63, { size: 15, weight: "bold", color: "#ffffff", align: "center" });
-    txt(COMPANY_PROFILE.name, 98, 44, { size: 19, weight: "bold" });
-    txt(COMPANY_PROFILE.tagline, 98, 60, { size: 10, color: SUB });
-    txt(COMPANY_PROFILE.addressLine1, 98, 74, { size: 9.5, color: SUB });
-    txt(COMPANY_PROFILE.addressLine2, 98, 86, { size: 9.5, color: SUB });
-    txt(COMPANY_PROFILE.phone, 98, 100, { size: 9.5, color: SUB });
-    txt(COMPANY_PROFILE.email, 98, 112, { size: 9.5, color: SUB });
+    txt(ctx, "IBL", 58, 63, { size: 15, weight: "bold", color: "#ffffff", align: "center" });
+    txt(ctx, COMPANY_PROFILE.name, 98, 44, { size: 19, weight: "bold" });
+    txt(ctx, COMPANY_PROFILE.tagline, 98, 60, { size: 10, color: SUB });
+    txt(ctx, COMPANY_PROFILE.addressLine1, 98, 74, { size: 9.5, color: SUB });
+    txt(ctx, COMPANY_PROFILE.addressLine2, 98, 86, { size: 9.5, color: SUB });
+    txt(ctx, COMPANY_PROFILE.phone, 98, 100, { size: 9.5, color: SUB });
+    txt(ctx, COMPANY_PROFILE.email, 98, 112, { size: 9.5, color: SUB });
 
     // status badges: NON-BONDED / IMPORT (or whatever the order specifies)
     function badgeStamp(label, x, y, color) {
       ctx.fillStyle = color;
       ctx.fillRect(x, y, 128, 22);
-      txt(label, x + 64, y + 15, { size: 11, weight: "bold", color: "#ffffff", align: "center" });
+      txt(ctx, label, x + 64, y + 15, { size: 11, weight: "bold", color: "#ffffff", align: "center" });
     }
     badgeStamp(bondedStatus, 430, 30, "#6b7280");
     badgeStamp(shipmentType, 430, 58, "#111827");
 
     // right info box: Bilty No / Loading Date / Vehicle No
     const rbX = 606, rbW = 214;
-    box(rbX, 26, rbW, 112, { lw: 1.2 });
-    line(rbX, 26 + 37, rbX + rbW, 26 + 37);
-    line(rbX, 26 + 74, rbX + rbW, 26 + 74);
-    txt("BILTY NO.", rbX + 10, 42, { size: 9.5, weight: "bold", color: SUB });
-    txt(container.biltyNumber || order.biltyNumber || "—", rbX + 10, 58, { size: 15, weight: "bold" });
-    txt("LOADING DATE", rbX + 10, 79, { size: 9.5, weight: "bold", color: SUB });
-    txt(fmtDate(order.createdDate), rbX + 10, 94, { size: 13 });
-    txt("VEHICLE NO.", rbX + 10, 116, { size: 9.5, weight: "bold", color: SUB });
-    txt(container.vehiclePlate || "Unassigned", rbX + 10, 131, { size: 13, weight: "bold" });
+    box(ctx, rbX, 26, rbW, 112, { lw: 1.2 });
+    line(ctx, rbX, 26 + 37, rbX + rbW, 26 + 37);
+    line(ctx, rbX, 26 + 74, rbX + rbW, 26 + 74);
+    txt(ctx, "BILTY NO.", rbX + 10, 42, { size: 9.5, weight: "bold", color: SUB });
+    txt(ctx, container.biltyNumber || order.biltyNumber || "—", rbX + 10, 58, { size: 15, weight: "bold" });
+    txt(ctx, "LOADING DATE", rbX + 10, 79, { size: 9.5, weight: "bold", color: SUB });
+    txt(ctx, fmtDate(order.createdDate), rbX + 10, 94, { size: 13 });
+    txt(ctx, "VEHICLE NO.", rbX + 10, 116, { size: 9.5, weight: "bold", color: SUB });
+    txt(ctx, container.vehiclePlate || "Unassigned", rbX + 10, 131, { size: 13, weight: "bold" });
 
     // ---- sender / receiver ----
-    box(32, srY, W - 64, 82, { lw: 1.2 });
+    box(ctx, 32, srY, W - 64, 82, { lw: 1.2 });
     ctx.fillStyle = BAR; ctx.fillRect(32, srY, W - 64, 22);
-    line(32 + (W - 64) / 2, srY, 32 + (W - 64) / 2, srY + 82);
-    txt("SENDER'S NAME & ADDRESS", 42, srY + 15, { size: 10.5, weight: "bold", color: "#ffffff" });
-    txt("RECEIVER'S NAME & ADDRESS", 32 + (W - 64) / 2 + 10, srY + 15, { size: 10.5, weight: "bold", color: "#ffffff" });
-    txt(sender ? sender.name : COMPANY_PROFILE.name, 42, srY + 42, { size: 13, weight: "bold" });
-    txt(order.senderAddress || order.origin || "", 42, srY + 60, { size: 11, color: SUB });
-    txt(cust ? cust.name : "Unknown Customer", 32 + (W - 64) / 2 + 10, srY + 42, { size: 13, weight: "bold" });
-    txt(resolveReceiverAddress(container, cust) || (cust ? cust.location || "" : ""), 32 + (W - 64) / 2 + 10, srY + 60, { size: 11, color: SUB });
-    txt("Contact# " + (cust ? cust.phone || "—" : "—"), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
+    line(ctx, 32 + (W - 64) / 2, srY, 32 + (W - 64) / 2, srY + 82);
+    txt(ctx, "SENDER'S NAME & ADDRESS", 42, srY + 15, { size: 10.5, weight: "bold", color: "#ffffff" });
+    txt(ctx, "RECEIVER'S NAME & ADDRESS", 32 + (W - 64) / 2 + 10, srY + 15, { size: 10.5, weight: "bold", color: "#ffffff" });
+    txt(ctx, sender ? sender.name : COMPANY_PROFILE.name, 42, srY + 42, { size: 13, weight: "bold" });
+    txt(ctx, order.senderAddress || order.origin || "", 42, srY + 60, { size: 11, color: SUB });
+    txt(ctx, cust ? cust.name : "Unknown Customer", 32 + (W - 64) / 2 + 10, srY + 42, { size: 13, weight: "bold" });
+    txt(ctx, resolveReceiverAddress(container, cust) || (cust ? cust.location || "" : ""), 32 + (W - 64) / 2 + 10, srY + 60, { size: 11, color: SUB });
+    txt(ctx, "Contact# " + (cust ? cust.phone || "—" : "—"), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
 
     // ---- loading point / destination / shipping line / empty return ----
     const infoCols = [32, 244, 456, 656, W - 32];
-    box(32, infoY, W - 64, 26, { lw: 1.2 });
-    for (let i = 1; i < infoCols.length - 1; i++) line(infoCols[i], infoY, infoCols[i], infoY + 26);
-    txt("Loading Point:  " + order.origin, infoCols[0] + 8, infoY + 17, { size: 10.5 });
-    txt("Destination:  " + (container.destination || "—"), infoCols[1] + 8, infoY + 17, { size: 10.5 });
-    txt("Shipping Line:  " + (order.shippingLine || "—"), infoCols[2] + 8, infoY + 17, { size: 10.5 });
-    txt("Empty Return:  " + (container.emptyReturnLocation || "—"), infoCols[3] + 8, infoY + 17, { size: 10.5 });
+    box(ctx, 32, infoY, W - 64, 26, { lw: 1.2 });
+    for (let i = 1; i < infoCols.length - 1; i++) line(ctx, infoCols[i], infoY, infoCols[i], infoY + 26);
+    txt(ctx, "Loading Point:  " + order.origin, infoCols[0] + 8, infoY + 17, { size: 10.5 });
+    txt(ctx, "Destination:  " + (container.destination || "—"), infoCols[1] + 8, infoY + 17, { size: 10.5 });
+    txt(ctx, "Shipping Line:  " + (order.shippingLine || "—"), infoCols[2] + 8, infoY + 17, { size: 10.5 });
+    txt(ctx, "Empty Return:  " + (container.emptyReturnLocation || "—"), infoCols[3] + 8, infoY + 17, { size: 10.5 });
 
     // ---- particulars table ----
     const pCols = [32, 346, 424, 514, 604, 718, W - 32];
@@ -1878,17 +2007,17 @@ function downloadBiltyReceipt(order, data) {
     ctx.fillStyle = BAR; ctx.fillRect(32, pY, W - 64, 24);
     for (let i = 0; i < pHead.length; i++) {
       const cx = (pCols[i] + pCols[i + 1]) / 2;
-      txt(pHead[i], cx, pY + 16, { size: 10.5, weight: "bold", color: "#ffffff", align: "center" });
+      txt(ctx, pHead[i], cx, pY + 16, { size: 10.5, weight: "bold", color: "#ffffff", align: "center" });
     }
-    box(32, pY, W - 64, 24 + pBodyH, { lw: 1.2 });
-    for (let i = 1; i < pCols.length - 1; i++) line(pCols[i], pY, pCols[i], pY + 24 + pBodyH);
+    box(ctx, 32, pY, W - 64, 24 + pBodyH, { lw: 1.2 });
+    for (let i = 1; i < pCols.length - 1; i++) line(ctx, pCols[i], pY, pCols[i], pY + 24 + pBodyH);
 
     // Each row: bold label immediately followed by its value on the SAME line (not stacked).
     let py = pY + 24 + 18;
     function pRow(label, value) {
-      txt(label, pCols[0] + 8, py, { size: 10, weight: "bold" });
+      txt(ctx, label, pCols[0] + 8, py, { size: 10, weight: "bold" });
       const lw = ctx.measureText(label).width;
-      txt(value || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
+      txt(ctx, value || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
       py += 22;
     }
     pRow("Item Description:", order.description);
@@ -1900,24 +2029,24 @@ function downloadBiltyReceipt(order, data) {
     // (previously crammed onto one line, which overlapped the QTY column at long values).
     const qtyRows = [];
     containers.forEach((c) => {
-      txt("Container No.:", pCols[0] + 8, py, { size: 10, weight: "bold" });
+      txt(ctx, "Container No.:", pCols[0] + 8, py, { size: 10, weight: "bold" });
       let lw = ctx.measureText("Container No.:").width;
-      txt(c.containerNumber || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
+      txt(ctx, c.containerNumber || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
       qtyRows.push({ y: py, qty: containerSizeTypeLabel(c) || "01" });
       py += 20;
-      txt("Seal No.:", pCols[0] + 8, py, { size: 10, weight: "bold" });
+      txt(ctx, "Seal No.:", pCols[0] + 8, py, { size: 10, weight: "bold" });
       lw = ctx.measureText("Seal No.:").width;
-      txt(c.sealNumber || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
+      txt(ctx, c.sealNumber || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
       py += 20;
     });
-    qtyRows.forEach((q) => txt(q.qty, (pCols[1] + pCols[2]) / 2, q.y, { size: 11, align: "center" }));
+    qtyRows.forEach((q) => txt(ctx, q.qty, (pCols[1] + pCols[2]) / 2, q.y, { size: 11, align: "center" }));
 
     const midY = pY + 24 + pBodyH / 2;
     // Amount / Advance / Balance: pre-printed "Paid" stamps
     stamp("Paid", (pCols[2] + pCols[3]) / 2, midY, { size: 12 });
     // Weight: show the real figure if entered, otherwise the pre-printed placeholder stamp
     if (container.weight && Number(container.weight) > 0) {
-      txt(Number(container.weight).toLocaleString() + " kg", (pCols[3] + pCols[4]) / 2, midY, { size: 12, align: "center" });
+      txt(ctx, Number(container.weight).toLocaleString() + " kg", (pCols[3] + pCols[4]) / 2, midY, { size: 12, align: "center" });
     } else {
       stamp("As Per", (pCols[3] + pCols[4]) / 2, midY - 6, { size: 10 });
       stamp("Document", (pCols[3] + pCols[4]) / 2, midY + 10, { size: 10 });
@@ -1928,34 +2057,26 @@ function downloadBiltyReceipt(order, data) {
     // ---- gate timestamps ----
     const gCols = [32, 32 + (W - 64) / 3, 32 + 2 * (W - 64) / 3, W - 32];
     ctx.fillStyle = BAR; ctx.fillRect(32, gY, W - 64, 22);
-    for (let i = 1; i < gCols.length - 1; i++) line(gCols[i], gY, gCols[i], gY + 92);
-    txt("REPORTING DATE & TIME", (gCols[0] + gCols[1]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
-    txt("GATE IN DATE & TIME", (gCols[1] + gCols[2]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
-    txt("GATE OUT DATE & TIME", (gCols[2] + gCols[3]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
-    box(32, gY, W - 64, 22 + 70, { lw: 1.2 });
+    for (let i = 1; i < gCols.length - 1; i++) line(ctx, gCols[i], gY, gCols[i], gY + 92);
+    txt(ctx, "REPORTING DATE & TIME", (gCols[0] + gCols[1]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
+    txt(ctx, "GATE IN DATE & TIME", (gCols[1] + gCols[2]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
+    txt(ctx, "GATE OUT DATE & TIME", (gCols[2] + gCols[3]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
+    box(ctx, 32, gY, W - 64, 22 + 70, { lw: 1.2 });
 
     // ---- remarks ----
-    txt("Remarks:", 32, remY, { size: 10.5, weight: "bold" });
-    line(32, remY + 10, W - 32, remY + 10);
+    txt(ctx, "Remarks:", 32, remY, { size: 10.5, weight: "bold" });
+    line(ctx, 32, remY + 10, W - 32, remY + 10);
 
     // ---- footer ----
     const fCols = [32, 330, 610, W - 32];
-    box(32, fY, W - 64, 30, { lw: 1.2 });
-    line(fCols[1], fY, fCols[1], fY + 30);
-    line(fCols[2], fY, fCols[2], fY + 30);
-    txt("Note: Don't Deliver Goods Without Bilty", fCols[0] + 8, fY + 19, { size: 9.5, weight: "bold", color: "#b91c1c" });
-    txt("Booking Company: " + (cust ? cust.name.toUpperCase() : "—"), fCols[1] + 8, fY + 19, { size: 10 });
-    txt("Logistics Manager:", fCols[2] + 8, fY + 19, { size: 10 });
+    box(ctx, 32, fY, W - 64, 30, { lw: 1.2 });
+    line(ctx, fCols[1], fY, fCols[1], fY + 30);
+    line(ctx, fCols[2], fY, fCols[2], fY + 30);
+    txt(ctx, "Note: Don't Deliver Goods Without Bilty", fCols[0] + 8, fY + 19, { size: 9.5, weight: "bold", color: "#b91c1c" });
+    txt(ctx, "Booking Company: " + (cust ? cust.name.toUpperCase() : "—"), fCols[1] + 8, fY + 19, { size: 10 });
+    txt(ctx, "Logistics Manager:", fCols[2] + 8, fY + 19, { size: 10 });
 
-    const imgData = canvas.toDataURL("image/jpeg", 0.85);
-    if (!window.jspdf || !window.jspdf.jsPDF) {
-      window.alert("PDF library didn't load — check your internet connection and try again.");
-      return;
-    }
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [W, H], compress: true });
-    pdf.addImage(imgData, "JPEG", 0, 0, W, H, undefined, "FAST");
-    pdf.save(`Bilty-${order.orderNumber}.pdf`);
+    finish(canvas, W, H);
   } catch (err) {
     console.error("Bilty receipt error:", err);
     window.alert("Something went wrong generating the bilty receipt: " + err.message);
