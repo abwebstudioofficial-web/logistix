@@ -7618,54 +7618,121 @@ function LogistixERP() {
             return normalizeDateStr(v); // fallback for ISO-style or other formats
           }
 
-          let updatedCount = 0, skippedCount = 0;
+          let updatedCount = 0, createdCount = 0, skippedCount = 0;
+          const createIssues = []; // { row/sheet context, reason }
           let updatedOrders = [...data.orders];
           const tableSnapshot = [];
           const touchedOrderIds = new Set();
+          const newOrderIds = new Set(); // created orders don't need a "prev" snapshot entry - reverting just deletes them
 
           sheetNames.forEach((sheetName) => {
+            const isWM = sheetName === "Wrapping Materials";
             const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "", raw: false });
-            rows.forEach((row) => {
+            rows.forEach((row, rowIdx) => {
               const containerId = xstr(readAnyKey(row, ["Container ID", "container id"])).trim();
-              if (!containerId) { skippedCount++; return; }
-              const orderIdx = updatedOrders.findIndex((o) => orderContainers(o).some((c) => c.id === containerId));
-              if (orderIdx === -1) { skippedCount++; return; }
-              const order = updatedOrders[orderIdx];
-              const containers = orderContainers(order);
-              const cIdx = containers.findIndex((c) => c.id === containerId);
-              if (cIdx === -1) { skippedCount++; return; }
+              const rowLabel = `${sheetName} row ${rowIdx + 2}`; // +2: header row + 1-indexing
 
-              if (!touchedOrderIds.has(order.id)) { touchedOrderIds.add(order.id); tableSnapshot.push({ id: order.id, prev: order }); }
+              if (containerId) {
+                // Existing shipment - update it. An ID that doesn't match anything is treated
+                // as an error, not a new row - a non-blank ID signals intent to update a
+                // specific shipment, not to create an unrelated new one.
+                const orderIdx = updatedOrders.findIndex((o) => orderContainers(o).some((c) => c.id === containerId));
+                if (orderIdx === -1) { skippedCount++; return; }
+                const order = updatedOrders[orderIdx];
+                const containers = orderContainers(order);
+                const cIdx = containers.findIndex((c) => c.id === containerId);
+                if (cIdx === -1) { skippedCount++; return; }
 
-              const newContainers = containers.map((c, i) => i !== cIdx ? c : {
-                ...c,
+                if (!touchedOrderIds.has(order.id)) { touchedOrderIds.add(order.id); tableSnapshot.push({ id: order.id, prev: order }); }
+
+                const newContainers = containers.map((c, i) => i !== cIdx ? c : {
+                  ...c,
+                  poSapNo: xstr(readAnyKey(row, ["PO / SAP No.", "PO/SAP No."])),
+                  movementThrough: xstr(readAnyKey(row, ["Movement Through"])),
+                  loadingDate: parseDDMMYYYY(readAnyKey(row, ["Loading Date"])),
+                  vehiclePlate: xstr(readAnyKey(row, ["Vehicle No."])),
+                  vehicleSize: xstr(readAnyKey(row, ["Vehicle Size"])),
+                  destination: xstr(readAnyKey(row, ["Destination"])),
+                  transporter: xstr(readAnyKey(row, ["Transporter Name"])),
+                });
+                const loadingPoint = xstr(readAnyKey(row, ["Loading Point"]));
+                updatedOrders[orderIdx] = { ...order, origin: loadingPoint || order.origin, containers: newContainers };
+                updatedCount++;
+                return;
+              }
+
+              // No Container ID - this is a new shipment. A blank Customer, Loading Point, or
+              // Destination means there's nothing usable to create from, so those are skipped
+              // as empty rows rather than reported as failures.
+              const customerName = xstr(readAnyKey(row, ["Customer"])).trim();
+              const loadingPoint = xstr(readAnyKey(row, ["Loading Point"])).trim();
+              const destination = xstr(readAnyKey(row, ["Destination"])).trim();
+              if (!customerName && !loadingPoint && !destination) return;
+
+              const matchedCustomer = (data.customers || []).find((cu) => (cu.name || "").trim().toLowerCase() === customerName.toLowerCase());
+              if (!matchedCustomer) { createIssues.push(`${rowLabel}: customer "${customerName}" not found — row not created.`); return; }
+              if (!loadingPoint || !destination) { createIssues.push(`${rowLabel}: missing Loading Point or Destination — row not created.`); return; }
+
+              let senderId = "", senderAddress = "";
+              if (isWM) {
+                const senderLabel = xstr(readAnyKey(row, ["Sender"])).trim();
+                if (senderLabel) {
+                  const candidates = [];
+                  (data.senders || []).forEach((sd) => {
+                    (Array.isArray(sd.addresses) ? sd.addresses : []).forEach((a) => {
+                      if ((a.label || "").trim().toLowerCase() === senderLabel.toLowerCase()) candidates.push({ sender: sd, addr: a });
+                    });
+                  });
+                  if (candidates.length === 1) {
+                    senderId = candidates[0].sender.id;
+                    senderAddress = candidates[0].addr.address;
+                  } else if (candidates.length > 1) {
+                    createIssues.push(`${rowLabel}: Sender label "${senderLabel}" matches ${candidates.length} different senders — created, but Sender left blank. Set it manually.`);
+                  } else {
+                    createIssues.push(`${rowLabel}: Sender label "${senderLabel}" not found on any sender — created, but Sender left blank. Set it manually.`);
+                  }
+                }
+              }
+
+              const newContainer = {
+                ...emptyContainer(),
                 poSapNo: xstr(readAnyKey(row, ["PO / SAP No.", "PO/SAP No."])),
                 movementThrough: xstr(readAnyKey(row, ["Movement Through"])),
                 loadingDate: parseDDMMYYYY(readAnyKey(row, ["Loading Date"])),
                 vehiclePlate: xstr(readAnyKey(row, ["Vehicle No."])),
                 vehicleSize: xstr(readAnyKey(row, ["Vehicle Size"])),
-                destination: xstr(readAnyKey(row, ["Destination"])),
+                destination,
                 transporter: xstr(readAnyKey(row, ["Transporter Name"])),
-              });
-              const loadingPoint = xstr(readAnyKey(row, ["Loading Point"]));
-              updatedOrders[orderIdx] = { ...order, origin: loadingPoint || order.origin, containers: newContainers };
-              updatedCount++;
+              };
+              const newOrder = {
+                id: genUUID(), orderNumber: genOrderNumber(), customerId: matchedCustomer.id,
+                shipmentType: "Domestic", domesticCategory: isWM ? DOMESTIC_CATEGORIES[1] : DOMESTIC_CATEGORIES[0],
+                origin: loadingPoint, senderId, senderAddress, eta: "", description: "",
+                createdDate: todayISO(), cancelled: false, priority: "Normal",
+                containers: [newContainer],
+              };
+              updatedOrders.push(newOrder);
+              newOrderIds.add(newOrder.id);
+              createdCount++;
             });
           });
 
-          const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id));
+          const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id) || newOrderIds.has(o.id));
           const { error } = changedOrders.length ? await supabaseClient.from("orders").upsert(changedOrders.map(toDbRow)) : { error: null };
           setDataState((prevData) => ({ ...prevData, orders: updatedOrders }));
           setTabExcel((prev) => ({
             ...prev,
             [viewKey]: {
-              attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
+              attached: true, filename: file.name,
+              snapshot: [...tableSnapshot, ...Array.from(newOrderIds).map((id) => ({ id, prev: null }))],
+              busy: false,
               message: error
                 ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
                 : {
                     ok: true,
-                    text: `${file.name}: updated ${updatedCount} shipment${updatedCount === 1 ? "" : "s"}.` +
-                      (skippedCount > 0 ? ` ${skippedCount} row${skippedCount === 1 ? "" : "s"} had no matching Container ID and were skipped — this report format only updates existing shipments, it can't create new ones. Export a fresh copy of this report, edit that file, and re-attach it.` : ""),
+                    text: `${file.name}: updated ${updatedCount}, created ${createdCount} shipment${createdCount === 1 ? "" : "s"}.` +
+                      (skippedCount > 0 ? ` ${skippedCount} row${skippedCount === 1 ? "" : "s"} had a Container ID that didn't match any shipment and were skipped.` : "") +
+                      (createIssues.length > 0 ? ` ${createIssues.length} issue${createIssues.length === 1 ? "" : "s"}: ${createIssues.slice(0, 5).join(" ")}${createIssues.length > 5 ? ` (+${createIssues.length - 5} more)` : ""}` : ""),
                   },
             },
           }));
