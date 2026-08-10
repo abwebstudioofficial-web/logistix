@@ -1056,7 +1056,7 @@ function buildWorkbook(data) {
 const TEMPLATE_COMPANY_SHEETS = ["Tetra Pak","PTC","Dairyland","Haleeb","Fauji","Nestle","Engro","Pakola","Shezan","Others","Coca Cola","Ecolean","Pepsi"];
 const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Bonded Status","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
 const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Bonded Status","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
-const DOMESTIC_HEADERS = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Status"];
+const DOMESTIC_HEADERS = ["Sr.#", "Domestic Category", "Customer", "Sender Name", "Sender Address", "Est. Delivery Date", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Freight Amount"];
 const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Booking No.","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
@@ -1105,10 +1105,12 @@ function buildExportRow(sr, o, c, data) {
 }
 function buildDomesticRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
+  const sender = (data.senders || []).find((s) => s.id === o.senderId) || null;
   return [
-    sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
+    sr, o.domesticCategory || "", cust ? cust.name : "", sender ? sender.name : "", o.senderAddress || "", fmtDateISO(o.eta),
+    c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
     c.vehiclePlate || "", c.vehicleSize || "", o.origin || "", c.destination || "", c.transporter || "",
-    containerStatus(c, "Domestic"),
+    xnum(c.freightAmount, ""),
   ];
 }
 function buildClearedRow(sr, o, c, data) {
@@ -1491,12 +1493,13 @@ async function buildTemplateWorkbook(data) {
 
   // --- Domestic (blue header, white text) — split into Finished Goods and Wrapping
   // Materials sheets, matching how the app itself separates them into two pages. Columns
-  // match exactly what the Domestic Orders table and order detail view actually show.
-  const domHeaderNoWrap = new Set([1, 6, 7, 11]); // Sr.#, Vehicle No., Vehicle Size, Status
-  const domHeaderWrap = new Set(Array.from({ length: 11 }, (_, i) => i + 1).filter((c) => !domHeaderNoWrap.has(c)));
-  const domHeaderOverrides = buildColStyleMap(11, domHeaderWrap, 5, 6);
-  const domContentWrap = new Set([2, 3, 8, 9, 10]); // Customer, PO/SAP No., Loading Point, Destination, Transporter Name
-  const domContentDefault = buildColStyleMap(11, domContentWrap, 9, 8);
+  // cover everything from the domestic order form plus everything the dispatcher adds.
+  const domHeaderNoWrap = new Set([1, 6, 9, 10, 11, 15]); // Sr.#, Est. Delivery Date, Loading Date, Vehicle No., Vehicle Size, Freight Amount
+  const domHeaderWrap = new Set(Array.from({ length: 15 }, (_, i) => i + 1).filter((c) => !domHeaderNoWrap.has(c)));
+  const domHeaderOverrides = buildColStyleMap(15, domHeaderWrap, 5, 6);
+  const domContentWrap = new Set([3, 4, 5, 7, 12, 13, 14]); // Customer, Sender Name, Sender Address, PO/SAP No., Loading Point, Destination, Transporter Name
+  const domContentDefault = buildColStyleMap(15, domContentWrap, 9, 8);
+  domContentDefault[15] = 22; // Freight Amount — bold
 
   function buildDomesticSheet(sheetName, category) {
     const flat = flattenContainers(orders, (o) => orderKind(o) === "domestic" && (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
@@ -1506,7 +1509,7 @@ async function buildTemplateWorkbook(data) {
       name: sheetName, rows, headerRowIndex: 1,
       colWidths: colWidthsFor(DOMESTIC_HEADERS), freezeRows: 1,
       headerOverrides: domHeaderOverrides, contentDefaultCols: domContentDefault,
-      conditionalCols: { 8: LOADING_POINT_RULE, 3: duplicateStyleFn(dataRows.map((r) => r[2]), 17) },
+      conditionalCols: { 12: LOADING_POINT_RULE, 7: duplicateStyleFn(dataRows.map((r) => r[6]), 17) },
     });
   }
   buildDomesticSheet("Finished Goods", DOMESTIC_CATEGORIES[0]);
