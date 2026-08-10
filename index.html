@@ -7266,6 +7266,8 @@ function LogistixERP() {
   const [importMsg, setImportMsg] = useState(null);
   const [excelBusy, setExcelBusy] = useState(false);
   const [tabExcel, setTabExcel] = useState({}); // { [viewKey]: { attached, filename, snapshot, busy, message } }
+  const [domesticExportFrom, setDomesticExportFrom] = useState("");
+  const [domesticExportTo, setDomesticExportTo] = useState("");
   const [contractExcel, setContractExcel] = useState({}); // { [contractGroupId||"orphan"]: { attached, filename, snapshot, busy, message } } - per-contract, so this can't use the generic viewKey-based system above
   const [fleetUrl, setFleetUrl] = useState(null);
   const [theme, setTheme] = useState(() => {
@@ -7695,6 +7697,14 @@ function LogistixERP() {
       // SheetJS aoa_to_sheet in this environment doesn't actually apply cell styles (wrap
       // text, bold, etc.) on write, only that writer does.
       const domesticOrders = (data.orders || []).filter((o) => (o.shipmentType || "Import") === "Domestic");
+      const hasDateFilter = !!(domesticExportFrom || domesticExportTo);
+      function inExportRange(loadingDate) {
+        if (!hasDateFilter) return true;
+        if (!loadingDate) return false; // a range was requested - a shipment with no loading date can't be said to fall inside it
+        if (domesticExportFrom && loadingDate < domesticExportFrom) return false;
+        if (domesticExportTo && loadingDate > domesticExportTo) return false;
+        return true;
+      }
       const headerNoWrap = new Set([1, 5, 6, 7]); // Sr.#, Loading Date, Vehicle No., Vehicle Size
       const headerWrap = new Set(Array.from({ length: 14 }, (_, i) => i + 1).filter((c) => !headerNoWrap.has(c)));
       const headerOverrides = buildColStyleMap(14, headerWrap, 5, 6);
@@ -7706,7 +7716,7 @@ function LogistixERP() {
 
       const sheets = DOMESTIC_CATEGORIES.map((category) => {
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
-        const flat = flattenContainers(catOrders, () => true);
+        const flat = flattenContainers(catOrders, () => true).filter(({ c }) => inExportRange(c.loadingDate));
         const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c));
         const rows = [DOMESTIC_EXPORT_HEADERS, ...dataRows];
         return {
@@ -7721,7 +7731,8 @@ function LogistixERP() {
         const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = url; a.download = `Domestic-Orders-${todayISO()}.xlsx`;
+        const rangeLabel = hasDateFilter ? `-${domesticExportFrom || "start"}-to-${domesticExportTo || "end"}` : "";
+        a.href = url; a.download = `Domestic-Orders${rangeLabel}-${todayISO()}.xlsx`;
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } catch (err) {
@@ -7951,6 +7962,19 @@ function LogistixERP() {
                     onExport={() => handleTabExport(view)}
                     onRevert={() => handleTabRevert(view)}
                   />
+                  {view === "orders_domestic" && (
+                    <div className="flex items-end gap-3 flex-wrap mt-3">
+                      <Field label="Loading Date From (optional)">
+                        <input type="date" className={inputCls} style={{ width: 170 }} value={domesticExportFrom} onChange={(e) => setDomesticExportFrom(e.target.value)} />
+                      </Field>
+                      <Field label="Loading Date To (optional)">
+                        <input type="date" className={inputCls} style={{ width: 170 }} value={domesticExportTo} onChange={(e) => setDomesticExportTo(e.target.value)} />
+                      </Field>
+                      {(domesticExportFrom || domesticExportTo) && (
+                        <button className={btnSecondary} onClick={() => { setDomesticExportFrom(""); setDomesticExportTo(""); }}>Clear Dates</button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               {view === "dashboard" && <Dashboard data={data} />}
