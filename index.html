@@ -1056,7 +1056,7 @@ function buildWorkbook(data) {
 const TEMPLATE_COMPANY_SHEETS = ["Tetra Pak","PTC","Dairyland","Haleeb","Fauji","Nestle","Engro","Pakola","Shezan","Others","Coca Cola","Ecolean","Pepsi"];
 const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Bonded Status","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
 const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Bonded Status","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
-const DOMESTIC_HEADERS = ["Sr.#","PO / SAP No.","Delivery Challan No.","Loading Point","Movement From (Origin - Destination)","Vehicle Number","Vehicle Qty","Loading Date","Freight","Transporter","POD Status","POD Received On","Transporter Bill Signed On","Transporter Bill No."];
+const DOMESTIC_HEADERS = ["Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Status"];
 const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Booking No.","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
@@ -1104,10 +1104,11 @@ function buildExportRow(sr, o, c, data) {
   ];
 }
 function buildDomesticRow(sr, o, c, data) {
+  const cust = getCustomer(data, o.customerId);
   return [
-    sr, o.poNumber || "", c.biltyNumber || "", o.origin || "", `${o.origin || ""} - ${c.destination || o.destination || ""}`,
-    c.vehiclePlate || "", c.containerSize || "", fmtDateISO(c.dispatchAt), xnum(c.freightAmount, ""), c.transporter || o.nominatedTransporter || "",
-    c.podArrivalAt ? "Received" : "Pending", fmtDateISO(c.podArrivalAt), fmtDateISO(c.transporterBillDate), c.transporterBillNo || "",
+    sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
+    c.vehiclePlate || "", c.vehicleSize || "", o.origin || "", c.destination || "", c.transporter || "",
+    containerStatus(c, "Domestic"),
   ];
 }
 function buildClearedRow(sr, o, c, data) {
@@ -1488,24 +1489,28 @@ async function buildTemplateWorkbook(data) {
     conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 18: duplicateStyleFn(importDataRows.map((r) => r[17]), 17) },
   });
 
-  // --- Domestic Movement (blue header, white text) ---
-  // Mapped onto the same wrap logic using each column's closest Import-sheet equivalent.
-  const domHeaderNoWrap = new Set([3, 6, 11]); // Delivery Challan No.(~Bilty), Vehicle Number(~Truck No.), POD Status
-  const domHeaderWrap = new Set(Array.from({ length: 14 }, (_, i) => i + 1).filter((c) => !domHeaderNoWrap.has(c)));
-  const domHeaderOverrides = buildColStyleMap(14, domHeaderWrap, 5, 6);
-  const domContentWrap = new Set([2, 3, 5, 6]); // PO/SAP No., Delivery Challan No., Movement From, Vehicle Number
-  const domContentDefault = buildColStyleMap(14, domContentWrap, 9, 8);
-  domContentDefault[9] = 22; // Freight — bold
+  // --- Domestic (blue header, white text) — split into Finished Goods and Wrapping
+  // Materials sheets, matching how the app itself separates them into two pages. Columns
+  // match exactly what the Domestic Orders table and order detail view actually show.
+  const domHeaderNoWrap = new Set([1, 6, 7, 11]); // Sr.#, Vehicle No., Vehicle Size, Status
+  const domHeaderWrap = new Set(Array.from({ length: 11 }, (_, i) => i + 1).filter((c) => !domHeaderNoWrap.has(c)));
+  const domHeaderOverrides = buildColStyleMap(11, domHeaderWrap, 5, 6);
+  const domContentWrap = new Set([2, 3, 8, 9, 10]); // Customer, PO/SAP No., Loading Point, Destination, Transporter Name
+  const domContentDefault = buildColStyleMap(11, domContentWrap, 9, 8);
 
-  const domFlat = flattenContainers(orders, (o) => orderKind(o) === "domestic");
-  const domDataRows = domFlat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
-  const domRows = [DOMESTIC_HEADERS, ...domDataRows];
-  sheets.push({
-    name: "Domestic Movement", rows: domRows, headerRowIndex: 1,
-    colWidths: colWidthsFor(DOMESTIC_HEADERS), freezeRows: 1,
-    headerOverrides: domHeaderOverrides, contentDefaultCols: domContentDefault,
-    conditionalCols: { 4: LOADING_POINT_RULE, 3: duplicateStyleFn(domDataRows.map((r) => r[2]), 17) },
-  });
+  function buildDomesticSheet(sheetName, category) {
+    const flat = flattenContainers(orders, (o) => orderKind(o) === "domestic" && (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
+    const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
+    const rows = [DOMESTIC_HEADERS, ...dataRows];
+    sheets.push({
+      name: sheetName, rows, headerRowIndex: 1,
+      colWidths: colWidthsFor(DOMESTIC_HEADERS), freezeRows: 1,
+      headerOverrides: domHeaderOverrides, contentDefaultCols: domContentDefault,
+      conditionalCols: { 8: LOADING_POINT_RULE, 3: duplicateStyleFn(dataRows.map((r) => r[2]), 17) },
+    });
+  }
+  buildDomesticSheet("Finished Goods", DOMESTIC_CATEGORIES[0]);
+  buildDomesticSheet("Wrapping Materials", DOMESTIC_CATEGORIES[1]);
 
   // --- Export Transportation (cream header) ---
   const expHeaderNoWrap = new Set([2, 8, 9, 12, 15]); // Job#, Booking No.(~B/L), Container No., Truck No., Bilty No.
