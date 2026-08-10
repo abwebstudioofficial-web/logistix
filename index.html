@@ -4716,26 +4716,34 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       .map((c) => {
         const d = new Date(c.dispatchAt);
         const dispatchDateISO = c.dispatchAt.slice(0, 10);
-        const freightAmount = xnum(c.freightAmount);
         const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
+        const manualFreightAmount = xnum(c.freightAmount);
+
+        if (tab !== "domestic_import") {
+          // Export tab keeps its existing, unrelated calculation entirely as-is.
+          const fuelAmount = computeFuelAmount(manualFreightAmount, price);
+          return {
+            id: c.id, dispatchAtRaw: d.getTime(), month: fmtMonthYear(d),
+            dispatchDate: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
+            vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
+            freightAmount: manualFreightAmount, fuelAmount, net: manualFreightAmount - (fuelAmount || 0),
+          };
+        }
+
+        // Domestic/Import: Freight is auto-retrieved from the matching contract rate rather
+        // than relying on what was manually typed into the dispatch form — falls back to the
+        // manual entry only when no contract rate matches this shipment at all.
+        const matchedRate = matchContractRate(c);
+        const freightAmount = matchedRate ? xnum(matchedRate.rate) : manualFreightAmount;
         const base = {
-          id: c.id,
-          dispatchAtRaw: d.getTime(),
-          month: fmtMonthYear(d),
+          id: c.id, dispatchAtRaw: d.getTime(), month: fmtMonthYear(d),
           dispatchDate: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
           vehiclePlate: (c.vehiclePlate || "").trim() || "Unassigned",
           freightAmount,
         };
 
-        if (tab !== "domestic_import") {
-          // Export tab keeps its existing, unrelated calculation entirely as-is.
-          const fuelAmount = computeFuelAmount(freightAmount, price);
-          return { ...base, fuelAmount, net: freightAmount - (fuelAmount || 0) };
-        }
-
-        // Domestic/Import: automatic contract-rate lookup + fuel escalation, minus any fuel
-        // already swapped on the same date, matching the design set for Contract Rates.
-        const matchedRate = matchContractRate(c);
+        // Automatic contract-rate lookup + fuel escalation, minus any fuel already swapped on
+        // the same date, matching the design set for Contract Rates.
         const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
         const fuelComponentAmount = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
         const impliedLitres = (fuelComponentAmount !== null && fuelBaseRate) ? fuelComponentAmount / fuelBaseRate : null;
