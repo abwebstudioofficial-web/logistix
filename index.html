@@ -4541,12 +4541,20 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
 function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
   const [q, setQ] = useState("");
   const [calcDate, setCalcDate] = useState("");
+  const [rateSort, setRateSort] = useState("loading_asc"); // loading_asc | destination_asc | rate_desc | vehicle_asc
   const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
   const allRows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
-  const rows = allRows.filter((k) => {
-    const text = `${k.loadingPoint} ${k.destination} ${k.movementThrough || ""} ${k.vehicleSize || ""} ${k.weightCategory || ""} ${k.axleLoadCategory || ""}`.toLowerCase();
-    return !q || text.includes(q.toLowerCase());
-  });
+  const rows = allRows
+    .filter((k) => {
+      const text = `${k.loadingPoint} ${k.destination} ${k.movementThrough || ""} ${k.vehicleSize || ""} ${k.weightCategory || ""} ${k.axleLoadCategory || ""}`.toLowerCase();
+      return !q || text.includes(q.toLowerCase());
+    })
+    .sort((a, b) => {
+      if (rateSort === "destination_asc") return (a.destination || "").localeCompare(b.destination || "");
+      if (rateSort === "rate_desc") return (xnum(b.rate) || 0) - (xnum(a.rate) || 0);
+      if (rateSort === "vehicle_asc") return (a.vehicleSize || "").localeCompare(b.vehicleSize || "");
+      return (a.loadingPoint || "").localeCompare(b.loadingPoint || ""); // loading_asc, the default
+    });
   const title = group ? group.contractTitle : "Unassigned Rates";
   const excelKey = group ? group.id : "orphan";
   const excelMeta = (contractExcel || {})[excelKey];
@@ -4607,6 +4615,14 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
       <div className="flex gap-3 flex-wrap items-start">
         <Field label="Search">
           <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
+        </Field>
+        <Field label="Sort by">
+          <select className={inputCls} style={{ width: 190 }} value={rateSort} onChange={(e) => setRateSort(e.target.value)}>
+            <option value="loading_asc">Loading Point (A-Z)</option>
+            <option value="destination_asc">Destination (A-Z)</option>
+            <option value="rate_desc">Rate (High to Low)</option>
+            <option value="vehicle_asc">Vehicle Size (A-Z)</option>
+          </select>
         </Field>
         {group && (
           <Field label="Calculate rate as of date">
@@ -4855,6 +4871,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
+  const [consumptionSort, setConsumptionSort] = useState("date_desc"); // date_desc | date_asc | vehicle_asc | freight_desc
   const allContainers = useMemo(() => customerOrderContainers(data, customer.id), [data.orders, customer.id]);
   const tabContainers = useMemo(
     () => allContainers.filter((c) => (tab === "export" ? c.shipmentType === "Export" : c.shipmentType !== "Export")),
@@ -4897,7 +4914,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
 
   // One row per dispatched shipment — Month/Dispatch Date only make sense once a container has actually been dispatched.
   const rows = useMemo(() => {
-    return tabContainers
+    const mapped = tabContainers
       .filter((c) => !!c.dispatchAt)
       .map((c) => {
         const d = new Date(c.dispatchAt);
@@ -4947,9 +4964,16 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
           receivableLitres: receivableLitres !== null ? receivableLitres - swappedLitres : null,
           swappedLitres, swappedPKR,
         };
-      })
-      .sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw);
-  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps]);
+      });
+    function sortConsumptionRows(list) {
+      const sorted = [...list];
+      if (consumptionSort === "date_asc") return sorted.sort((a, b) => a.dispatchAtRaw - b.dispatchAtRaw);
+      if (consumptionSort === "vehicle_asc") return sorted.sort((a, b) => a.vehiclePlate.localeCompare(b.vehiclePlate));
+      if (consumptionSort === "freight_desc") return sorted.sort((a, b) => b.freightAmount - a.freightAmount);
+      return sorted.sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw); // date_desc, the default
+    }
+    return sortConsumptionRows(mapped);
+  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps, consumptionSort]);
   const grandFuel = rows.reduce((s, r) => s + (r.fuelAmount || 0), 0);
   const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
   const grandNet = grandFreight - grandFuel;
@@ -4972,6 +4996,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
   const [swapDeptFilter, setSwapDeptFilter] = useState("all");
   const [swapSwappedByFilter, setSwapSwappedByFilter] = useState("all");
   const [swapCardFilter, setSwapCardFilter] = useState("all");
+  const [swapSort, setSwapSort] = useState("date_desc"); // date_desc | date_asc | card_asc | amount_desc
   // Scan every swap entry for this customer to build the Swapped By / Card No. filter
   // options — no fixed list, whatever's actually been entered shows up to pick from.
   const swappedByOptions = useMemo(
@@ -4987,18 +5012,26 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     if (swapDeptFilter !== "all") list = list.filter((s) => s.department === swapDeptFilter);
     if (swapSwappedByFilter !== "all") list = list.filter((s) => s.swappedBy === swapSwappedByFilter);
     if (swapCardFilter !== "all") list = list.filter((s) => s.cardNumber === swapCardFilter);
-    return list;
-  }, [swaps, swapGroups, swapMonthFilter, swapDeptFilter, swapSwappedByFilter, swapCardFilter]);
+    const sorted = [...list];
+    if (swapSort === "date_asc") return sorted.sort((a, b) => (a.swapDate || "").localeCompare(b.swapDate || ""));
+    if (swapSort === "card_asc") return sorted.sort((a, b) => (a.cardNumber || "").localeCompare(b.cardNumber || ""));
+    if (swapSort === "amount_desc") return sorted.sort((a, b) => (xnum(b.amountPkr) || 0) - (xnum(a.amountPkr) || 0));
+    return sorted.sort((a, b) => (b.swapDate || "").localeCompare(a.swapDate || "")); // date_desc, the default
+  }, [swaps, swapGroups, swapMonthFilter, swapDeptFilter, swapSwappedByFilter, swapCardFilter, swapSort]);
 
   const tabBtnCls = (active) => cx(
     "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
     active ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
   );
 
-  const fuelPrices = useMemo(
-    () => [...(data.fuel_prices || [])].sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || "")),
-    [data.fuel_prices]
-  );
+  const [fuelPriceSort, setFuelPriceSort] = useState("date_desc"); // date_desc | date_asc | price_desc | price_asc
+  const fuelPrices = useMemo(() => {
+    const sorted = [...(data.fuel_prices || [])];
+    if (fuelPriceSort === "date_asc") return sorted.sort((a, b) => (a.effectiveDate || "").localeCompare(b.effectiveDate || ""));
+    if (fuelPriceSort === "price_desc") return sorted.sort((a, b) => (xnum(b.pricePerLiter) || 0) - (xnum(a.pricePerLiter) || 0));
+    if (fuelPriceSort === "price_asc") return sorted.sort((a, b) => (xnum(a.pricePerLiter) || 0) - (xnum(b.pricePerLiter) || 0));
+    return sorted.sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || "")); // date_desc, the default
+  }, [data.fuel_prices, fuelPriceSort]);
   // Keeps the selection in sync with what actually still exists — deleteItem lives at the top
   // level and has no way to reach into this component's local selection state directly, so
   // instead of trying to clear it manually after every delete path (bulk delete, single-row
@@ -5028,6 +5061,18 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         <button className={tabBtnCls(tab === "fuel_price")} onClick={() => setTab("fuel_price")}>Fuel Price</button>
       </div>
 
+      {(tab === "domestic_import" || tab === "export") && (
+        <div className="flex items-center gap-2">
+          <span className="text-slate-500 text-xs">Sort by</span>
+          <select className={inputCls} style={{ width: 200 }} value={consumptionSort} onChange={(e) => setConsumptionSort(e.target.value)}>
+            <option value="date_desc">Dispatch Date (Newest First)</option>
+            <option value="date_asc">Dispatch Date (Oldest First)</option>
+            <option value="vehicle_asc">Vehicle No. (A-Z)</option>
+            <option value="freight_desc">Freight (High to Low)</option>
+          </select>
+        </div>
+      )}
+
       {tab === "swap_report" ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -5049,6 +5094,12 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <select className={inputCls} style={{ width: 170 }} value={swapCardFilter} onChange={(e) => setSwapCardFilter(e.target.value)}>
                 <option value="all">All card numbers</option>
                 {cardNumberOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <select className={inputCls} style={{ width: 190 }} value={swapSort} onChange={(e) => setSwapSort(e.target.value)}>
+                <option value="date_desc">Swap Date (Newest First)</option>
+                <option value="date_asc">Swap Date (Oldest First)</option>
+                <option value="card_asc">Card No. (A-Z)</option>
+                <option value="amount_desc">Amount (High to Low)</option>
               </select>
             </div>
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}>
@@ -5108,7 +5159,17 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                   <Trash2 size={15} /> Delete Selected ({selectedFuelPriceIds.size})
                 </button>
               </div>
-            ) : <div />}
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500 text-xs">Sort by</span>
+                <select className={inputCls} style={{ width: 190 }} value={fuelPriceSort} onChange={(e) => setFuelPriceSort(e.target.value)}>
+                  <option value="date_desc">Effective Date (Newest First)</option>
+                  <option value="date_asc">Effective Date (Oldest First)</option>
+                  <option value="price_desc">Price (High to Low)</option>
+                  <option value="price_asc">Price (Low to High)</option>
+                </select>
+              </div>
+            )}
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_price", mode: "add", item: null })}>
               <Plus size={16} /> Add Fuel Price
             </button>
