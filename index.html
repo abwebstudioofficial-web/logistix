@@ -7442,11 +7442,15 @@ function LogistixERP() {
 
   async function deleteItem(entity, idOrIds) {
     const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
-    const { error } = await supabaseClient.from(entity).delete().in("id", ids);
-    if (error) { window.alert("Couldn't delete: " + error.message); return; }
-    const idSet = new Set(ids);
-    setDataState((prev) => ({ ...prev, [entity]: prev[entity].filter((x) => !idSet.has(x.id)) }));
-    setConfirm(null);
+    try {
+      const { error } = await supabaseClient.from(entity).delete().in("id", ids);
+      if (error) { window.alert("Couldn't delete: " + error.message); return; }
+      const idSet = new Set(ids);
+      setDataState((prev) => ({ ...prev, [entity]: prev[entity].filter((x) => !idSet.has(x.id)) }));
+      setConfirm(null);
+    } catch (err) {
+      window.alert("Couldn't delete: " + (err && err.message ? err.message : String(err)));
+    }
   }
 
   async function updateContainerStage(orderId, containerId, newStageIndex, extraData) {
