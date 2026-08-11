@@ -90,6 +90,12 @@ function MapPin({ size = 16, className = "" }) {
 function ChevronRight({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="9 18 15 12 9 6"/></svg>;
 }
+function ChevronUp({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="18 15 12 9 6 15"/></svg>;
+}
+function ChevronDown({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="6 9 12 15 18 9"/></svg>;
+}
 function Upload({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 19V5"/><polyline points="5 12 12 5 19 12"/><line x1="5" y1="21" x2="19" y2="21"/></svg>;
 }
@@ -2419,6 +2425,34 @@ function SearchBox({ value, onChange, placeholder }) {
   );
 }
 
+// A table header with its own up/down sort arrows, replacing a separate sort dropdown.
+// `active` is whether this column is the one currently driving the sort; `direction` is
+// which way it's currently sorted (only meaningful when active). Clicking either arrow always
+// sets this column as the active sort in that direction, regardless of current state.
+// className is required (not merged with thCls) so callers needing whitespace-normal aren't
+// fighting thCls's hardcoded whitespace-nowrap.
+function SortableTh({ label, active, direction, onSort, className }) {
+  return (
+    <th className={className || thCls}>
+      <div className="flex items-center gap-1">
+        <span>{label}</span>
+        <div className="flex flex-col -my-1">
+          <button
+            className={cx("leading-none transition-colors", active && direction === "asc" ? "text-blue-400" : "text-slate-600 hover:text-slate-400")}
+            onClick={() => onSort("asc")}
+            title={`Sort ${label} ascending`}
+          ><ChevronUp size={11} /></button>
+          <button
+            className={cx("leading-none transition-colors", active && direction === "desc" ? "text-blue-400" : "text-slate-600 hover:text-slate-400")}
+            onClick={() => onSort("desc")}
+            title={`Sort ${label} descending`}
+          ><ChevronDown size={11} /></button>
+        </div>
+      </div>
+    </th>
+  );
+}
+
 function EmptyState({ icon: Icon, text, actionLabel, onAction }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -4541,19 +4575,25 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
 function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
   const [q, setQ] = useState("");
   const [calcDate, setCalcDate] = useState("");
-  const [rateSort, setRateSort] = useState("loading_asc"); // loading_asc | destination_asc | rate_desc | vehicle_asc
+  const [rateSortCol, setRateSortCol] = useState("loading");
+  const [rateSortDir, setRateSortDir] = useState("asc");
   const groupIds = new Set((data.contract_groups || []).map((g) => g.id));
   const allRows = (data.contracts || []).filter((k) => k.customerId === customer.id && (group ? k.contractGroupId === group.id : (!k.contractGroupId || !groupIds.has(k.contractGroupId))));
+  const rateComparators = {
+    loading: (a, b) => (a.loadingPoint || "").localeCompare(b.loadingPoint || ""),
+    destination: (a, b) => (a.destination || "").localeCompare(b.destination || ""),
+    rate: (a, b) => (xnum(a.rate) || 0) - (xnum(b.rate) || 0),
+    vehicle: (a, b) => (a.vehicleSize || "").localeCompare(b.vehicleSize || ""),
+  };
+  function sortRate(col, dir) { setRateSortCol(col); setRateSortDir(dir); }
   const rows = allRows
     .filter((k) => {
       const text = `${k.loadingPoint} ${k.destination} ${k.movementThrough || ""} ${k.vehicleSize || ""} ${k.weightCategory || ""} ${k.axleLoadCategory || ""}`.toLowerCase();
       return !q || text.includes(q.toLowerCase());
     })
     .sort((a, b) => {
-      if (rateSort === "destination_asc") return (a.destination || "").localeCompare(b.destination || "");
-      if (rateSort === "rate_desc") return (xnum(b.rate) || 0) - (xnum(a.rate) || 0);
-      if (rateSort === "vehicle_asc") return (a.vehicleSize || "").localeCompare(b.vehicleSize || "");
-      return (a.loadingPoint || "").localeCompare(b.loadingPoint || ""); // loading_asc, the default
+      const cmp = rateComparators[rateSortCol](a, b);
+      return rateSortDir === "desc" ? -cmp : cmp;
     });
   const title = group ? group.contractTitle : "Unassigned Rates";
   const excelKey = group ? group.id : "orphan";
@@ -4616,14 +4656,6 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
         <Field label="Search">
           <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
         </Field>
-        <Field label="Sort by">
-          <select className={inputCls} style={{ width: 190 }} value={rateSort} onChange={(e) => setRateSort(e.target.value)}>
-            <option value="loading_asc">Loading Point (A-Z)</option>
-            <option value="destination_asc">Destination (A-Z)</option>
-            <option value="rate_desc">Rate (High to Low)</option>
-            <option value="vehicle_asc">Vehicle Size (A-Z)</option>
-          </select>
-        </Field>
         {group && (
           <Field label="Calculate rate as of date">
             <input type="date" className={inputCls} style={{ width: 180 }} value={calcDate} onChange={(e) => setCalcDate(e.target.value)} />
@@ -4646,13 +4678,13 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Loading Point</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Destination</th>
+                <SortableTh label="Loading Point" active={rateSortCol === "loading"} direction={rateSortDir} onSort={(dir) => sortRate("loading", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
+                <SortableTh label="Destination" active={rateSortCol === "destination"} direction={rateSortDir} onSort={(dir) => sortRate("destination", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Movement Through</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Vehicle Size</th>
+                <SortableTh label="Vehicle Size" active={rateSortCol === "vehicle"} direction={rateSortDir} onSort={(dir) => sortRate("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Axle Load Category</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Rate (PKR)</th>
+                <SortableTh label="Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 {canCalculate && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
               </tr>
@@ -4871,7 +4903,9 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
-  const [consumptionSort, setConsumptionSort] = useState("date_desc"); // date_desc | date_asc | vehicle_asc | freight_desc
+  const [consumptionSortCol, setConsumptionSortCol] = useState("date");
+  const [consumptionSortDir, setConsumptionSortDir] = useState("desc");
+  function sortConsumption(col, dir) { setConsumptionSortCol(col); setConsumptionSortDir(dir); }
   const allContainers = useMemo(() => customerOrderContainers(data, customer.id), [data.orders, customer.id]);
   const tabContainers = useMemo(
     () => allContainers.filter((c) => (tab === "export" ? c.shipmentType === "Export" : c.shipmentType !== "Export")),
@@ -4965,15 +4999,17 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
           swappedLitres, swappedPKR,
         };
       });
-    function sortConsumptionRows(list) {
-      const sorted = [...list];
-      if (consumptionSort === "date_asc") return sorted.sort((a, b) => a.dispatchAtRaw - b.dispatchAtRaw);
-      if (consumptionSort === "vehicle_asc") return sorted.sort((a, b) => a.vehiclePlate.localeCompare(b.vehiclePlate));
-      if (consumptionSort === "freight_desc") return sorted.sort((a, b) => b.freightAmount - a.freightAmount);
-      return sorted.sort((a, b) => b.dispatchAtRaw - a.dispatchAtRaw); // date_desc, the default
-    }
-    return sortConsumptionRows(mapped);
-  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps, consumptionSort]);
+    const consumptionComparators = {
+      date: (a, b) => a.dispatchAtRaw - b.dispatchAtRaw,
+      vehicle: (a, b) => a.vehiclePlate.localeCompare(b.vehiclePlate),
+      freight: (a, b) => a.freightAmount - b.freightAmount,
+    };
+    const sorted = [...mapped].sort((a, b) => {
+      const cmp = consumptionComparators[consumptionSortCol](a, b);
+      return consumptionSortDir === "desc" ? -cmp : cmp;
+    });
+    return sorted;
+  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps, consumptionSortCol, consumptionSortDir]);
   const grandFuel = rows.reduce((s, r) => s + (r.fuelAmount || 0), 0);
   const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
   const grandNet = grandFreight - grandFuel;
@@ -4996,7 +5032,14 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
   const [swapDeptFilter, setSwapDeptFilter] = useState("all");
   const [swapSwappedByFilter, setSwapSwappedByFilter] = useState("all");
   const [swapCardFilter, setSwapCardFilter] = useState("all");
-  const [swapSort, setSwapSort] = useState("date_desc"); // date_desc | date_asc | card_asc | amount_desc
+  const [swapSortCol, setSwapSortCol] = useState("date");
+  const [swapSortDir, setSwapSortDir] = useState("desc");
+  function sortSwaps(col, dir) { setSwapSortCol(col); setSwapSortDir(dir); }
+  const swapComparators = {
+    date: (a, b) => (a.swapDate || "").localeCompare(b.swapDate || ""),
+    card: (a, b) => (a.cardNumber || "").localeCompare(b.cardNumber || ""),
+    amount: (a, b) => (xnum(a.amountPkr) || 0) - (xnum(b.amountPkr) || 0),
+  };
   // Scan every swap entry for this customer to build the Swapped By / Card No. filter
   // options — no fixed list, whatever's actually been entered shows up to pick from.
   const swappedByOptions = useMemo(
@@ -5012,26 +5055,31 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     if (swapDeptFilter !== "all") list = list.filter((s) => s.department === swapDeptFilter);
     if (swapSwappedByFilter !== "all") list = list.filter((s) => s.swappedBy === swapSwappedByFilter);
     if (swapCardFilter !== "all") list = list.filter((s) => s.cardNumber === swapCardFilter);
-    const sorted = [...list];
-    if (swapSort === "date_asc") return sorted.sort((a, b) => (a.swapDate || "").localeCompare(b.swapDate || ""));
-    if (swapSort === "card_asc") return sorted.sort((a, b) => (a.cardNumber || "").localeCompare(b.cardNumber || ""));
-    if (swapSort === "amount_desc") return sorted.sort((a, b) => (xnum(b.amountPkr) || 0) - (xnum(a.amountPkr) || 0));
-    return sorted.sort((a, b) => (b.swapDate || "").localeCompare(a.swapDate || "")); // date_desc, the default
-  }, [swaps, swapGroups, swapMonthFilter, swapDeptFilter, swapSwappedByFilter, swapCardFilter, swapSort]);
+    return [...list].sort((a, b) => {
+      const cmp = swapComparators[swapSortCol](a, b);
+      return swapSortDir === "desc" ? -cmp : cmp;
+    });
+  }, [swaps, swapGroups, swapMonthFilter, swapDeptFilter, swapSwappedByFilter, swapCardFilter, swapSortCol, swapSortDir]);
 
   const tabBtnCls = (active) => cx(
     "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
     active ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
   );
 
-  const [fuelPriceSort, setFuelPriceSort] = useState("date_desc"); // date_desc | date_asc | price_desc | price_asc
+  const [fuelPriceSortCol, setFuelPriceSortCol] = useState("date");
+  const [fuelPriceSortDir, setFuelPriceSortDir] = useState("desc");
+  function sortFuelPrices(col, dir) { setFuelPriceSortCol(col); setFuelPriceSortDir(dir); }
+  const fuelPriceComparators = {
+    date: (a, b) => (a.effectiveDate || "").localeCompare(b.effectiveDate || ""),
+    price: (a, b) => (xnum(a.pricePerLiter) || 0) - (xnum(b.pricePerLiter) || 0),
+  };
   const fuelPrices = useMemo(() => {
     const sorted = [...(data.fuel_prices || [])];
-    if (fuelPriceSort === "date_asc") return sorted.sort((a, b) => (a.effectiveDate || "").localeCompare(b.effectiveDate || ""));
-    if (fuelPriceSort === "price_desc") return sorted.sort((a, b) => (xnum(b.pricePerLiter) || 0) - (xnum(a.pricePerLiter) || 0));
-    if (fuelPriceSort === "price_asc") return sorted.sort((a, b) => (xnum(a.pricePerLiter) || 0) - (xnum(b.pricePerLiter) || 0));
-    return sorted.sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || "")); // date_desc, the default
-  }, [data.fuel_prices, fuelPriceSort]);
+    return sorted.sort((a, b) => {
+      const cmp = fuelPriceComparators[fuelPriceSortCol](a, b);
+      return fuelPriceSortDir === "desc" ? -cmp : cmp;
+    });
+  }, [data.fuel_prices, fuelPriceSortCol, fuelPriceSortDir]);
   // Keeps the selection in sync with what actually still exists — deleteItem lives at the top
   // level and has no way to reach into this component's local selection state directly, so
   // instead of trying to clear it manually after every delete path (bulk delete, single-row
@@ -5061,18 +5109,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         <button className={tabBtnCls(tab === "fuel_price")} onClick={() => setTab("fuel_price")}>Fuel Price</button>
       </div>
 
-      {(tab === "domestic_import" || tab === "export") && (
-        <div className="flex items-center gap-2">
-          <span className="text-slate-500 text-xs">Sort by</span>
-          <select className={inputCls} style={{ width: 200 }} value={consumptionSort} onChange={(e) => setConsumptionSort(e.target.value)}>
-            <option value="date_desc">Dispatch Date (Newest First)</option>
-            <option value="date_asc">Dispatch Date (Oldest First)</option>
-            <option value="vehicle_asc">Vehicle No. (A-Z)</option>
-            <option value="freight_desc">Freight (High to Low)</option>
-          </select>
-        </div>
-      )}
-
       {tab === "swap_report" ? (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -5095,12 +5131,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                 <option value="all">All card numbers</option>
                 {cardNumberOptions.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
-              <select className={inputCls} style={{ width: 190 }} value={swapSort} onChange={(e) => setSwapSort(e.target.value)}>
-                <option value="date_desc">Swap Date (Newest First)</option>
-                <option value="date_asc">Swap Date (Oldest First)</option>
-                <option value="card_asc">Card No. (A-Z)</option>
-                <option value="amount_desc">Amount (High to Low)</option>
-              </select>
             </div>
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}>
               <Plus size={16} /> Log Swap
@@ -5119,12 +5149,12 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <table className="w-full text-sm">
                 <thead className={theadCls}>
                   <tr>
-                    <th className={thCls}>Swap Date</th>
+                    <SortableTh label="Swap Date" active={swapSortCol === "date"} direction={swapSortDir} onSort={(dir) => sortSwaps("date", dir)} className={thCls} />
                     <th className={thCls}>Department</th>
                     <th className={thCls}>Swapped By</th>
-                    <th className={thCls}>Card No.</th>
+                    <SortableTh label="Card No." active={swapSortCol === "card"} direction={swapSortDir} onSort={(dir) => sortSwaps("card", dir)} className={thCls} />
                     <th className={thCls}>Qty Ltr</th>
-                    <th className={thCls}>Amount in PKR</th>
+                    <SortableTh label="Amount in PKR" active={swapSortCol === "amount"} direction={swapSortDir} onSort={(dir) => sortSwaps("amount", dir)} className={thCls} />
                     <th className={thCls}></th>
                   </tr>
                 </thead>
@@ -5159,17 +5189,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                   <Trash2 size={15} /> Delete Selected ({selectedFuelPriceIds.size})
                 </button>
               </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <span className="text-slate-500 text-xs">Sort by</span>
-                <select className={inputCls} style={{ width: 190 }} value={fuelPriceSort} onChange={(e) => setFuelPriceSort(e.target.value)}>
-                  <option value="date_desc">Effective Date (Newest First)</option>
-                  <option value="date_asc">Effective Date (Oldest First)</option>
-                  <option value="price_desc">Price (High to Low)</option>
-                  <option value="price_asc">Price (Low to High)</option>
-                </select>
-              </div>
-            )}
+            ) : <div />}
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_price", mode: "add", item: null })}>
               <Plus size={16} /> Add Fuel Price
             </button>
@@ -5192,8 +5212,8 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                         onChange={(e) => setSelectedFuelPriceIds(e.target.checked ? new Set(fuelPrices.map((p) => p.id)) : new Set())}
                       />
                     </th>
-                    <th className={thCls}>Effective Date</th>
-                    <th className={thCls}>Price per Liter (PKR)</th>
+                    <SortableTh label="Effective Date" active={fuelPriceSortCol === "date"} direction={fuelPriceSortDir} onSort={(dir) => sortFuelPrices("date", dir)} className={thCls} />
+                    <SortableTh label="Price per Liter (PKR)" active={fuelPriceSortCol === "price"} direction={fuelPriceSortDir} onSort={(dir) => sortFuelPrices("price", dir)} className={thCls} />
                     <th className={thCls}></th>
                   </tr>
                 </thead>
@@ -5237,9 +5257,9 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             <thead className={theadCls}>
               <tr>
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 80 }}>Month</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Dispatch Date</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Vehicle No.</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 90 }}>Freight (PKR)</th>
+                <SortableTh label="Dispatch Date" active={consumptionSortCol === "date"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("date", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
+                <SortableTh label="Vehicle No." active={consumptionSortCol === "vehicle"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
+                <SortableTh label="Freight (PKR)" active={consumptionSortCol === "freight"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("freight", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (PKR)</th>
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (Litre)</th>
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (PKR)</th>
@@ -5282,10 +5302,10 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             <thead className={theadCls}>
               <tr>
                 <th className={thCls}>Month</th>
-                <th className={thCls}>Dispatch Date</th>
-                <th className={thCls}>Vehicle No.</th>
+                <SortableTh label="Dispatch Date" active={consumptionSortCol === "date"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("date", dir)} className={thCls} />
+                <SortableTh label="Vehicle No." active={consumptionSortCol === "vehicle"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("vehicle", dir)} className={thCls} />
                 <th className={thCls}>Fuel (PKR)</th>
-                <th className={thCls}>Freight (PKR)</th>
+                <SortableTh label="Freight (PKR)" active={consumptionSortCol === "freight"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("freight", dir)} className={thCls} />
                 <th className={thCls}>Net Payable (PKR)</th>
               </tr>
             </thead>
