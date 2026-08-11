@@ -648,12 +648,12 @@ function formatPKR(n) {
   return "Rs " + num.toLocaleString("en-US");
 }
 
-function todayISO() { return new Date().toISOString().slice(0, 10); }
+function todayISO() { return toLocalDateStr(new Date()); }
 
 function addDaysISO(iso, days) {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return toLocalDateStr(d);
 }
 
 // One fixed date format everywhere on the site: DD/MM/YYYY. Previously most of the app used
@@ -1476,7 +1476,7 @@ const LOADING_POINT_RULE = textContainsStyle([["PICT", 13], ["QICT", 14], ["KICT
 
 async function buildTemplateWorkbook(data) {
   const orders = data.orders || [];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const allFlat = flattenContainers(orders);
   const sheets = [];
 
@@ -1741,13 +1741,21 @@ function readField(row, camelKey) {
 }
 // Normalizes whatever date format Excel handed back (locale-formatted string, or a Date
 // object) into strict YYYY-MM-DD, since that's what the database column requires.
+// Deliberately uses local date getters (getFullYear/getMonth/getDate), not toISOString() —
+// SheetJS parses date-formatted Excel cells into a Date representing LOCAL midnight for that
+// calendar date, and toISOString() converts to UTC, which silently shifts the date back by
+// one day for any timezone ahead of UTC (e.g. Pakistan, UTC+5): local midnight on 6 Aug is
+// 19:00 UTC on 5 Aug, so toISOString().slice(0,10) would wrongly read "2026-08-05".
+function toLocalDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function normalizeDateStr(v) {
   if (!v) return "";
-  if (v instanceof Date) return isNaN(v) ? "" : v.toISOString().slice(0, 10);
+  if (v instanceof Date) return isNaN(v) ? "" : toLocalDateStr(v);
   const s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const d = new Date(s);
-  return isNaN(d) ? "" : d.toISOString().slice(0, 10);
+  return isNaN(d) ? "" : toLocalDateStr(d);
 }
 function coerceFuelPrices(rows) {
   return rows
@@ -2145,7 +2153,7 @@ function getWeekData(orders) {
   return days.map((label, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    const iso = d.toISOString().slice(0, 10);
+    const iso = toLocalDateStr(d);
     const total = orders.filter((o) => o.createdDate === iso).length;
     const delivered = orders.filter((o) => o.deliveredDate === iso).length;
     return { day: label, total, delivered };
@@ -4991,6 +4999,19 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     () => [...(data.fuel_prices || [])].sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || "")),
     [data.fuel_prices]
   );
+  // Keeps the selection in sync with what actually still exists — deleteItem lives at the top
+  // level and has no way to reach into this component's local selection state directly, so
+  // instead of trying to clear it manually after every delete path (bulk delete, single-row
+  // delete, revert, etc.), this just prunes anything no longer present whenever the
+  // underlying data changes.
+  useEffect(() => {
+    setSelectedFuelPriceIds((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(fuelPrices.map((p) => p.id));
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [fuelPrices]);
 
   return (
     <div className="space-y-5">
@@ -8116,7 +8137,7 @@ function LogistixERP() {
     try {
       const buffer = await buildTemplateWorkbook(data);
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayISO();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = `Transportation-${today}.xlsx`;
