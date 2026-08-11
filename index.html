@@ -329,6 +329,12 @@ function createLiteClient(url, anonKey) {
             if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
             return { error: null };
           },
+          async in(col, vals) {
+            const list = (vals || []).map((v) => encodeURIComponent(v)).join(",");
+            const res = await fetch(`${REST}/${table}?${col}=in.(${list})`, { method: "DELETE", headers: await headersFor({ Prefer: "return=minimal" }) });
+            if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
+            return { error: null };
+          },
         };
       },
     };
