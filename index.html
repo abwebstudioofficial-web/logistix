@@ -5221,13 +5221,18 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                     return (
                       <React.Fragment key={g.key || "no-date"}>
                         <tr className="bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer border-b border-slate-800" onClick={() => toggleSwapDate(g.key)}>
-                          <td colSpan={7} className="px-4 py-2.5">
+                          <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap border-l-2 border-l-blue-600/30">
                             <div className="flex items-center gap-2">
                               {isCollapsed ? <ChevronRight size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                               <span className="text-white font-semibold text-sm">{dateLabel}</span>
-                              <span className="text-slate-500 text-xs">{g.items.length} swap{g.items.length !== 1 ? "s" : ""} · {groupQty.toLocaleString()} L · {formatPKR(groupTotal)}</span>
                             </div>
                           </td>
+                          <td className="px-4 py-2.5 text-slate-500 text-xs whitespace-nowrap">{g.items.length} swap{g.items.length !== 1 ? "s" : ""}</td>
+                          <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap">—</td>
+                          <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap">—</td>
+                          <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap">{groupQty.toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-white font-medium whitespace-nowrap">{formatPKR(groupTotal)}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap"></td>
                         </tr>
                         {!isCollapsed && g.items.map((s) => (
                           <SwapRow key={s.id} s={s} dateLabel={s.swapDate ? fmtDate(s.swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
@@ -5343,16 +5348,26 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                 const isCollapsed = collapsedMonths.has(g.key);
                 const groupFreight = g.items.reduce((s, r) => s + r.freightAmount, 0);
                 const groupReceivable = g.items.reduce((s, r) => s + (r.receivablePKR || 0), 0);
+                const groupSwappedPKR = g.items.reduce((s, r) => s + (r.swappedPKR || 0), 0);
+                const groupSwappedLitres = g.items.reduce((s, r) => s + (r.swappedLitres || 0), 0);
+                const groupReceivableLitres = g.items.reduce((s, r) => s + (r.receivableLitres || 0), 0);
                 return (
                   <React.Fragment key={g.key || "no-month"}>
                     <tr className="bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer border-b border-slate-800" onClick={() => toggleMonth(g.key)}>
-                      <td colSpan={7} className="px-4 py-2.5">
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-normal border-l-2 border-l-blue-600/30" style={{ maxWidth: 90 }}>
                         <div className="flex items-center gap-2">
                           {isCollapsed ? <ChevronRight size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                           <span className="text-white font-semibold text-sm">{g.key || "No month"}</span>
-                          <span className="text-slate-500 text-xs">{g.items.length} shipment{g.items.length !== 1 ? "s" : ""} · Freight {formatPKR(groupFreight)} · Receivable {formatPKR(groupReceivable)}</span>
                         </div>
                       </td>
+                      <td className="px-4 py-2.5 text-slate-500 text-xs whitespace-normal" style={{ maxWidth: 90 }}>{g.items.length} shipment{g.items.length !== 1 ? "s" : ""}</td>
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{formatPKR(groupFreight)}</td>
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupSwappedPKR ? formatPKR(groupSwappedPKR) : "—"}</td>
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupSwappedLitres ? `${groupSwappedLitres.toLocaleString()} L` : "—"}</td>
+                      <td className="px-4 py-2.5 whitespace-normal" style={{ maxWidth: 100 }}>
+                        <span className={cx("font-medium", groupReceivable < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(groupReceivable)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupReceivableLitres ? `${groupReceivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>
                     </tr>
                     {!isCollapsed && g.items.map((r) => (
                       <tr key={r.id} className={trCls}>
@@ -5406,13 +5421,16 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                 return (
                   <React.Fragment key={g.key || "no-month"}>
                     <tr className="bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer border-b border-slate-800" onClick={() => toggleMonth(g.key)}>
-                      <td colSpan={5} className="px-4 py-2.5">
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap border-l-2 border-l-blue-600/30">
                         <div className="flex items-center gap-2">
                           {isCollapsed ? <ChevronRight size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
                           <span className="text-white font-semibold text-sm">{g.key || "No month"}</span>
-                          <span className="text-slate-500 text-xs">{g.items.length} shipment{g.items.length !== 1 ? "s" : ""} · Freight {formatPKR(groupFreight)} · Net {formatPKR(groupNet)}</span>
                         </div>
                       </td>
+                      <td className="px-4 py-2.5 text-slate-500 text-xs whitespace-nowrap">{g.items.length} shipment{g.items.length !== 1 ? "s" : ""}</td>
+                      <td className="px-4 py-2.5 text-white font-medium whitespace-nowrap">{formatPKR(groupFuel)}</td>
+                      <td className="px-4 py-2.5 text-slate-300 whitespace-nowrap">{formatPKR(groupFreight)}</td>
+                      <td className={cx("px-4 py-2.5 font-medium whitespace-nowrap", groupNet < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(groupNet)}</td>
                     </tr>
                     {!isCollapsed && g.items.map((r) => (
                       <tr key={r.id} className={trCls}>
