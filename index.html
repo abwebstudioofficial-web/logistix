@@ -4840,6 +4840,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
 
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
+  const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
   const allContainers = useMemo(() => customerOrderContainers(data, customer.id), [data.orders, customer.id]);
   const tabContainers = useMemo(
     () => allContainers.filter((c) => (tab === "export" ? c.shipmentType === "Export" : c.shipmentType !== "Export")),
@@ -5068,7 +5069,19 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             onExport={onFuelPriceExport}
             onRevert={onFuelPriceRevert}
           />
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            {selectedFuelPriceIds.size > 0 ? (
+              <div className="flex items-center gap-3">
+                <span className="text-slate-400 text-sm">{selectedFuelPriceIds.size} selected</span>
+                <button className={btnSecondary} onClick={() => setSelectedFuelPriceIds(new Set())}>Clear</button>
+                <button
+                  className={btnDanger}
+                  onClick={() => askDelete({ entity: "fuel_prices", id: Array.from(selectedFuelPriceIds), label: "fuel price entry" })}
+                >
+                  <Trash2 size={15} /> Delete Selected ({selectedFuelPriceIds.size})
+                </button>
+              </div>
+            ) : <div />}
             <button className={btnPrimary} onClick={() => openModal({ type: "fuel_price", mode: "add", item: null })}>
               <Plus size={16} /> Add Fuel Price
             </button>
@@ -5084,6 +5097,13 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <table className="w-full text-sm">
                 <thead className={theadCls}>
                   <tr>
+                    <th className={thCls} style={{ width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedFuelPriceIds.size > 0 && selectedFuelPriceIds.size === fuelPrices.length}
+                        onChange={(e) => setSelectedFuelPriceIds(e.target.checked ? new Set(fuelPrices.map((p) => p.id)) : new Set())}
+                      />
+                    </th>
                     <th className={thCls}>Effective Date</th>
                     <th className={thCls}>Price per Liter (PKR)</th>
                     <th className={thCls}></th>
@@ -5092,6 +5112,17 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                 <tbody>
                   {fuelPrices.map((p) => (
                     <tr key={p.id} className={trCls}>
+                      <td className={tdCls}>
+                        <input
+                          type="checkbox"
+                          checked={selectedFuelPriceIds.has(p.id)}
+                          onChange={(e) => setSelectedFuelPriceIds((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(p.id); else next.delete(p.id);
+                            return next;
+                          })}
+                        />
+                      </td>
                       <td className={tdCls}>{p.effectiveDate ? fmtDate(p.effectiveDate) : "—"}</td>
                       <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(p.pricePerLiter)}</td>
                       <td className={tdCls}>
@@ -7409,10 +7440,12 @@ function LogistixERP() {
     setModal(null);
   }
 
-  async function deleteItem(entity, id) {
-    const { error } = await supabaseClient.from(entity).delete().eq("id", id);
+  async function deleteItem(entity, idOrIds) {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    const { error } = await supabaseClient.from(entity).delete().in("id", ids);
     if (error) { window.alert("Couldn't delete: " + error.message); return; }
-    setDataState((prev) => ({ ...prev, [entity]: prev[entity].filter((x) => x.id !== id) }));
+    const idSet = new Set(ids);
+    setDataState((prev) => ({ ...prev, [entity]: prev[entity].filter((x) => !idSet.has(x.id)) }));
     setConfirm(null);
   }
 
@@ -7772,6 +7805,26 @@ function LogistixERP() {
         if (cfg.forceFields) coerced = coerced.map((r) => ({ ...r, ...cfg.forceFields }));
 
         const existingList = data[cfg.table] || [];
+        if (viewKey === "fuel_prices") {
+          // A fuel price should be unique per effective date — if the file's ID didn't round-trip
+          // correctly (e.g. a hidden column got stripped when the file was edited), every row would
+          // otherwise get a fresh generated ID and never match its existing record, piling up
+          // duplicates on every re-attach instead of updating the one entry for that date.
+          const existingByDate = new Map(existingList.map((r) => [r.effectiveDate, r]));
+          coerced = coerced.map((row) => {
+            const existingHasThisId = existingList.some((r) => r.id === row.id);
+            if (existingHasThisId) return row; // ID already correctly matched a real record
+            const dateMatch = existingByDate.get(row.effectiveDate);
+            return dateMatch ? { ...row, id: dateMatch.id } : row;
+          });
+          // Also de-duplicate within the file itself — if two rows in the same upload share a
+          // date (like the duplicate 02/01/2026 / 01/01/2026 / 31/12/2025 rows reported), keep
+          // only the last one for that date rather than writing both.
+          const seenDates = new Map();
+          coerced.forEach((row) => { if (row.effectiveDate) seenDates.set(row.effectiveDate, row); });
+          coerced = Array.from(seenDates.values());
+        }
+
         const existingById = new Map(existingList.map((r) => [r.id, r]));
         const priorMeta = tabExcel[viewKey] || {};
         const priorEntries = priorMeta.snapshot || [];
@@ -8206,7 +8259,7 @@ function LogistixERP() {
       {modal && <EntityModal modal={modal} data={data} onClose={() => setModal(null)} onSave={saveItem} role={viewSession.role} />}
       {confirm && (
         <ConfirmModal
-          title={`Delete this ${confirm.label}?`}
+          title={Array.isArray(confirm.id) ? `Delete ${confirm.id.length} ${confirm.label}${confirm.id.length === 1 ? "" : "s"}?` : `Delete this ${confirm.label}?`}
           message="This action can't be undone."
           onCancel={() => setConfirm(null)}
           onConfirm={() => deleteItem(confirm.entity, confirm.id)}
