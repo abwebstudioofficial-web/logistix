@@ -1347,8 +1347,9 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
   zip.file("xl/styles.xml", XLSX_STYLES_XML);
 
   sheets.forEach((s, sheetIdx) => {
+    const hiddenColSet = new Set(s.hiddenCols || []);
     const colsXml = (s.colWidths || [])
-      .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`)
+      .map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"${hiddenColSet.has(i + 1) ? ' hidden="1"' : ""}/>`)
       .join("\n");
     const rowsXml = s.rows
       .map((values, i) => {
@@ -5355,7 +5356,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                     </tr>
                     {!isCollapsed && g.items.map((r) => (
                       <tr key={r.id} className={trCls}>
-                        <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{r.dispatchDate}</td>
+                        <td className="px-4 py-3 text-slate-300 whitespace-normal border-l-2 border-l-blue-600/30" style={{ maxWidth: 90 }}>{r.dispatchDate}</td>
                         <td className="px-4 py-3 whitespace-normal font-mono text-white font-medium" style={{ maxWidth: 90 }}>{r.vehiclePlate}</td>
                         <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{formatPKR(r.freightAmount)}</td>
                         <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedPKR ? formatPKR(r.swappedPKR) : "—"}</td>
@@ -5415,7 +5416,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                     </tr>
                     {!isCollapsed && g.items.map((r) => (
                       <tr key={r.id} className={trCls}>
-                        <td className={tdCls}>{r.dispatchDate}</td>
+                        <td className={cx(tdCls, "border-l-2 border-l-blue-600/30")}>{r.dispatchDate}</td>
                         <td className={cx(tdCls, "font-mono text-white font-medium")}>{r.vehiclePlate}</td>
                         <td className={tdCls}>
                           {r.fuelAmount === null
@@ -5495,7 +5496,7 @@ const SWAP_DEPARTMENTS = ["Domestic + Import", "Export"];
 function SwapRow({ s, dateLabel, openModal, askDelete }) {
   return (
     <tr className={trCls}>
-      <td className={tdCls}>{dateLabel}</td>
+      <td className={cx(tdCls, "border-l-2 border-l-blue-600/30")}>{dateLabel}</td>
       <td className={tdCls}>{s.department || "—"}</td>
       <td className={tdCls}>{s.swappedBy || "—"}</td>
       <td className={cx(tdCls, "font-mono")}>{s.cardNumber || "—"}</td>
@@ -8331,7 +8332,7 @@ function LogistixERP() {
     colWidths[0] = 20; // Swap ID
     buildXlsxBuffer([{
       name: "Fuel Card Swaps", rows: sheetRows, headerRowIndex: 1, colWidths, freezeRows: 1,
-      headerOverrides, contentDefaultCols: contentDefault,
+      headerOverrides, contentDefaultCols: contentDefault, hiddenCols: [1], // Swap ID — needed for Attach to match rows back correctly, not meant to be seen
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
