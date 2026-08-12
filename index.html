@@ -890,6 +890,26 @@ function fuelPriceOnDate(fuelPrices, dateISO) {
   return best ? Number(best.pricePerLiter) || 0 : 0;
 }
 
+// Applies the Fuel Price tab's period mode to resolve which fuel price actually applies to a
+// given date, used by the Consumption/Export calculations instead of a straight per-date lookup.
+// - daily: unchanged, the price on file as of that exact date.
+// - fortnightly: dates in the 1st-15th use the price as of the 1st of that month; dates in the
+//   16th-end use the price as of the 16th.
+// - monthly: every date in the month uses the price as of the 1st of that month.
+function resolveEffectiveFuelPrice(fuelPrices, dateISO, mode) {
+  if (!dateISO) return 0;
+  if (!mode || mode === "daily") return fuelPriceOnDate(fuelPrices, dateISO);
+  const day = Number(dateISO.slice(8, 10));
+  const yearMonth = dateISO.slice(0, 7);
+  if (mode === "monthly") {
+    return fuelPriceOnDate(fuelPrices, `${yearMonth}-01`);
+  }
+  if (mode === "fortnightly") {
+    return day <= 15 ? fuelPriceOnDate(fuelPrices, `${yearMonth}-01`) : fuelPriceOnDate(fuelPrices, `${yearMonth}-16`);
+  }
+  return fuelPriceOnDate(fuelPrices, dateISO);
+}
+
 // Finds the contract rate matching a shipment's customer, Loading Point, Destination,
 // Vehicle Size, and Movement Through, across ALL customers at once — used by exports that
 // cover multiple customers together. Same match criteria (and same Axle Load Category
@@ -4904,6 +4924,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
 
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
+  const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnight_first | fortnight_second | monthly
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
   const [consumptionSortCol, setConsumptionSortCol] = useState("date");
   const [consumptionSortDir, setConsumptionSortDir] = useState("desc");
@@ -4964,7 +4985,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       .map((c) => {
         const d = new Date(c.dispatchAt);
         const dispatchDateISO = toLocalDateStr(d);
-        const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
+        const price = resolveEffectiveFuelPrice(data.fuel_prices, dispatchDateISO, fuelPriceMode);
         const manualFreightAmount = xnum(c.freightAmount);
 
         if (tab !== "domestic_import") {
@@ -5062,7 +5083,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       return consumptionSortDir === "desc" ? -cmp : cmp;
     });
     return sorted;
-  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps, consumptionSortCol, consumptionSortDir]);
+  }, [tabContainers, data.fuel_prices, tab, customerRates, swaps, consumptionSortCol, consumptionSortDir, fuelPriceMode]);
   const grandFuel = rows.reduce((s, r) => s + (r.fuelAmount || 0), 0);
   const grandFreight = rows.reduce((s, r) => s + r.freightAmount, 0);
   const grandNet = grandFreight - grandFuel;
@@ -5299,6 +5320,14 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       ) : tab === "fuel_price" ? (
         <div className="space-y-4">
           <p className="text-slate-500 text-xs">Fuel price is company-wide — set here, it applies when calculating Fuel Amount for every customer's shipments, not just {customer.name}.</p>
+          <Field label="Fuel Price Period">
+            <select className={inputCls} style={{ width: 280 }} value={fuelPriceMode} onChange={(e) => setFuelPriceMode(e.target.value)}>
+              <option value="daily">Daily</option>
+              <option value="fortnightly">Fortnightly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            <p className="text-slate-500 text-xs mt-1">Doesn't change this list — controls which price the Import & Domestic and Export Consumption Reports use for their calculations. Fortnightly/Monthly use the price on file as of the 1st (or 16th) of the month for the whole period.</p>
+          </Field>
           <TabExcelBar
             label="Fuel Prices"
             meta={fuelPriceExcel}
