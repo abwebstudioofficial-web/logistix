@@ -2521,13 +2521,13 @@ function Modal({ title, onClose, children, wide, size }) {
   );
 }
 
-function ConfirmModal({ title, message, onConfirm, onCancel }) {
+function ConfirmModal({ title, message, confirmLabel, danger = true, onConfirm, onCancel }) {
   return (
     <Modal title={title} onClose={onCancel}>
       <p className="text-slate-400 text-sm mb-5">{message}</p>
       <div className="flex justify-end gap-2">
         <button className={btnSecondary} onClick={onCancel}>Cancel</button>
-        <button className={btnDanger} onClick={onConfirm}>Delete</button>
+        <button className={danger ? btnDanger : btnPrimary} onClick={onConfirm}>{confirmLabel || "Delete"}</button>
       </div>
     </Modal>
   );
@@ -5243,6 +5243,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               onClick={() => askDelete({
                 title: "Recalculate all swap amounts?",
                 message: `This recomputes every existing entry's Amount (PKR) using the "${fuelPriceMode === "daily" ? "Daily" : fuelPriceMode === "fortnightly" ? "Fortnightly" : "Monthly"}" price currently selected on the Fuel Price tab. You can undo this afterward with Revert.`,
+                confirmLabel: "Yes", danger: false,
                 onConfirmAction: () => onSwapRecalculate(customer.id, fuelPriceMode),
               })}
             >
@@ -8762,6 +8763,8 @@ function LogistixERP() {
         <ConfirmModal
           title={confirm.title || (Array.isArray(confirm.id) ? `Delete ${confirm.id.length} ${confirm.label}${confirm.id.length === 1 ? "" : "s"}?` : `Delete this ${confirm.label}?`)}
           message={confirm.message || "This action can't be undone."}
+          confirmLabel={confirm.confirmLabel}
+          danger={confirm.danger !== undefined ? confirm.danger : true}
           onCancel={() => setConfirm(null)}
           onConfirm={() => confirm.onConfirmAction ? confirm.onConfirmAction() : deleteItem(confirm.entity, confirm.id)}
         />
