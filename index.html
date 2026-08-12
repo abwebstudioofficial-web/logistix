@@ -4924,7 +4924,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
 
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
-  const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnight_first | fortnight_second | monthly
+  const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnightly | monthly
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
   const [consumptionSortCol, setConsumptionSortCol] = useState("date");
   const [consumptionSortDir, setConsumptionSortDir] = useState("desc");
@@ -5258,7 +5258,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                 {cardNumberOptions.map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
-            <button className={btnPrimary} onClick={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}>
+            <button className={btnPrimary} onClick={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id }, meta: { fuelPriceMode } })}>
               <Plus size={16} /> Log Swap
             </button>
           </div>
@@ -5266,7 +5266,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             <EmptyState
               icon={Fuel} text="No fuel card swaps logged yet for this customer."
               actionLabel="Log first swap"
-              onAction={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id } })}
+              onAction={() => openModal({ type: "fuel_card_swap", mode: "add", item: null, prefill: { customerId: customer.id }, meta: { fuelPriceMode } })}
             />
           ) : filteredSwaps.length === 0 ? (
             <EmptyState icon={Fuel} text="No swaps match these filters." />
@@ -5307,7 +5307,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                           <td className={tdCls}></td>
                         </tr>
                         {!isCollapsed && g.items.map((s) => (
-                          <SwapRow key={s.id} s={s} dateLabel={s.swapDate ? fmtDate(s.swapDate) : "—"} openModal={openModal} askDelete={askDelete} />
+                          <SwapRow key={s.id} s={s} dateLabel={s.swapDate ? fmtDate(s.swapDate) : "—"} openModal={openModal} askDelete={askDelete} fuelPriceMode={fuelPriceMode} />
                         ))}
                       </React.Fragment>
                     );
@@ -5591,7 +5591,7 @@ function FuelForm({ initial, prefill, vehicles, onSave, onCancel }) {
 const SWAP_DEPARTMENTS = ["Domestic + Import", "Export"];
 
 // A single swap entry, rendered as a normal table row.
-function SwapRow({ s, dateLabel, openModal, askDelete }) {
+function SwapRow({ s, dateLabel, openModal, askDelete, fuelPriceMode }) {
   return (
     <tr className={trCls}>
       <td className={cx(tdCls, "border-l-2 border-l-blue-600/30")}>{dateLabel}</td>
@@ -5602,7 +5602,7 @@ function SwapRow({ s, dateLabel, openModal, askDelete }) {
       <td className={cx(tdCls, "text-white font-medium")}>{s.amountPkr || s.amountPkr === 0 ? formatPKR(s.amountPkr) : "—"}</td>
       <td className={tdCls}>
         <div className="flex items-center gap-1 justify-end">
-          <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s })}><Pencil size={15} /></button>
+          <button className={iconBtn} onClick={() => openModal({ type: "fuel_card_swap", mode: "edit", item: s, meta: { fuelPriceMode } })}><Pencil size={15} /></button>
           <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_card_swaps", id: s.id, label: "fuel card swap entry" })}><Trash2 size={15} /></button>
         </div>
       </td>
@@ -5610,7 +5610,7 @@ function SwapRow({ s, dateLabel, openModal, askDelete }) {
   );
 }
 
-function FuelCardSwapForm({ initial, prefill, transporters, fuelPrices, onSave, onCancel }) {
+function FuelCardSwapForm({ initial, prefill, transporters, fuelPrices, fuelPriceMode, onSave, onCancel }) {
   const isEdit = !!initial;
   const f = initial || prefill || {};
   const [swapDate, setSwapDate] = useState(f.swapDate || todayISO());
@@ -5619,9 +5619,10 @@ function FuelCardSwapForm({ initial, prefill, transporters, fuelPrices, onSave, 
   const [cardNumber, setCardNumber] = useState(f.cardNumber || "");
   const [qtyLtr, setQtyLtr] = useState(f.qtyLtr ?? "");
 
-  // Amount is no longer typed in directly — it's Qty (Ltr) x whichever fuel price was on
-  // file for the swap date, same lookup used for the per-shipment Fuel Amount calculation.
-  const priceOnDate = fuelPriceOnDate(fuelPrices, swapDate);
+  // Amount is no longer typed in directly — it's Qty (Ltr) x whichever fuel price applies to
+  // the swap date under the Fuel Price tab's selected period (Daily/Fortnightly/Monthly), same
+  // resolution used for the per-shipment Fuel Amount calculation.
+  const priceOnDate = resolveEffectiveFuelPrice(fuelPrices, swapDate, fuelPriceMode);
   const computedAmount = priceOnDate && qtyLtr !== "" ? Number(qtyLtr) * priceOnDate : null;
 
   function submit(e) {
@@ -7121,7 +7122,7 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
       {type === "contract" && <ContractForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("contracts", i)} onCancel={onClose} />}
       {type === "contract_group" && <ContractGroupForm initial={mode === "edit" ? item : null} prefill={modal.prefill} onSave={(i) => onSave("contract_groups", i)} onCancel={onClose} />}
       {type === "fuel" && <FuelForm initial={mode === "edit" ? item : null} prefill={modal.prefill} vehicles={data.vehicles} onSave={(i) => onSave("fuel_allocations", i)} onCancel={onClose} />}
-      {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} transporters={data.transporters} fuelPrices={data.fuel_prices} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
+      {type === "fuel_card_swap" && <FuelCardSwapForm initial={mode === "edit" ? item : null} prefill={modal.prefill} transporters={data.transporters} fuelPrices={data.fuel_prices} fuelPriceMode={modal.meta ? modal.meta.fuelPriceMode : "daily"} onSave={(i) => onSave("fuel_card_swaps", i)} onCancel={onClose} />}
       {type === "fuel_price" && <FuelPriceForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("fuel_prices", i)} onCancel={onClose} />}
     </Modal>
   );
