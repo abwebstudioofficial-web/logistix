@@ -4673,9 +4673,6 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
         onExport={() => onContractRatesExport(customer.id, group ? group.id : "", title)}
         onRevert={() => onContractRatesRevert(group ? group.id : "")}
       />
-      {excelMeta && excelMeta.message && (
-        <p className={cx("text-xs", excelMeta.message.ok ? "text-emerald-400" : "text-red-400")}>{excelMeta.message.text}</p>
-      )}
       <div className="flex gap-3 flex-wrap items-start">
         <Field label="Search">
           <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
@@ -5250,9 +5247,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <RefreshCw size={15} /> Recalculate Amounts
             </button>
           </div>
-          {(swapExcel || {})[customer.id] && (swapExcel || {})[customer.id].message && (
-            <p className={cx("text-xs", (swapExcel || {})[customer.id].message.ok ? "text-emerald-400" : "text-red-400")}>{(swapExcel || {})[customer.id].message.text}</p>
-          )}
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2 flex-wrap">
               <select className={inputCls} style={{ width: 180 }} value={swapMonthFilter} onChange={(e) => setSwapMonthFilter(e.target.value)}>
