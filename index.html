@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4950,8 +4951,17 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
 
   // One row per dispatched shipment — Month/Dispatch Date only make sense once a container has actually been dispatched.
   const rows = useMemo(() => {
-    const mapped = tabContainers
+    // A swap entry belongs to a DATE, not to any specific shipment — if several shipments
+    // dispatch on the same date, the swap total must only be counted once, not repeated in
+    // full on every one of them (that would both show the wrong number per row and subtract
+    // the same swap amount from Receivable multiple times). Credit it to whichever shipment
+    // dispatched earliest that day; every other shipment on that date shows no swap at all.
+    const claimedSwapDates = new Set();
+    const containersInDispatchOrder = [...tabContainers]
       .filter((c) => !!c.dispatchAt)
+      .sort((a, b) => new Date(a.dispatchAt) - new Date(b.dispatchAt));
+
+    const mapped = containersInDispatchOrder
       .map((c) => {
         const d = new Date(c.dispatchAt);
         const dispatchDateISO = toLocalDateStr(d);
@@ -4989,9 +4999,15 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         const receivablePKR = (impliedLitres !== null && price) ? impliedLitres * price : null;
         const receivableLitres = impliedLitres;
 
-        const swapsOnDate = swaps.filter((s) => s.swapDate === dispatchDateISO);
-        const swappedLitres = swapsOnDate.reduce((sum, s) => sum + (xnum(s.qtyLtr) || 0), 0);
-        const swappedPKR = swapsOnDate.reduce((sum, s) => sum + (xnum(s.amountPkr) || 0), 0);
+        let swappedLitres = 0, swappedPKR = 0;
+        if (!claimedSwapDates.has(dispatchDateISO)) {
+          const swapsOnDate = swaps.filter((s) => s.swapDate === dispatchDateISO);
+          if (swapsOnDate.length > 0) {
+            swappedLitres = swapsOnDate.reduce((sum, s) => sum + (xnum(s.qtyLtr) || 0), 0);
+            swappedPKR = swapsOnDate.reduce((sum, s) => sum + (xnum(s.amountPkr) || 0), 0);
+            claimedSwapDates.add(dispatchDateISO);
+          }
+        }
 
         return {
           ...base,
