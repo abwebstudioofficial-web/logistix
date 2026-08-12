@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5012,8 +5011,12 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         return {
           ...base,
           matchedRate, fuelBaseRate, fuelComponentAmount, priceOnDate: price,
-          receivablePKR: receivablePKR !== null ? receivablePKR - swappedPKR : null,
-          receivableLitres: receivableLitres !== null ? receivableLitres - swappedLitres : null,
+          // A swap must never be silently lost. If there's no contract-based Receivable to
+          // subtract it from (receivablePKR/Litres is null), but there IS a swapped amount,
+          // that swap still counts — it becomes a negative Receivable (money owed back),
+          // rather than vanishing (null gets treated as 0 in group/grand totals).
+          receivablePKR: receivablePKR !== null ? receivablePKR - swappedPKR : (swappedPKR > 0 ? -swappedPKR : null),
+          receivableLitres: receivableLitres !== null ? receivableLitres - swappedLitres : (swappedLitres > 0 ? -swappedLitres : null),
           swappedLitres, swappedPKR,
         };
       });
