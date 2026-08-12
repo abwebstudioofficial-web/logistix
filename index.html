@@ -96,6 +96,9 @@ function ChevronUp({ size = 16, className = "" }) {
 function ChevronDown({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="6 9 12 15 18 9"/></svg>;
 }
+function RefreshCw({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>;
+}
 function Upload({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 19V5"/><polyline points="5 12 12 5 19 12"/><line x1="5" y1="21" x2="19" y2="21"/></svg>;
 }
@@ -4869,7 +4872,7 @@ function groupFuelByVehicle(containers, fuelPrices) {
   return Array.from(map.values()).sort((a, b) => b.fuelTotal - a.fuelTotal || b.trips - a.trips);
 }
 
-function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert }) {
+function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
@@ -4880,7 +4883,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
         <CustomerFuelDetail
           customer={cust} data={data} openModal={openModal} askDelete={askDelete} onBack={() => setSelectedCustomerId(null)}
           fuelPriceExcel={fuelPriceExcel} onFuelPriceAttach={onFuelPriceAttach} onFuelPriceExport={onFuelPriceExport} onFuelPriceRevert={onFuelPriceRevert}
-          swapExcel={swapExcel} onSwapAttach={onSwapAttach} onSwapExport={onSwapExport} onSwapRevert={onSwapRevert}
+          swapExcel={swapExcel} onSwapAttach={onSwapAttach} onSwapExport={onSwapExport} onSwapRevert={onSwapRevert} onSwapRecalculate={onSwapRecalculate}
         />
       );
     }
@@ -4922,7 +4925,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
   );
 }
 
-function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert }) {
+function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnightly | monthly
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
@@ -5227,13 +5230,25 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
 
       {tab === "swap_report" ? (
         <div className="space-y-4">
-          <TabExcelBar
-            label="Fuel Card Swaps"
-            meta={(swapExcel || {})[customer.id]}
-            onAttachFile={(file) => onSwapAttach(customer.id, file)}
-            onExport={() => onSwapExport(customer.id, customer.name)}
-            onRevert={() => onSwapRevert(customer.id)}
-          />
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <TabExcelBar
+              label="Fuel Card Swaps"
+              meta={(swapExcel || {})[customer.id]}
+              onAttachFile={(file) => onSwapAttach(customer.id, file)}
+              onExport={() => onSwapExport(customer.id, customer.name)}
+              onRevert={() => onSwapRevert(customer.id)}
+            />
+            <button
+              className={btnSecondary}
+              onClick={() => askDelete({
+                title: "Recalculate all swap amounts?",
+                message: `This recomputes every existing entry's Amount (PKR) using the "${fuelPriceMode === "daily" ? "Daily" : fuelPriceMode === "fortnightly" ? "Fortnightly" : "Monthly"}" price currently selected on the Fuel Price tab. You can undo this afterward with Revert.`,
+                onConfirmAction: () => onSwapRecalculate(customer.id, fuelPriceMode),
+              })}
+            >
+              <RefreshCw size={15} /> Recalculate Amounts
+            </button>
+          </div>
           {(swapExcel || {})[customer.id] && (swapExcel || {})[customer.id].message && (
             <p className={cx("text-xs", (swapExcel || {})[customer.id].message.ok ? "text-emerald-400" : "text-red-400")}>{(swapExcel || {})[customer.id].message.text}</p>
           )}
@@ -8535,6 +8550,51 @@ function LogistixERP() {
     }
   }
 
+  // Recomputes every existing swap's Amount (PKR) using the Fuel Price tab's currently
+  // selected period mode, without opening and re-saving each one individually. Reuses the
+  // same snapshot slot as Attach, so the existing Revert button can undo this too.
+  async function handleSwapRecalculate(customerId, fuelPriceMode) {
+    setConfirm(null);
+    setSwapExcel((prev) => ({ ...prev, [customerId]: { ...(prev[customerId] || {}), busy: true, message: null } }));
+    try {
+      const existingList = data.fuel_card_swaps || [];
+      const customerSwaps = existingList.filter((s) => s.customerId === customerId);
+      const priorMeta = swapExcel[customerId] || {};
+      const priorEntries = priorMeta.snapshot || [];
+      const alreadyTracked = new Set(priorEntries.map((en) => en.id));
+      const tableSnapshot = [...priorEntries];
+      let list = [...existingList];
+      const toWrite = [];
+      let changedCount = 0, unchangedCount = 0;
+
+      customerSwaps.forEach((s) => {
+        const newPrice = resolveEffectiveFuelPrice(data.fuel_prices, s.swapDate, fuelPriceMode);
+        const newAmount = newPrice && s.qtyLtr !== "" && s.qtyLtr !== null && s.qtyLtr !== undefined ? Number(s.qtyLtr) * newPrice : s.amountPkr;
+        if (Math.abs((xnum(newAmount) || 0) - (xnum(s.amountPkr) || 0)) < 0.005) { unchangedCount++; return; }
+        if (!alreadyTracked.has(s.id)) tableSnapshot.push({ id: s.id, prev: s });
+        const updated = { ...s, amountPkr: newAmount };
+        const idx = list.findIndex((r) => r.id === s.id);
+        if (idx >= 0) list[idx] = updated;
+        toWrite.push(updated);
+        changedCount++;
+      });
+
+      const { error } = toWrite.length ? await supabaseClient.from("fuel_card_swaps").upsert(toWrite.map(toDbRow)) : { error: null };
+      setDataState((prevData) => ({ ...prevData, fuel_card_swaps: list }));
+      setSwapExcel((prev) => ({
+        ...prev,
+        [customerId]: {
+          attached: true, filename: prev[customerId] && prev[customerId].filename, snapshot: tableSnapshot, busy: false,
+          message: error
+            ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
+            : { ok: true, text: `Recalculated ${changedCount} entr${changedCount === 1 ? "y" : "ies"}${unchangedCount > 0 ? `, ${unchangedCount} already matched` : ""}. Use Revert to undo.` },
+        },
+      }));
+    } catch (err) {
+      setSwapExcel((prev) => ({ ...prev, [customerId]: { ...(prev[customerId] || {}), busy: false, message: { ok: false, text: "Couldn't recalculate: " + err.message } } }));
+    }
+  }
+
   function handleDownloadExcel() {
     const wb = buildWorkbook(data);
     const name = excelMeta.filename ? excelMeta.filename.replace(/\.xlsx?$/i, "") + "-updated.xlsx" : "logistix-data.xlsx";
@@ -8680,7 +8740,7 @@ function LogistixERP() {
                   onFuelPriceAttach={(file) => handleTabAttachFile("fuel_prices", file)}
                   onFuelPriceExport={() => handleTabExport("fuel_prices")}
                   onFuelPriceRevert={() => handleTabRevert("fuel_prices")}
-                  swapExcel={swapExcel} onSwapAttach={handleSwapAttach} onSwapExport={handleSwapExport} onSwapRevert={handleSwapRevert}
+                  swapExcel={swapExcel} onSwapAttach={handleSwapAttach} onSwapExport={handleSwapExport} onSwapRevert={handleSwapRevert} onSwapRecalculate={handleSwapRecalculate}
                 />
               )}
               {view === "customers" && <CustomersView data={data} openModal={setModal} askDelete={setConfirm} />}
@@ -8700,10 +8760,10 @@ function LogistixERP() {
       {modal && <EntityModal modal={modal} data={data} onClose={() => setModal(null)} onSave={saveItem} role={viewSession.role} />}
       {confirm && (
         <ConfirmModal
-          title={Array.isArray(confirm.id) ? `Delete ${confirm.id.length} ${confirm.label}${confirm.id.length === 1 ? "" : "s"}?` : `Delete this ${confirm.label}?`}
-          message="This action can't be undone."
+          title={confirm.title || (Array.isArray(confirm.id) ? `Delete ${confirm.id.length} ${confirm.label}${confirm.id.length === 1 ? "" : "s"}?` : `Delete this ${confirm.label}?`)}
+          message={confirm.message || "This action can't be undone."}
           onCancel={() => setConfirm(null)}
-          onConfirm={() => deleteItem(confirm.entity, confirm.id)}
+          onConfirm={() => confirm.onConfirmAction ? confirm.onConfirmAction() : deleteItem(confirm.entity, confirm.id)}
         />
       )}
     </div>
