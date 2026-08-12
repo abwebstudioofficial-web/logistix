@@ -4841,7 +4841,7 @@ function groupFuelByVehicle(containers, fuelPrices) {
     if (!map.has(key)) map.set(key, { plate: plateRaw || "Unassigned", drivers: new Set(), trips: 0, fuelTotal: 0, freightTotal: 0 });
     const g = map.get(key);
     g.trips += 1;
-    const price = fuelPriceOnDate(fuelPrices, c.dispatchAt ? c.dispatchAt.slice(0, 10) : "");
+    const price = fuelPriceOnDate(fuelPrices, c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
     g.fuelTotal += computeFuelAmount(c.freightAmount, price) || 0;
     g.freightTotal += xnum(c.freightAmount);
     if (c.driverName) g.drivers.add(c.driverName);
@@ -4954,7 +4954,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       .filter((c) => !!c.dispatchAt)
       .map((c) => {
         const d = new Date(c.dispatchAt);
-        const dispatchDateISO = c.dispatchAt.slice(0, 10);
+        const dispatchDateISO = toLocalDateStr(d);
         const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
         const manualFreightAmount = xnum(c.freightAmount);
 
@@ -5008,7 +5008,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
     // to calculate them from), shown as "No dispatch" rather than 0 or blank.
     let withOrphans = mapped;
     if (tab === "domestic_import") {
-      const coveredDates = new Set(tabContainers.filter((c) => !!c.dispatchAt).map((c) => c.dispatchAt.slice(0, 10)));
+      const coveredDates = new Set(tabContainers.filter((c) => !!c.dispatchAt).map((c) => toLocalDateStr(new Date(c.dispatchAt))));
       const swapDates = Array.from(new Set(swaps.map((s) => s.swapDate).filter(Boolean)));
       const orphanRows = swapDates
         .filter((sd) => !coveredDates.has(sd))
