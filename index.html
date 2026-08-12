@@ -5041,7 +5041,11 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             dispatchDate: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`,
             vehiclePlate: "—", freightAmount: 0,
             matchedRate: null, fuelBaseRate: null, fuelComponentAmount: null, priceOnDate: null,
-            receivablePKR: null, receivableLitres: null,
+            // No shipment exists on this date at all, so there's nothing to offset the swap
+            // against — it's entirely owed back, shown as a negative Receivable rather than
+            // null (which would make it vanish from group/grand totals, exactly like before).
+            receivablePKR: swappedPKR > 0 ? -swappedPKR : null,
+            receivableLitres: swappedLitres > 0 ? -swappedLitres : null,
             swappedLitres, swappedPKR, noDispatch: true,
           };
         });
