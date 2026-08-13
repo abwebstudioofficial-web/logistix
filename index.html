@@ -8349,6 +8349,7 @@ function LogistixERP() {
           name: isWM ? "Wrapping Materials" : "Finished Goods",
           rows, headerRowIndex: 1, colWidths: isWM ? wmColWidths : fgColWidths, freezeRows: 1,
           headerOverrides: styling.headerOverrides, contentDefaultCols: styling.contentDefault,
+          hiddenCols: [1], // Container ID — needed for Attach to match rows back correctly, not meant to be seen
         };
       });
 
