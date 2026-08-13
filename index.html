@@ -1170,7 +1170,7 @@ function buildWorkbook(data) {
   const wb = XLSX.utils.book_new();
   const ordersWithNames = (data.orders || []).map((o) => ({
     ...o,
-    customerName: (getCustomer(data, o.customerId) || {}).name || "",
+    customerName: (getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "",
     senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
   }));
   const map = { Orders: ordersWithNames, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
@@ -1216,7 +1216,7 @@ function buildImportRow(sr, o, c, data) {
     sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.bondedStatus || "", o.origin || "",
     o.shippingLine || "", c.transporter || o.nominatedTransporter || "", o.description || "", o.blNumber || "",
     c.containerNumber || "", c.sealNumber || "", c.containerSize || "", xnum(c.weight, ""), fmtDateISO(o.igmDate),
-    c.destination || o.destination || "", cust ? cust.name : "", c.emptyReturnLocation || "", c.biltyNumber || "",
+    c.destination || o.destination || "", cust ? (cust.shortName || cust.name) : "", c.emptyReturnLocation || "", c.biltyNumber || "",
     c.vehiclePlate || "", fmtDateISO(c.dispatchAt), xnum(c.freightAmount, ""), "", fmtDateISO(c.transporterBillDate),
     fmtDateISO(c.transporterBillDate), c.transporterBillNo || "", xnum(c.billAmountApproved, ""),
     chargeAmount(c, "LOLO Charges"), chargeAmount(c, "Halting/Stay Charges"), chargeAmount(c, "Other Charges"),
@@ -1226,7 +1226,7 @@ function buildImportRow(sr, o, c, data) {
 function buildExportRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
   return [
-    sr, o.jobNumber || o.orderNumber || "", cust ? cust.name : "", c.emptyReturnLocation || "", o.origin || "",
+    sr, o.jobNumber || o.orderNumber || "", cust ? (cust.shortName || cust.name) : "", c.emptyReturnLocation || "", o.origin || "",
     c.transporter || o.nominatedTransporter || "", o.shippingLine || "", o.blNumber || "", c.containerNumber || "",
     c.containerSize || "", xnum(c.weight, ""), c.vehiclePlate || "", fmtDateISO(c.dispatchAt), fmtDateISO(c.dispatchAt),
     c.biltyNumber || "", xnum(c.freightAmount, ""), o.bondedStatus || "", c.destination || o.destination || "", c.emptyReturnDescription || "",
@@ -1236,7 +1236,7 @@ function buildDomesticRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
   const sender = (data.senders || []).find((s) => s.id === o.senderId) || null;
   return [
-    sr, o.domesticCategory || "", cust ? cust.name : "", sender ? sender.name : "", o.senderAddress || "", fmtDateISO(o.eta),
+    sr, o.domesticCategory || "", cust ? (cust.shortName || cust.name) : "", sender ? sender.name : "", o.senderAddress || "", fmtDateISO(o.eta),
     c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
     c.vehiclePlate || "", c.vehicleSize || "", o.origin || "", c.destination || "", c.transporter || "",
     xnum(c.freightAmount, ""),
@@ -1531,7 +1531,7 @@ function colWidthsFor(headers) {
 // Exact widths given for the Import Transportation-2020 sheet's first 30 columns.
 // "Remarks" and "YEAR" (columns 31-32) weren't included in that list, so those two still
 // fall back to the auto-computed width.
-const IMPORT_EXACT_WIDTHS = [6.29, 12.29, 20.14, 15.57, 20.57, 22.71, 24.14, 24.14, 21.14, 17.14, 17.14, 7.86, 9.86, 14.43, 20.71, 18.86, 18.86, 15.14, 11.43, 17, 26.71, 20.71, 20.71, 20.71, 20.71, 26.57, 19.86, 19.86, 19.86, 23.86];
+const IMPORT_EXACT_WIDTHS = [6.29, 12.29, 20.14, 15.57, 20.57, 22.71, 24.14, 38, 21.14, 17.14, 17.14, 7.86, 9.86, 14.43, 20.71, 18.86, 18.86, 15.14, 11.43, 17, 26.71, 20.71, 20.71, 20.71, 20.71, 26.57, 19.86, 19.86, 19.86, 23.86];
 function importColWidths() {
   const auto = colWidthsFor(IMPORT_HEADERS);
   return IMPORT_HEADERS.map((h, i) => (i < IMPORT_EXACT_WIDTHS.length ? IMPORT_EXACT_WIDTHS[i] : auto[i]));
@@ -1595,8 +1595,9 @@ async function buildTemplateWorkbook(data) {
   importContentDefault[7] = 20; // G content: no-wrap, no right border
   importContentDefault[8] = 21; // H content: wrap, no left border
   // Charges/amount columns — bold: Freight, Freight Paid By Vide Cheque#, Bill Amount Approved,
-  // LOLO/Stay/Other Charges, Total Bill Amount.
-  [21, 22, 26, 27, 28, 29, 30].forEach((col) => { importContentDefault[col] = 22; });
+  // LOLO/Stay/Other Charges, Total Bill Amount. Customer (16) also bold, since it now shows
+  // the short form (e.g. "PTC") rather than the full name.
+  [16, 21, 22, 26, 27, 28, 29, 30].forEach((col) => { importContentDefault[col] = 22; });
 
   const importFlat = flattenContainers(orders, (o) => orderKind(o) === "import");
   const importDataRows = importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data));
@@ -1614,17 +1615,21 @@ async function buildTemplateWorkbook(data) {
   const domHeaderNoWrap = new Set([1, 6, 9, 10, 11, 15]); // Sr.#, Est. Delivery Date, Loading Date, Vehicle No., Vehicle Size, Freight Amount
   const domHeaderWrap = new Set(Array.from({ length: 15 }, (_, i) => i + 1).filter((c) => !domHeaderNoWrap.has(c)));
   const domHeaderOverrides = buildColStyleMap(15, domHeaderWrap, 5, 6);
-  const domContentWrap = new Set([3, 4, 5, 7, 12, 13, 14]); // Customer, Sender Name, Sender Address, PO/SAP No., Loading Point, Destination, Transporter Name
+  const domContentWrap = new Set([4, 5, 7, 12, 13, 14]); // Sender Name, Sender Address, PO/SAP No., Loading Point, Destination, Transporter Name
   const domContentDefault = buildColStyleMap(15, domContentWrap, 9, 8);
   domContentDefault[15] = 22; // Freight Amount — bold
+  domContentDefault[3] = 22; // Customer (now short form, e.g. "PTC") — bold
 
   function buildDomesticSheet(sheetName, category) {
     const flat = flattenContainers(orders, (o) => orderKind(o) === "domestic" && (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
     const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
     const rows = [DOMESTIC_HEADERS, ...dataRows];
+    const domColWidths = colWidthsFor(DOMESTIC_HEADERS);
+    domColWidths[3] = 24; // Sender Name — wider
+    domColWidths[4] = 32; // Sender Address — wider
     sheets.push({
       name: sheetName, rows, headerRowIndex: 1,
-      colWidths: colWidthsFor(DOMESTIC_HEADERS), freezeRows: 1,
+      colWidths: domColWidths, freezeRows: 1,
       headerOverrides: domHeaderOverrides, contentDefaultCols: domContentDefault,
       conditionalCols: { 12: LOADING_POINT_RULE, 7: duplicateStyleFn(dataRows.map((r) => r[6]), 17) },
     });
@@ -1639,6 +1644,7 @@ async function buildTemplateWorkbook(data) {
   const expContentWrap = new Set([2, 3, 4, 7, 8, 12, 15, 18]); // Job#, Shipper(~Consignee), Empty Pickup Loc, Shipping Line, Booking No., Truck No., Bilty No., Destination
   const expContentDefault = buildColStyleMap(19, expContentWrap, 9, 8);
   expContentDefault[16] = 22; // Freight — bold
+  expContentDefault[3] = 22; // Customer (now short form, e.g. "PTC") — bold
 
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
   const expDataRows = expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data));
@@ -8289,7 +8295,7 @@ function LogistixERP() {
     const invoice = (data.invoices || []).find((inv) => inv.containerId === c.id);
     const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for loading date" : "";
     return [
-      c.id, sr, cust ? cust.name : "", c.poSapNo || "", c.movementThrough || "", c.loadingDate ? fmtDate(c.loadingDate) : "",
+      c.id, sr, cust ? (cust.shortName || cust.name) : "", c.poSapNo || "", c.movementThrough || "", c.loadingDate ? fmtDate(c.loadingDate) : "",
       c.vehiclePlate || "", c.vehicleSize || "",
       ...(includeSender ? [senderShortLabel(o, sender)] : []),
       o.origin || "", c.destination || "",
@@ -8327,8 +8333,8 @@ function LogistixERP() {
         boldCols.forEach((col) => { contentDefault[col] = 22; });
         return { headerOverrides, contentDefault };
       }
-      const fgStyling = domesticSheetStyling(15, [3, 4, 9, 10, 14], [11, 12, 13]);
-      const wmStyling = domesticSheetStyling(16, [3, 4, 9, 10, 11, 15], [12, 13, 14]);
+      const fgStyling = domesticSheetStyling(15, [4, 9, 10, 14], [3, 11, 12, 13]);
+      const wmStyling = domesticSheetStyling(16, [4, 9, 10, 11, 15], [3, 12, 13, 14]);
       const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 20; fgColWidths[1] = 6;
       const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 20; wmColWidths[1] = 6;
 
@@ -8365,13 +8371,18 @@ function LogistixERP() {
     if (cfg.sheetName === "Orders") {
       rows = rows.map((o) => ({
         ...o,
-        customerName: (getCustomer(data, o.customerId) || {}).name || "",
+        customerName: (getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "",
         senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
       }));
     }
     const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, cfg.displayHeaders, cfg.sheetName), cfg.sheetName);
+    const ws = buildSheet(rows, schema, cfg.displayHeaders, cfg.sheetName);
+    if (cfg.sheetName === "Orders") {
+      const descIdx = schema.indexOf("description");
+      if (descIdx >= 0 && ws["!cols"] && ws["!cols"][descIdx] && ws["!cols"][descIdx].wch < 40) ws["!cols"][descIdx].wch = 40;
+    }
+    XLSX.utils.book_append_sheet(wb, ws, cfg.sheetName);
     XLSX.writeFile(wb, `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
