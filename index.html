@@ -490,7 +490,7 @@ function allowedViewsForRole(role) {
 const CONTAINER_TYPES = ["Standard", "High Cube", "Reefer", "Open Top", "Flat Rack", "Tank"];
 const CONTAINER_SIZES = ["20'", "40'", "45'"];
 const MOVEMENT_THROUGH_OPTIONS = ["GT Road", "Motorway"];
-const DOMESTIC_CATEGORIES = ["Finished Goods (FG)", "Wrapping Materials"];
+const DOMESTIC_CATEGORIES = ["Finished Goods (FG)", "Wrapping Materials", "WM Domestic Karachi"];
 const WEIGHT_CATEGORIES = ["Under 10 tons", "10-20 tons", "20-30 tons", "30+ tons"];
 const AXLE_LOAD_CATEGORIES = ["1x", "2x", "3x", "4x", "6x"];
 
@@ -1636,6 +1636,7 @@ async function buildTemplateWorkbook(data) {
   }
   buildDomesticSheet("Finished Goods", DOMESTIC_CATEGORIES[0]);
   buildDomesticSheet("Wrapping Materials", DOMESTIC_CATEGORIES[1]);
+  buildDomesticSheet("WM Domestic Karachi", DOMESTIC_CATEGORIES[2]);
 
   // --- Export Transportation (cream header) ---
   const expHeaderNoWrap = new Set([2, 8, 9, 12, 15]); // Job#, Booking No.(~B/L), Container No., Truck No., Bilty No.
@@ -3207,7 +3208,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
     DOMESTIC_CATEGORIES.forEach((cat) => {
       counts[cat] = data.orders.filter((o) => (o.shipmentType || "Import") === "Domestic" && (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === cat).length;
     });
-    const tileIcons = { [DOMESTIC_CATEGORIES[0]]: { icon: Package, bg: "bg-blue-600" }, [DOMESTIC_CATEGORIES[1]]: { icon: Package, bg: "bg-purple-600" } };
+    const tileIcons = { [DOMESTIC_CATEGORIES[0]]: { icon: Package, bg: "bg-blue-600" }, [DOMESTIC_CATEGORIES[1]]: { icon: Package, bg: "bg-purple-600" }, [DOMESTIC_CATEGORIES[2]]: { icon: Package, bg: "bg-teal-600" } };
     return (
       <div className="space-y-5">
         <div>
@@ -3350,7 +3351,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                     <th className={thCls}>Loading Date</th>
                     <th className={thCls}>Vehicle No.</th>
                     <th className={thCls}>Vehicle Size</th>
-                    {domesticCategory === DOMESTIC_CATEGORIES[1] && <th className={thCls}>Sender</th>}
+                    {(domesticCategory === DOMESTIC_CATEGORIES[1] || domesticCategory === DOMESTIC_CATEGORIES[2]) && <th className={thCls}>Sender</th>}
                     <th className={thCls}>Loading Point</th>
                     <th className={thCls}>Destination</th>
                     <th className={thCls}>Transporter Name</th>
@@ -3388,7 +3389,7 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                         <td className={tdCls}>{c && c.loadingDate ? fmtDate(c.loadingDate) : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>
-                        {domesticCategory === DOMESTIC_CATEGORIES[1] && <td className={tdCls}>{senderShortLabel(o, sender) || "—"}</td>}
+                        {(domesticCategory === DOMESTIC_CATEGORIES[1] || domesticCategory === DOMESTIC_CATEGORIES[2]) && <td className={tdCls}>{senderShortLabel(o, sender) || "—"}</td>}
                         <td className={tdCls}>{o.origin || "—"}</td>
                         <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
                         <td className={tdCls}>{c ? (c.transporter || "—") : "—"}</td>
@@ -8023,7 +8024,7 @@ function LogistixERP() {
         try {
           const arr = new Uint8Array(evt.target.result);
           const wb = XLSX.read(arr, { type: "array" });
-          const sheetNames = ["Finished Goods", "Wrapping Materials"].filter((n) => wb.Sheets[n]);
+          const sheetNames = ["Finished Goods", "Wrapping Materials", "WM Domestic Karachi"].filter((n) => wb.Sheets[n]);
           if (sheetNames.length === 0) throw new Error("Expected a 'Finished Goods' or 'Wrapping Materials' sheet — that's what this report exports as.");
 
           // Loading Date is exported as dd/mm/yyyy (matching the rest of the app), not
@@ -8046,7 +8047,8 @@ function LogistixERP() {
           const newOrderIds = new Set(); // created orders don't need a "prev" snapshot entry - reverting just deletes them
 
           sheetNames.forEach((sheetName) => {
-            const isWM = sheetName === "Wrapping Materials";
+            const hasSender = sheetName === "Wrapping Materials" || sheetName === "WM Domestic Karachi";
+            const sheetCategory = { "Finished Goods": DOMESTIC_CATEGORIES[0], "Wrapping Materials": DOMESTIC_CATEGORIES[1], "WM Domestic Karachi": DOMESTIC_CATEGORIES[2] }[sheetName];
             const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "", raw: false });
             rows.forEach((row, rowIdx) => {
               const containerId = xstr(readAnyKey(row, ["Container ID", "container id"])).trim();
@@ -8102,7 +8104,7 @@ function LogistixERP() {
               if (!loadingPoint || !destination) { createIssues.push(`${rowLabel}: missing Loading Point or Destination — row not created.`); return; }
 
               let senderId = "", senderAddress = "";
-              if (isWM) {
+              if (hasSender) {
                 const senderLabel = xstr(readAnyKey(row, ["Sender"])).trim();
                 if (senderLabel) {
                   const candidates = [];
@@ -8136,7 +8138,7 @@ function LogistixERP() {
               };
               const newOrder = {
                 id: genUUID(), orderNumber: genOrderNumber(), customerId: matchedCustomer.id,
-                shipmentType: "Domestic", domesticCategory: isWM ? DOMESTIC_CATEGORIES[1] : DOMESTIC_CATEGORIES[0],
+                shipmentType: "Domestic", domesticCategory: sheetCategory,
                 origin: loadingPoint, senderId, senderAddress, eta: "", description: "",
                 createdDate: todayISO(), cancelled: false, priority: "Normal",
                 containers: [newContainer],
@@ -8338,16 +8340,20 @@ function LogistixERP() {
       const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 20; fgColWidths[1] = 6;
       const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 20; wmColWidths[1] = 6;
 
+      // Wrapping Materials and the new WM Domestic Karachi category both use the WM-style
+      // layout (with the Sender column) per the request that the new tab match WM's layout;
+      // Finished Goods keeps the original layout without Sender.
+      const sheetNameForCategory = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
       const sheets = DOMESTIC_CATEGORIES.map((category) => {
-        const isWM = category === DOMESTIC_CATEGORIES[1];
+        const hasSender = category !== DOMESTIC_CATEGORIES[0];
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
         const flat = flattenContainers(catOrders, () => true).filter(({ c }) => inExportRange(c.loadingDate));
-        const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c, isWM));
-        const rows = [isWM ? DOMESTIC_EXPORT_HEADERS_WM : DOMESTIC_EXPORT_HEADERS_BASE, ...dataRows];
-        const styling = isWM ? wmStyling : fgStyling;
+        const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c, hasSender));
+        const rows = [hasSender ? DOMESTIC_EXPORT_HEADERS_WM : DOMESTIC_EXPORT_HEADERS_BASE, ...dataRows];
+        const styling = hasSender ? wmStyling : fgStyling;
         return {
-          name: isWM ? "Wrapping Materials" : "Finished Goods",
-          rows, headerRowIndex: 1, colWidths: isWM ? wmColWidths : fgColWidths, freezeRows: 1,
+          name: sheetNameForCategory[category],
+          rows, headerRowIndex: 1, colWidths: hasSender ? wmColWidths : fgColWidths, freezeRows: 1,
           headerOverrides: styling.headerOverrides, contentDefaultCols: styling.contentDefault,
           hiddenCols: [1], // Container ID — needed for Attach to match rows back correctly, not meant to be seen
         };
