@@ -1562,10 +1562,10 @@ const LOADING_POINT_RULE = textContainsStyle([["PICT", 13], ["QICT", 14], ["KICT
 async function buildTemplateWorkbook(data) {
   const orders = data.orders || [];
   const today = todayISO();
-  const allFlat = flattenContainers(orders);
   const sheets = [];
 
-  // --- Cleared Cases-01 (and identical customer sheets) ---
+  // --- Shared layout/rules for the customer-specific sheets below (used to be also used by
+  // a "Cleared Cases-01" sheet here, which has been removed from this export) ---
   // Not explicitly covered in the wrap/no-wrap spec (that was given for the Import sheet's
   // columns) — headers here are wrapped uniformly since most of its 48 labels are long
   // detention-tracking phrases, and content-wrap is applied to the same *concepts* the
@@ -1578,19 +1578,6 @@ async function buildTemplateWorkbook(data) {
   // Charges/amount columns — bold: Detention Calculated USD/PKR, Placement Charges,
   // Damage Repair/Other Chgs, Total Amount Payable in PKR.
   [40, 42, 43, 44, 45].forEach((col) => { clearedContentDefault[col] = 22; });
-
-  const clearedRows = [Array(48).fill("")];
-  const titleRow = Array(48).fill(""); titleRow[3] = "Detention Calculation & Payment Details"; titleRow[47] = today;
-  clearedRows.push(titleRow);
-  clearedRows.push(Array(48).fill(""));
-  clearedRows.push(CLEARED_CASES_HEADERS);
-  allFlat.forEach(({ o, c }, i) => clearedRows.push(buildClearedRow(i + 1, o, c, data)));
-  sheets.push({
-    name: "Cleared Cases-01", rows: clearedRows, headerRowIndex: 4, titleCell: { row: 2, col: 4 },
-    colWidths: colWidthsFor(CLEARED_CASES_HEADERS),
-    headerOverrides: clearedHeaderOverrides, contentDefaultCols: clearedContentDefault,
-    conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE },
-  });
 
   // --- Import Transportation-2020 (cream header) ---
   // Header wrap: everything except Job#, B/L No., Container No., Bilty No., Truck No., YEAR.
@@ -3922,8 +3909,12 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-0.5">
                       <span className="font-mono text-blue-400 text-xs">{o.orderNumber}</span>
-                      <span className="text-slate-600 text-xs">·</span>
-                      <span className="text-slate-500 text-xs">Container {c.containerNumber || "—"}</span>
+                      {shipmentTypeFilter !== "Domestic" && (
+                        <>
+                          <span className="text-slate-600 text-xs">·</span>
+                          <span className="text-slate-500 text-xs">Container {c.containerNumber || "—"}</span>
+                        </>
+                      )}
                     </div>
                     <div className="text-white font-semibold text-sm">{cust ? cust.name : "Unknown"}</div>
                     <div className="text-slate-500 text-xs mt-0.5 flex items-center gap-1"><MapPin size={11} className="shrink-0" />{o.origin} <ChevronRight size={11} className="shrink-0 text-slate-600" /> {c.destination || "—"}</div>
