@@ -1470,7 +1470,7 @@ ${rowsXml}
 </worksheet>`);
   });
 
-  return zip.generateAsync({ type: "uint8array" });
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }
 
 // Flattens orders into individual containers (cancelled ones excluded — they aren't
