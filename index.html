@@ -3928,22 +3928,36 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             const canEditDispatch = (role === "admin" || isDispatcher) && si < 2;
             return (
               <div key={c.id} className={cx(cardCls, "p-4 border-l-4", statusAccentBorder[st] || "border-l-slate-600")}>
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                      <span className="font-mono text-blue-400 text-xs">{o.orderNumber}</span>
-                      {shipmentTypeFilter !== "Domestic" && (
-                        <>
-                          <span className="text-slate-600 text-xs">·</span>
-                          <span className="text-slate-500 text-xs">Container {c.containerNumber || "—"}</span>
-                        </>
-                      )}
+                {shipmentTypeFilter === "Domestic" ? (
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <span className="font-mono text-blue-400 text-xs">{o.orderNumber}</span>
+                      </div>
+                      <div className="text-white font-semibold text-sm">{cust ? cust.name : "Unknown"}</div>
+                      <div className="text-slate-500 text-xs mt-0.5 flex items-center gap-1"><MapPin size={11} className="shrink-0" />{o.origin} <ChevronRight size={11} className="shrink-0 text-slate-600" /> {c.destination || "—"}</div>
                     </div>
-                    <div className="text-white font-semibold text-sm">{cust ? cust.name : "Unknown"}</div>
-                    <div className="text-slate-500 text-xs mt-0.5 flex items-center gap-1"><MapPin size={11} className="shrink-0" />{o.origin} <ChevronRight size={11} className="shrink-0 text-slate-600" /> {c.destination || "—"}</div>
+                    <div className="flex gap-1.5 shrink-0"><Badge text={st} className={orderStatusColor[st]} /><Badge text={c.priority || "Normal"} className={priorityColor[c.priority || "Normal"]} /></div>
                   </div>
-                  <div className="flex gap-1.5 shrink-0"><Badge text={st} className={orderStatusColor[st]} /><Badge text={c.priority || "Normal"} className={priorityColor[c.priority || "Normal"]} /></div>
-                </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="font-mono text-blue-400 text-xs">{o.orderNumber}</div>
+                      <div className="text-white font-bold text-sm mb-0.5">{cust ? (cust.shortName || cust.name) : "Unknown"}</div>
+                      <div className="flex gap-3 text-xs mb-0.5 flex-wrap">
+                        <span className="font-mono font-bold text-slate-300">{c.containerNumber || "—"}</span>
+                        <span className="font-mono font-bold text-slate-300">{c.vehiclePlate || "—"}</span>
+                        <span className="font-mono font-bold text-slate-300">{o.jobNumber || "—"}</span>
+                      </div>
+                      {o.description && <div className="text-slate-300 font-bold text-xs">{o.description}</div>}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="flex gap-1.5 justify-end mb-0.5"><Badge text={st} className={orderStatusColor[st]} /><Badge text={c.priority || "Normal"} className={priorityColor[c.priority || "Normal"]} /></div>
+                      <div className="text-slate-300 font-bold text-xs mt-0.5">{c.destination || "—"}</div>
+                      <div className="text-slate-300 font-bold text-xs mt-0.5">ETA: {fmtDateISO(o.eta)}</div>
+                    </div>
+                  </div>
+                )}
                 {shipmentTypeFilter === "Domestic" && o.domesticCategory && (
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-slate-600 text-xs mt-2">
                     <span>PO/SAP {c.poSapNo || "—"}</span>
@@ -3956,10 +3970,17 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                   </div>
                 )}
                 <div className="mt-3"><TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={stagesFor(o.shipmentType)} /></div>
+                {shipmentTypeFilter !== "Domestic" && (
+                  <div className="text-slate-500 text-xs mt-1.5 flex items-center gap-1"><Send size={11} />{c.transporter || "No transporter"}</div>
+                )}
                 <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                   <div className="flex items-center gap-3 text-slate-500 text-xs flex-wrap">
-                    <span className="flex items-center gap-1"><Send size={11} />{c.transporter || "No transporter"}</span>
-                    <span className="flex items-center gap-1"><Truck size={11} />{c.vehiclePlate || "Unassigned"}</span>
+                    {shipmentTypeFilter === "Domestic" && (
+                      <>
+                        <span className="flex items-center gap-1"><Send size={11} />{c.transporter || "No transporter"}</span>
+                        <span className="flex items-center gap-1"><Truck size={11} />{c.vehiclePlate || "Unassigned"}</span>
+                      </>
+                    )}
                     {!isEmptyReturnReceiver && !isReceiver && c.freightAmount !== "" && c.freightAmount !== undefined && c.freightAmount !== null && (
                       <span className="flex items-center gap-1"><Banknote size={11} />{formatPKR(c.freightAmount)}</span>
                     )}
@@ -3972,7 +3993,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                         <span className="flex items-center gap-1"><Clock size={11} />Shift empty return: {c.shiftEmptyReturnDate ? fmtDateISO(c.shiftEmptyReturnDate) : "—"}</span>
                       </>
                     )}
-                    <span>ETA {fmtDateISO(o.eta)}</span>
+                    {shipmentTypeFilter === "Domestic" && <span>ETA {fmtDateISO(o.eta)}</span>}
                     {canEditDispatch && si >= 1 && (
                       <button
                         className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
