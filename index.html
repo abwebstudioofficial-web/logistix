@@ -6489,11 +6489,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
         )}
       </Field>
 
-      <Field label="Origin (Loading Point)"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
       <Field label="Est. Delivery Date"><input type="date" className={inputCls} value={eta} onChange={(e) => setEta(e.target.value)} /></Field>
-      <Field label="Description">
-        <textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Bulk tobacco leaf shipment for regional distribution" />
-      </Field>
 
       <div className="pt-3 mt-1 mb-3 border-t border-slate-800">
         <h4 className="text-slate-300 text-sm font-semibold">Shipment Details</h4>
@@ -6518,6 +6514,9 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
           </Field>
         ))}
       </div>
+      <Field label="Description">
+        <textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. Bulk tobacco leaf shipment for regional distribution" />
+      </Field>
 
       <div className="mt-4 pt-3 border-t border-slate-800">
         <div className="flex items-center justify-between mb-3">
@@ -6593,7 +6592,10 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     ).map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-                <input className={cx(inputCls, "mb-2")} value={c.destination} onChange={(e) => setContainerField(c.id, "destination", e.target.value)} placeholder="Destination, e.g. Lahore" />
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="Origin (Loading Point), e.g. Karachi" />
+                  <input className={inputCls} value={c.destination} onChange={(e) => setContainerField(c.id, "destination", e.target.value)} placeholder="Destination, e.g. Lahore" />
+                </div>
                 <div className="mb-2">
                   {cSavedAddresses.length > 0 ? (
                     <select
@@ -6616,17 +6618,6 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                   )}
                 </div>
                 <input type="number" min="0" className={cx(inputCls, "mb-2")} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
-                {role !== "data_entry" && (
-                  <div className="mt-2 pt-2 border-t border-slate-800">
-                    <label className="text-slate-500 text-xs font-medium block mb-1.5">Transporter Bill</label>
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                      <input type="date" className={inputCls} value={c.transporterBillDate || ""} onChange={(e) => setContainerField(c.id, "transporterBillDate", e.target.value)} placeholder="Transporter Bill Date" />
-                      <input className={inputCls} value={c.transporterBillNo || ""} onChange={(e) => setContainerField(c.id, "transporterBillNo", e.target.value)} placeholder="Transporter Bill No." />
-                    </div>
-                    <input type="number" min="0" className={cx(inputCls, "mb-2")} value={c.billAmountApproved ?? ""} onChange={(e) => setContainerField(c.id, "billAmountApproved", e.target.value)} placeholder="Bill Amount Approved (PKR)" />
-                    <ChargesEditor charges={c.charges} onChange={(next) => setContainerField(c.id, "charges", next)} />
-                  </div>
-                )}
                 </div>
                 )}
               </div>
