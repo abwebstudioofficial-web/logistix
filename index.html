@@ -34,6 +34,19 @@
   .light-theme .border-slate-700 { border-color: #cbd5e1 !important; }
   .light-theme .border-slate-200 { border-color: #e2e8f0 !important; }
 
+  /* Colored left-accent stripes (status border on Tracking cards, grouped-table row accents).
+     Placed after the generic .border-slate-800 rule above so these win the cascade for
+     border-left-color specifically — without this, cards combining a neutral border-slate-800
+     with a border-l-{color} accent had the left stripe silently overridden to plain gray. */
+  .light-theme .border-l-blue-500,
+  .light-theme .border-l-blue-600 { border-left-color: #2563eb !important; }
+  .light-theme .border-l-emerald-500 { border-left-color: #059669 !important; }
+  .light-theme .border-l-amber-500 { border-left-color: #d97706 !important; }
+  .light-theme .border-l-violet-500 { border-left-color: #7c3aed !important; }
+  .light-theme .border-l-indigo-500 { border-left-color: #4f46e5 !important; }
+  .light-theme .border-l-sky-500 { border-left-color: #0284c7 !important; }
+  .light-theme .border-l-slate-600 { border-left-color: #94a3b8 !important; }
+
   /* Text gradient corrected to a proper descending scale (400 and 500 previously mapped to
      the identical color, losing the visual distinction between them) */
   .light-theme .text-white { color: #0f172a !important; }
@@ -3741,6 +3754,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
   const [podTarget, setPodTarget] = useState(null); // { orderId, containerId, label }
   const [arrivalTarget, setArrivalTarget] = useState(null); // { orderId, containerId, label } - Domestic's In Transit -> Under Offloading step
   const [dispatchTarget, setDispatchTarget] = useState(null); // { orderId, containerId, label }
+  const [emptyReturnTarget, setEmptyReturnTarget] = useState(null); // { orderId, containerId, label, defaultLocation } - Delivered -> Completed step, Import only
   const today = todayISO();
   const isDispatcher = role === "dispatcher_import" || role === "dispatcher_domestic" || role === "dispatcher_export";
   const isReceiver = role === "receiver_import_domestic" || role === "receiver_export";
@@ -3883,13 +3897,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             onClick={() => setFilter(filter === "in_transit" ? "all" : "in_transit")}
             active={filter === "in_transit"}
           />
-          {(shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import") && (
-            <MiniStat
-              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
-              onClick={() => setFilter(filter === "under_offloading" ? "all" : "under_offloading")}
-              active={filter === "under_offloading"}
-            />
-          )}
           {showDeliveredBlock && (showAllDelivered ? (
             <MiniStat
               label="Delivered" value={deliveredAllCount} color="text-emerald-400"
@@ -3903,6 +3910,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
               active={filter === "delivered_today"}
             />
           ))}
+          {(shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import") && (
+            <MiniStat
+              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
+              onClick={() => setFilter(filter === "under_offloading" ? "all" : "under_offloading")}
+              active={filter === "under_offloading"}
+            />
+          )}
           {showCompletedBlock && (
             <MiniStat
               label="Completed" value={completedCount} color="text-violet-400"
@@ -3953,10 +3967,10 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                       <div className="font-mono text-blue-400 text-xs">{o.orderNumber}</div>
                       <div className="text-white font-bold text-sm mb-0.5">{cust ? (cust.shortName || cust.name) : "Unknown"}</div>
                       <div className="flex gap-3 text-xs mb-0.5 flex-wrap">
-                        <span className="font-mono font-bold text-slate-300">{o.jobNumber || "—"}</span>
-                        <span className="font-mono font-bold text-slate-300">{c.containerNumber || "—"}</span>
-                        <span className="font-mono font-bold text-slate-300">{c.vehiclePlate || "—"}</span>
-                        <span className="font-mono font-bold text-slate-300">{c.containerSize || "—"}</span>
+                        <span className="font-mono font-extrabold text-slate-300">{o.jobNumber || "—"}</span>
+                        <span className="font-mono font-extrabold text-slate-300">{c.containerNumber || "—"}</span>
+                        <span className="font-mono font-extrabold text-slate-300">{c.vehiclePlate || "—"}</span>
+                        <span className="font-mono font-extrabold text-slate-300">{c.containerSize || "—"}</span>
                       </div>
                       {o.description && <div className="text-slate-300 font-bold text-xs">{o.description}</div>}
                     </div>
@@ -4029,8 +4043,10 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                           const hasUnderOffloading = st === "Domestic" || st === "Import";
                           const podStageIndex = hasUnderOffloading ? 4 : 3;
                           const arrivalStageIndex = hasUnderOffloading ? 3 : -1;
+                          const completedStageIndex = st === "Import" ? 5 : -1;
                           if (nextIdx === arrivalStageIndex) setArrivalTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else if (nextIdx === podStageIndex) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, stageIndex: podStageIndex });
+                          else if (nextIdx === completedStageIndex) setEmptyReturnTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, defaultLocation: c.emptyReturnLocation || "" });
                           else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
@@ -4050,10 +4066,16 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     )}
                   </div>
                 </div>
-                {showPod && (
+                {showPod && c.podPhoto && (
                   <div className="mt-3 pt-3 border-t border-slate-800/60">
                     <div className="text-slate-400 text-xs font-medium mb-1.5 flex items-center gap-1"><CheckCircle2 size={12} className="text-emerald-500" />Proof of Delivery</div>
-                    <AttachmentPreview dataUrl={c.podPhoto} alt="Proof of delivery" downloadName={`pod-${c.containerNumber || o.orderNumber}.jpg`} />
+                    <a
+                      href={c.podPhoto}
+                      download={`pod-${c.containerNumber || o.orderNumber}.jpg`}
+                      className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2 w-fit"
+                    >
+                      <FileText size={16} /> {`pod-${c.containerNumber || o.orderNumber}.jpg`}
+                    </a>
                   </div>
                 )}
               </div>
@@ -4100,6 +4122,17 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             if (dispatchTarget.editingContainer) updateContainerFields(dispatchTarget.orderId, dispatchTarget.containerId, dispatchData);
             else updateContainerStage(dispatchTarget.orderId, dispatchTarget.containerId, 1, dispatchData);
             setDispatchTarget(null);
+          }}
+        />
+      )}
+      {emptyReturnTarget && (
+        <EmptyReturnModal
+          containerLabel={emptyReturnTarget.label}
+          defaultLocation={emptyReturnTarget.defaultLocation}
+          onClose={() => setEmptyReturnTarget(null)}
+          onConfirm={(emptyReturnData) => {
+            updateContainerStage(emptyReturnTarget.orderId, emptyReturnTarget.containerId, 5, emptyReturnData);
+            setEmptyReturnTarget(null);
           }}
         />
       )}
