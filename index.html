@@ -3826,6 +3826,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
     else if (filter === "confirmed") matchesFilter = st === "Confirmed";
     else if (filter === "picked_up") matchesFilter = st === "Picked Up";
     else if (filter === "in_transit") matchesFilter = st === "In Transit";
+    else if (filter === "under_offloading") matchesFilter = st === "Under Offloading";
     else if (filter === "delivered_today") matchesFilter = container.deliveredDate === today;
     return matchesQ && matchesFilter;
   });
@@ -3866,7 +3867,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
           />
         </div>
       ) : (
-        <div className={cx("grid grid-cols-2 gap-4", showCompletedBlock ? "lg:grid-cols-5" : showDeliveredBlock ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
+        <div className={cx("grid grid-cols-2 gap-4", showCompletedBlock ? "lg:grid-cols-6" : (shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import") ? "lg:grid-cols-5" : showDeliveredBlock ? "lg:grid-cols-4" : "lg:grid-cols-3")}>
           <MiniStat
             label="Confirmed" value={confirmedCount} color="text-blue-400"
             onClick={() => setFilter(filter === "confirmed" ? "all" : "confirmed")}
@@ -3882,6 +3883,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             onClick={() => setFilter(filter === "in_transit" ? "all" : "in_transit")}
             active={filter === "in_transit"}
           />
+          {(shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import") && (
+            <MiniStat
+              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
+              onClick={() => setFilter(filter === "under_offloading" ? "all" : "under_offloading")}
+              active={filter === "under_offloading"}
+            />
+          )}
           {showDeliveredBlock && (showAllDelivered ? (
             <MiniStat
               label="Delivered" value={deliveredAllCount} color="text-emerald-400"
