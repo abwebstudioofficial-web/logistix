@@ -18,7 +18,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="app-source">
 const { useState, useEffect, useRef } = React;
 
 /* ==================== Supabase (same backend as the main app) ==================== */
@@ -732,6 +732,21 @@ function FleetApp() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<FleetApp />);
+</script>
+<script>
+  // Explicit transform instead of Babel's automatic text/babel scanning: forces the classic
+  // JSX runtime (React.createElement calls) rather than whatever the loaded Babel version
+  // might default to, which otherwise can silently produce ES module import statements that
+  // fail when run as a plain script.
+  (function () {
+    var source = document.getElementById('app-source').textContent;
+    var output = Babel.transform(source, {
+      presets: [["react", { runtime: "classic" }]],
+    }).code;
+    var script = document.createElement('script');
+    script.textContent = output;
+    document.body.appendChild(script);
+  })();
 </script>
 </body>
 </html>
