@@ -3945,9 +3945,10 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                       <div className="font-mono text-blue-400 text-xs">{o.orderNumber}</div>
                       <div className="text-white font-bold text-sm mb-0.5">{cust ? (cust.shortName || cust.name) : "Unknown"}</div>
                       <div className="flex gap-3 text-xs mb-0.5 flex-wrap">
-                        <span className="font-mono font-bold text-slate-300">{c.containerNumber || "—"}</span>
-                        <span className="font-mono font-bold text-slate-300">{c.vehiclePlate || "—"}</span>
                         <span className="font-mono font-bold text-slate-300">{o.jobNumber || "—"}</span>
+                        <span className="font-mono font-bold text-slate-300">{c.containerNumber || "—"}</span>
+                        <span className="font-mono font-bold text-slate-300">{c.containerSize || "—"}</span>
+                        <span className="font-mono font-bold text-slate-300">{c.vehiclePlate || "—"}</span>
                       </div>
                       {o.description && <div className="text-slate-300 font-bold text-xs">{o.description}</div>}
                     </div>
