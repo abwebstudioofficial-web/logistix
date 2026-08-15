@@ -1909,7 +1909,7 @@ function downloadBiltyReceipt(order, data) {
       : [{ containerNumber: order.containerNumber || "", sealNumber: order.sealNumber || "", qtyLabel: order.qtyLabel || "" }];
     const container = containers[0] || {};
 
-    const SCALE = 2.5;
+    const SCALE = 3;
     const INK = "#111827", SUB = "#4b5563", LINE = "#111827", BAR = "#111827";
 
     function box(ctx, x, y, w, h, opts) {
@@ -2098,11 +2098,12 @@ function downloadBiltyReceipt(order, data) {
     const descExtraLines = Math.max(0, descLines.length - 1);
     const fixedRows = 4; // Item Description, DN/LC/SAP No., Job No., B/L No.
     const pBodyH = 18 + fixedRows * 22 + descExtraLines * 16 + containers.length * 40 + 12;
+    const gateBodyH = 110; // Reporting/Gate In/Gate Out section's writable body height
     const srY = 150;
     const infoY = srY + 82;
     const pY = infoY + 26;
     const gY = pY + 24 + pBodyH;
-    const remY = gY + 22 + 70 + 24;
+    const remY = gY + 22 + gateBodyH + 24;
     const fY = remY + 26;
     const H = fY + 30 + 20;
 
@@ -2255,11 +2256,11 @@ function downloadBiltyReceipt(order, data) {
     // ---- gate timestamps ----
     const gCols = [32, 32 + (W - 64) / 3, 32 + 2 * (W - 64) / 3, W - 32];
     ctx.fillStyle = BAR; ctx.fillRect(32, gY, W - 64, 22);
-    for (let i = 1; i < gCols.length - 1; i++) line(ctx, gCols[i], gY, gCols[i], gY + 92);
+    for (let i = 1; i < gCols.length - 1; i++) line(ctx, gCols[i], gY, gCols[i], gY + 22 + gateBodyH);
     txt(ctx, "REPORTING DATE & TIME", (gCols[0] + gCols[1]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
     txt(ctx, "GATE IN DATE & TIME", (gCols[1] + gCols[2]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
     txt(ctx, "GATE OUT DATE & TIME", (gCols[2] + gCols[3]) / 2, gY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "center" });
-    box(ctx, 32, gY, W - 64, 22 + 70, { lw: 1.2 });
+    box(ctx, 32, gY, W - 64, 22 + gateBodyH, { lw: 1.2 });
 
     // ---- remarks ----
     txt(ctx, "Remarks:", 32, remY, { size: 10.5, weight: "bold" });
