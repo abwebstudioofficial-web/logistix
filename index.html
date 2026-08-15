@@ -3897,6 +3897,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
             onClick={() => setFilter(filter === "in_transit" ? "all" : "in_transit")}
             active={filter === "in_transit"}
           />
+          {(shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import") && (
+            <MiniStat
+              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
+              onClick={() => setFilter(filter === "under_offloading" ? "all" : "under_offloading")}
+              active={filter === "under_offloading"}
+            />
+          )}
           {showDeliveredBlock && (showAllDelivered ? (
             <MiniStat
               label="Delivered" value={deliveredAllCount} color="text-emerald-400"
@@ -3910,13 +3917,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
               active={filter === "delivered_today"}
             />
           ))}
-          {(shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import") && (
-            <MiniStat
-              label="Under Offloading" value={underOffloadingCount} color="text-amber-400"
-              onClick={() => setFilter(filter === "under_offloading" ? "all" : "under_offloading")}
-              active={filter === "under_offloading"}
-            />
-          )}
           {showCompletedBlock && (
             <MiniStat
               label="Completed" value={completedCount} color="text-violet-400"
@@ -8921,3 +8921,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
+    
