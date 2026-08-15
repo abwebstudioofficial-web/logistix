@@ -2601,12 +2601,7 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
   const [photo, setPhoto] = useState(c.dispatchPhoto || "");
   const [notes, setNotes] = useState(c.dispatchNotes || "");
   const [dispatchedBy, setDispatchedBy] = useState(c.dispatchedBy || "");
-  const [dispatchAt, setDispatchAt] = useState(() => {
-    if (c.dispatchAt) return c.dispatchAt.slice(0, 16);
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16);
-  });
+  const [dispatchAt, setDispatchAt] = useState(() => (c.dispatchAt ? c.dispatchAt.slice(0, 16) : ""));
   const [transporter, setTransporter] = useState(c.transporter || "");
   const [transporterCustomMode, setTransporterCustomMode] = useState(false);
   const [vehiclePlate, setVehiclePlate] = useState(c.vehiclePlate || "");
@@ -2757,11 +2752,7 @@ function PodModal({ containerLabel, showArrivalReference, existingArrivalDate, o
   const [photo, setPhoto] = useState("");
   const [notes, setNotes] = useState("");
   const [receivedBy, setReceivedBy] = useState("");
-  const [arrivalAt, setArrivalAt] = useState(() => {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16);
-  });
+  const [arrivalAt, setArrivalAt] = useState("");
   const [offloadingAt, setOffloadingAt] = useState("");
   const [busy, setBusy] = useState(false);
   const [photoError, setPhotoError] = useState(null);
@@ -8921,4 +8912,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
-
