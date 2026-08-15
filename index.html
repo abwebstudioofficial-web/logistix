@@ -2061,10 +2061,43 @@ function downloadBiltyReceipt(order, data) {
     }
 
     // ---- Import / Export (unchanged) ----
-    // ---- compute layout height up-front (depends on how many containers there are) ----
+    // ---- compute layout height up-front (depends on how many containers there are AND how
+    // many lines the description wraps to) ----
     const W = 870;
+    const pColsForMeasure = [32, 346, 424, 514, 604, 718, W - 32];
+    // A temporary canvas purely for measuring text width before the real one exists (the real
+    // canvas's size depends on pBodyH, which depends on how many lines the description needs -
+    // can't create the real canvas until that's known).
+    const measureCanvas = document.createElement("canvas");
+    const measureCtx = measureCanvas.getContext("2d");
+    function wrapToWidth(mctx, text, maxWidth, font) {
+      if (!text) return [];
+      mctx.font = font;
+      const words = text.split(/\s+/).filter(Boolean);
+      const lines = [];
+      let current = "";
+      words.forEach((word) => {
+        const candidate = current ? current + " " + word : word;
+        if (mctx.measureText(candidate).width <= maxWidth || !current) {
+          current = candidate;
+        } else {
+          lines.push(current);
+          current = word;
+        }
+      });
+      if (current) lines.push(current);
+      return lines;
+    }
+    measureCtx.font = "bold 10px Arial";
+    const descLabelWidthForWrap = measureCtx.measureText("Item Description:").width;
+    const descFirstLineWidth = pColsForMeasure[1] - pColsForMeasure[0] - 8 - descLabelWidthForWrap - 6 - 8;
+    // Wrap using the narrower first-line width throughout, for every line — slightly
+    // under-uses the space on line 2+ (which don't share the row with the label) but keeps
+    // the wrapping simple and guarantees nothing ever overflows the column.
+    const descLines = wrapToWidth(measureCtx, order.description, descFirstLineWidth, "normal 10.5px Arial");
+    const descExtraLines = Math.max(0, descLines.length - 1);
     const fixedRows = 4; // Item Description, DN/LC/SAP No., Job No., B/L No.
-    const pBodyH = 18 + fixedRows * 22 + containers.length * 40 + 12;
+    const pBodyH = 18 + fixedRows * 22 + descExtraLines * 16 + containers.length * 40 + 12;
     const srY = 150;
     const infoY = srY + 82;
     const pY = infoY + 26;
@@ -2167,34 +2200,25 @@ function downloadBiltyReceipt(order, data) {
 
     // Each row: bold label immediately followed by its value on the SAME line (not stacked).
     let py = pY + 24 + 18;
-    // Shortens text with an ellipsis if it would exceed maxWidth, so a long value can never
-    // visually bleed past its column boundary into the next column (this table's row height
-    // is fixed up-front via fixedRows above, so wrapping onto extra lines isn't an option here
-    // without also reworking that height math).
-    function truncateToWidth(text, maxWidth) {
-      if (!text) return text;
-      ctx.font = "normal 10.5px Arial";
-      if (ctx.measureText(text).width <= maxWidth) return text;
-      let lo = 0, hi = text.length;
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (ctx.measureText(text.slice(0, mid) + "…").width <= maxWidth) lo = mid; else hi = mid - 1;
-      }
-      return text.slice(0, lo) + "…";
-    }
-    function pRow(label, value, maxValueWidth) {
+    function pRow(label, value) {
       txt(ctx, label, pCols[0] + 8, py, { size: 10, weight: "bold" });
-      ctx.font = "bold 10px Arial";
       const lw = ctx.measureText(label).width;
-      const shown = maxValueWidth ? truncateToWidth(value || "—", maxValueWidth) : (value || "—");
-      txt(ctx, shown, pCols[0] + 8 + lw + 6, py, { size: 10.5 });
+      txt(ctx, value || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
       py += 22;
     }
-    // Available width for the value = column width minus left padding, the label itself, and
-    // a bit of right padding before the column boundary at pCols[1].
-    ctx.font = "bold 10px Arial";
-    const descLabelWidth = ctx.measureText("Item Description:").width;
-    pRow("Item Description:", order.description, pCols[1] - pCols[0] - 8 - descLabelWidth - 6 - 8);
+    // Item Description wraps across as many lines as it needs (computed up-front, see
+    // descLines above) rather than being cut off — the table's own height already grew to
+    // fit this, so every line has room without overlapping the row below it.
+    txt(ctx, "Item Description:", pCols[0] + 8, py, { size: 10, weight: "bold" });
+    if (descLines.length === 0) {
+      txt(ctx, "—", pCols[0] + 8 + descLabelWidthForWrap + 6, py, { size: 10.5 });
+      py += 22;
+    } else {
+      descLines.forEach((lineText, i) => {
+        txt(ctx, lineText, pCols[0] + 8 + descLabelWidthForWrap + 6, py, { size: 10.5 });
+        py += i === 0 ? 22 : 16;
+      });
+    }
     pRow("DN / LC / SAP No.:", order.poNumber);
     pRow("Job No.:", order.jobNumber);
     pRow("B/L No.:", order.blNumber);
