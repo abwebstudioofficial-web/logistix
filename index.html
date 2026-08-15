@@ -3984,16 +3984,11 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                   </div>
                 )}
                 <div className="mt-3"><TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={stagesFor(o.shipmentType)} /></div>
-                {shipmentTypeFilter !== "Domestic" && (
-                  <div className="text-slate-500 text-xs mt-1.5 flex items-center gap-1"><Send size={11} />{c.transporter || "No transporter"}</div>
-                )}
                 <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                   <div className="flex items-center gap-3 text-slate-500 text-xs flex-wrap">
+                    <span className="flex items-center gap-1"><Send size={11} />{c.transporter || "No transporter"}</span>
                     {shipmentTypeFilter === "Domestic" && (
-                      <>
-                        <span className="flex items-center gap-1"><Send size={11} />{c.transporter || "No transporter"}</span>
-                        <span className="flex items-center gap-1"><Truck size={11} />{c.vehiclePlate || "Unassigned"}</span>
-                      </>
+                      <span className="flex items-center gap-1"><Truck size={11} />{c.vehiclePlate || "Unassigned"}</span>
                     )}
                     {!isEmptyReturnReceiver && !isReceiver && c.freightAmount !== "" && c.freightAmount !== undefined && c.freightAmount !== null && (
                       <span className="flex items-center gap-1"><Banknote size={11} />{formatPKR(c.freightAmount)}</span>
@@ -4008,6 +4003,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                       </>
                     )}
                     {shipmentTypeFilter === "Domestic" && <span>ETA {fmtDateISO(o.eta)}</span>}
+                    {showPod && c.podPhoto && (
+                      <a
+                        href={c.podPhoto}
+                        download={`pod-${c.containerNumber || o.orderNumber}.jpg`}
+                        className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                      ><FileText size={11} /> {`pod-${c.containerNumber || o.orderNumber}.jpg`}</a>
+                    )}
                     {canEditDispatch && si >= 1 && (
                       <button
                         className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
@@ -4057,18 +4059,6 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     )}
                   </div>
                 </div>
-                {showPod && c.podPhoto && (
-                  <div className="mt-3 pt-3 border-t border-slate-800/60">
-                    <div className="text-slate-400 text-xs font-medium mb-1.5 flex items-center gap-1"><CheckCircle2 size={12} className="text-emerald-500" />Proof of Delivery</div>
-                    <a
-                      href={c.podPhoto}
-                      download={`pod-${c.containerNumber || o.orderNumber}.jpg`}
-                      className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2 w-fit"
-                    >
-                      <FileText size={16} /> {`pod-${c.containerNumber || o.orderNumber}.jpg`}
-                    </a>
-                  </div>
-                )}
               </div>
             );
           })}
