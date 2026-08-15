@@ -6580,12 +6580,10 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     />
                   </Field>
                 </div>
-                <div className="mb-2">
+                <div className="grid grid-cols-3 gap-2 mb-2">
                   <Field label="Weight (kg)">
                     <input type="number" min="0" className={inputCls} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
                   </Field>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mb-2">
                   <Field label="Priority">
                     <select className={inputCls} value={c.priority} onChange={(e) => setContainerField(c.id, "priority", e.target.value)}>
                       {PRIORITIES.map((p) => <option key={p} value={p}>{p} priority</option>)}
@@ -6600,31 +6598,30 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     </select>
                   </Field>
                 </div>
-                <div className="grid grid-cols-2 gap-2 mb-2">
+                <div className="grid grid-cols-3 gap-2 mb-2">
                   <Field label="Origin (Loading Point)"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="Origin (Loading Point), e.g. Karachi" /></Field>
                   <Field label="Destination"><input className={inputCls} value={c.destination} onChange={(e) => setContainerField(c.id, "destination", e.target.value)} placeholder="Destination, e.g. Lahore" /></Field>
-                </div>
-                <Field label="Receiver's Address">
-                  {cSavedAddresses.length > 0 ? (
-                    <select
-                      className={inputCls}
-                      value={c.receiverAddressId || "__custom__"}
-                      onChange={(e) => setContainerField(c.id, "receiverAddressId", e.target.value === "__custom__" ? "" : e.target.value)}
-                    >
-                      <option value="__custom__">Receiver's Address — custom</option>
-                      {cSavedAddresses.map((a) => <option key={a.id} value={a.id}>{a.label || a.address}</option>)}
-                    </select>
-                  ) : null}
-                  {(cSavedAddresses.length === 0 || !c.receiverAddressId) && (
-                    <input
-                      className={inputCls}
-                      style={cSavedAddresses.length > 0 ? { marginTop: 8 } : undefined}
-                      value={c.receiverAddressCustom}
-                      onChange={(e) => setContainerField(c.id, "receiverAddressCustom", e.target.value)}
-                      placeholder="Receiver's address"
-                    />
-                  )}
-                </Field>
+                  <Field label="Receiver's Address">
+                    {cSavedAddresses.length > 0 ? (
+                      <select
+                        className={inputCls}
+                        value={c.receiverAddressId || "__custom__"}
+                        onChange={(e) => setContainerField(c.id, "receiverAddressId", e.target.value === "__custom__" ? "" : e.target.value)}
+                      >
+                        <option value="__custom__">Receiver's Address — custom</option>
+                        {cSavedAddresses.map((a) => <option key={a.id} value={a.id}>{a.label || a.address}</option>)}
+                      </select>
+                    ) : null}
+                    {(cSavedAddresses.length === 0 || !c.receiverAddressId) && (
+                      <input
+                        className={inputCls}
+                        style={cSavedAddresses.length > 0 ? { marginTop: 8 } : undefined}
+                        value={c.receiverAddressCustom}
+                        onChange={(e) => setContainerField(c.id, "receiverAddressCustom", e.target.value)}
+                        placeholder="Receiver's address"
+                      />
+                    )}
+                  </Field>
                 </div>
                 )}
               </div>
