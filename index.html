@@ -2167,30 +2167,51 @@ function downloadBiltyReceipt(order, data) {
 
     // Each row: bold label immediately followed by its value on the SAME line (not stacked).
     let py = pY + 24 + 18;
-    function pRow(label, value) {
+    // Shortens text with an ellipsis if it would exceed maxWidth, so a long value can never
+    // visually bleed past its column boundary into the next column (this table's row height
+    // is fixed up-front via fixedRows above, so wrapping onto extra lines isn't an option here
+    // without also reworking that height math).
+    function truncateToWidth(text, maxWidth) {
+      if (!text) return text;
+      ctx.font = "normal 10.5px Arial";
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      let lo = 0, hi = text.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (ctx.measureText(text.slice(0, mid) + "…").width <= maxWidth) lo = mid; else hi = mid - 1;
+      }
+      return text.slice(0, lo) + "…";
+    }
+    function pRow(label, value, maxValueWidth) {
       txt(ctx, label, pCols[0] + 8, py, { size: 10, weight: "bold" });
+      ctx.font = "bold 10px Arial";
       const lw = ctx.measureText(label).width;
-      txt(ctx, value || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
+      const shown = maxValueWidth ? truncateToWidth(value || "—", maxValueWidth) : (value || "—");
+      txt(ctx, shown, pCols[0] + 8 + lw + 6, py, { size: 10.5 });
       py += 22;
     }
-    pRow("Item Description:", order.description);
+    // Available width for the value = column width minus left padding, the label itself, and
+    // a bit of right padding before the column boundary at pCols[1].
+    ctx.font = "bold 10px Arial";
+    const descLabelWidth = ctx.measureText("Item Description:").width;
+    pRow("Item Description:", order.description, pCols[1] - pCols[0] - 8 - descLabelWidth - 6 - 8);
     pRow("DN / LC / SAP No.:", order.poNumber);
     pRow("Job No.:", order.jobNumber);
     pRow("B/L No.:", order.blNumber);
 
-    // One row per container — Container No. and Seal No. each get their own line
-    // (previously crammed onto one line, which overlapped the QTY column at long values).
+    // Container No. and Seal No. on one line per container.
     const qtyRows = [];
     containers.forEach((c) => {
       txt(ctx, "Container No.:", pCols[0] + 8, py, { size: 10, weight: "bold" });
       let lw = ctx.measureText("Container No.:").width;
-      txt(ctx, c.containerNumber || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
+      let x = pCols[0] + 8 + lw + 6;
+      txt(ctx, c.containerNumber || "—", x, py, { size: 10.5 });
+      x += ctx.measureText(c.containerNumber || "—").width + 16;
+      txt(ctx, "Seal No.:", x, py, { size: 10, weight: "bold" });
+      x += ctx.measureText("Seal No.:").width + 6;
+      txt(ctx, c.sealNumber || "—", x, py, { size: 10.5 });
       qtyRows.push({ y: py, qty: containerSizeTypeLabel(c) || "01" });
-      py += 20;
-      txt(ctx, "Seal No.:", pCols[0] + 8, py, { size: 10, weight: "bold" });
-      lw = ctx.measureText("Seal No.:").width;
-      txt(ctx, c.sealNumber || "—", pCols[0] + 8 + lw + 6, py, { size: 10.5 });
-      py += 20;
+      py += 22;
     });
     qtyRows.forEach((q) => txt(ctx, q.qty, (pCols[1] + pCols[2]) / 2, q.y, { size: 11, align: "center" }));
 
