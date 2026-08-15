@@ -2595,7 +2595,7 @@ function ConfirmModal({ title, message, confirmLabel, danger = true, onConfirm, 
   );
 }
 
-function DispatchModal({ containerLabel, initial, transporters, isDomestic, onClose, onConfirm }) {
+function DispatchModal({ containerLabel, initial, transporters, isDomestic, contracts, contractGroups, customerId, loadingPoint, onClose, onConfirm }) {
   const c = initial || {};
   const isEdit = !!initial;
   const [photo, setPhoto] = useState(c.dispatchPhoto || "");
@@ -2614,6 +2614,37 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
   const [busy, setBusy] = useState(false);
   const [photoError, setPhotoError] = useState(null);
   const [formError, setFormError] = useState(null);
+
+  // Apply Contract Rate: when Yes, Freight Amount is looked up automatically from this
+  // customer's contract rates (matching Loading Point, Destination, Movement Through,
+  // Vehicle Size, and Vehicle Type — same rate table whether the shipment is Import or
+  // Domestic, since a customer's contract isn't split by shipment type) rather than typed
+  // in manually. Starts blank (not defaulted to either option) since it's a required choice.
+  const [applyContractRate, setApplyContractRate] = useState(c.applyContractRate || "");
+  const [movementThrough, setMovementThrough] = useState(c.movementThrough || "");
+  const [vehicleSize, setVehicleSize] = useState(c.vehicleSize || c.containerSize || "");
+  const [vehicleType, setVehicleType] = useState(c.vehicleType || "");
+
+  const matchedContractRate = useMemo(() => {
+    if (applyContractRate !== "yes") return null;
+    const norm = (v) => (v || "").trim().toLowerCase();
+    const destination = norm(c.destination);
+    const match = (contracts || []).find((k) =>
+      k.customerId === customerId &&
+      norm(k.loadingPoint) === norm(loadingPoint) &&
+      norm(k.destination) === destination &&
+      norm(k.movementThrough) === norm(movementThrough) &&
+      norm(k.vehicleSize) === norm(vehicleSize) &&
+      norm(k.axleLoadCategory) === norm(vehicleType)
+    );
+    if (!match) return null;
+    const groupsById = new Map((contractGroups || []).map((g) => [g.id, g]));
+    return { ...match, group: match.contractGroupId ? groupsById.get(match.contractGroupId) : null };
+  }, [applyContractRate, contracts, contractGroups, customerId, loadingPoint, c.destination, movementThrough, vehicleSize, vehicleType]);
+
+  useEffect(() => {
+    if (applyContractRate === "yes" && matchedContractRate) setFreightAmount(matchedContractRate.rate);
+  }, [applyContractRate, matchedContractRate]);
 
   const transporterNames = (transporters || []).map((t) => t.name);
   const isKnownTransporter = !!transporter && transporterNames.includes(transporter);
@@ -2636,6 +2667,14 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
     e.preventDefault();
     setFormError(null);
     if (!isDomestic && !photo) { setPhotoError("A loading photo or document is required to confirm dispatch."); return; }
+    if (applyContractRate !== "yes" && applyContractRate !== "no") {
+      setFormError("Apply Contract Rate is required — select Yes or No.");
+      return;
+    }
+    if (applyContractRate === "yes" && !matchedContractRate) {
+      setFormError("Rate not available for this route.");
+      return;
+    }
     if (!isDomestic && (!transporter.trim() || !vehiclePlate.trim() || freightAmount === "" || !emptyReturnLocation.trim())) {
       setFormError("Transporter, Vehicle No., Freight Amount, and Empty Return Location are all required.");
       return;
@@ -2661,6 +2700,7 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
       shifting,
       shiftedContainerNo: shifting === "yes" ? shiftedContainerNo.trim() : "",
       shiftEmptyReturnDate: shifting === "yes" ? shiftEmptyReturnDate : "",
+      applyContractRate, movementThrough: movementThrough.trim(), vehicleSize: vehicleSize.trim(), vehicleType: vehicleType.trim(),
     });
   }
 
@@ -2696,9 +2736,38 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, onCl
           </Field>
           <Field label="Vehicle No."><input className={inputCls} value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="Vehicle number" /></Field>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Vehicle Size"><input className={inputCls} value={vehicleSize} onChange={(e) => setVehicleSize(e.target.value)} placeholder="e.g. 40'" /></Field>
+          <Field label="Vehicle Type">
+            <DropdownWithCustom
+              value={vehicleType} onChange={setVehicleType} options={AXLE_LOAD_CATEGORIES}
+              selectPlaceholder="Select vehicle type" customPlaceholder="e.g. 5x"
+            />
+          </Field>
+        </div>
+        <Field label="Movement Through">
+          <select className={inputCls} value={movementThrough} onChange={(e) => setMovementThrough(e.target.value)}>
+            <option value="">Select</option>
+            {MOVEMENT_THROUGH_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Field>
+        <Field label="Apply Contract Rate">
+          <select className={inputCls} value={applyContractRate} onChange={(e) => setApplyContractRate(e.target.value)} required>
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </Field>
+        {applyContractRate === "yes" && !matchedContractRate && (
+          <p className="text-red-400 text-xs mb-3 -mt-2">Rate not available for this route.</p>
+        )}
         <div className={cx("grid gap-3", isDomestic ? "grid-cols-1" : "grid-cols-2")}>
           <Field label="Freight Amount (PKR)">
-            <input type="number" min="0" className={inputCls} value={freightAmount} onChange={(e) => setFreightAmount(e.target.value)} />
+            <input
+              type="number" min="0" className={inputCls} value={freightAmount}
+              onChange={(e) => setFreightAmount(e.target.value)}
+              readOnly={applyContractRate === "yes" && !!matchedContractRate}
+            />
           </Field>
           {!isDomestic && (
             <Field label="Empty Return Location"><input className={inputCls} value={emptyReturnLocation} onChange={(e) => setEmptyReturnLocation(e.target.value)} /></Field>
@@ -4013,7 +4082,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     {canEditDispatch && si >= 1 && (
                       <button
                         className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                        onClick={() => setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: c })}
+                        onClick={() => setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: c, customerId: o.customerId, origin: o.origin })}
                       ><Pencil size={11} /> Edit</button>
                     )}
                   </div>
@@ -4040,7 +4109,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                           if (nextIdx === arrivalStageIndex) setArrivalTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else if (nextIdx === podStageIndex) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, stageIndex: podStageIndex });
                           else if (nextIdx === completedStageIndex) setEmptyReturnTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, defaultLocation: c.emptyReturnLocation || "" });
-                          else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null });
+                          else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null, customerId: o.customerId, origin: o.origin });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
                       >
@@ -4098,6 +4167,10 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
           initial={dispatchTarget.editingContainer}
           transporters={data.transporters}
           isDomestic={shipmentTypeFilter === "Domestic"}
+          contracts={data.contracts}
+          contractGroups={data.contract_groups}
+          customerId={dispatchTarget.customerId}
+          loadingPoint={dispatchTarget.origin}
           onClose={() => setDispatchTarget(null)}
           onConfirm={(dispatchData) => {
             if (dispatchTarget.editingContainer) updateContainerFields(dispatchTarget.orderId, dispatchTarget.containerId, dispatchData);
@@ -4824,7 +4897,7 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Movement Through</th>
                 <SortableTh label="Vehicle Size" active={rateSortCol === "vehicle"} direction={rateSortDir} onSort={(dir) => sortRate("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Axle Load Category</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Vehicle Type</th>
                 <SortableTh label="Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 {canCalculate && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
@@ -4908,10 +4981,10 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
           />
         </Field>
       </div>
-      <Field label="Axle Load Category">
+      <Field label="Vehicle Type">
         <DropdownWithCustom
           value={axleLoadCategory} onChange={setAxleLoadCategory} options={AXLE_LOAD_CATEGORIES}
-          selectPlaceholder="Select axle load" customPlaceholder="e.g. 5x"
+          selectPlaceholder="Select vehicle type" customPlaceholder="e.g. 5x"
         />
       </Field>
       <Field label="Agreed Rate (PKR)"><input type="number" min="0" className={inputCls} value={rate} onChange={(e) => setRate(e.target.value)} /></Field>
