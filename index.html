@@ -3013,6 +3013,22 @@ function Sidebar({
                 );
               })}
             </nav>
+            {(session.role === "admin" || session.role === "data_entry") && (
+              <div className="mt-4 pt-3 border-t border-slate-800">
+                <div className="text-slate-600 text-xs font-semibold tracking-wider px-2 mb-2">EXTERNAL</div>
+                <div className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-slate-900 hover:text-slate-200 transition-colors group">
+                  <button onClick={onOpenFleetLink} className="flex items-center gap-2.5 flex-1 text-left" title={fleetUrl ? "Open Fleet & Drivers site" : "Set up the Fleet & Drivers site link"}>
+                    <Truck size={17} /> Fleet &amp; Drivers
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {fleetUrl && <ExternalLink size={13} className="text-slate-600" />}
+                    <button onClick={onEditFleetLink} title="Set or change the Fleet & Drivers site URL" className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-slate-300 p-0.5">
+                      <Pencil size={12} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="p-3 border-t border-slate-800">
