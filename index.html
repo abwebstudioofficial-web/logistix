@@ -6361,19 +6361,21 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
             {DOMESTIC_CATEGORIES.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         </Field>
-        <Field label="Customer">
-          <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            <option value="">Select customer</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          {customers.length === 0 && <p className="text-amber-500 text-xs mt-1.5">Add a customer first from the Customers page.</p>}
-        </Field>
-        <Field label="Sender Name">
-          <select className={inputCls} value={senderId} onChange={(e) => { setSenderId(e.target.value); setSenderAddress(""); }}>
-            <option value="">Select sender (optional)</option>
-            {senderList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Customer">
+            <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+              <option value="">Select customer</option>
+              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {customers.length === 0 && <p className="text-amber-500 text-xs mt-1.5">Add a customer first from the Customers page.</p>}
+          </Field>
+          <Field label="Sender Name">
+            <select className={inputCls} value={senderId} onChange={(e) => { setSenderId(e.target.value); setSenderAddress(""); }}>
+              <option value="">Select sender (optional)</option>
+              {senderList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </Field>
+        </div>
         <Field label="Sender Address">
           {senderAddresses.length > 0 && (
             <select
@@ -6444,25 +6446,26 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
       <div className="mb-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-600/10 text-blue-400 border border-blue-800/50">
         {resolvedShipmentType} Order
       </div>
-      <Field label="Customer">
-        <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-          <option value="">Select customer</option>
-          {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {customers.length === 0 && <p className="text-amber-500 text-xs mt-1.5">Add a customer first from the Customers page.</p>}
-      </Field>
-
-      <Field label="Sender Name">
-        <select
-          className={inputCls}
-          value={senderId}
-          onChange={(e) => { setSenderId(e.target.value); setSenderAddress(""); }}
-        >
-          <option value="">Select sender (optional)</option>
-          {senderList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        {senderList.length === 0 && <p className="text-slate-500 text-xs mt-1.5">No senders saved yet — add one from the Senders page to get a dropdown here.</p>}
-      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Customer">
+          <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+            <option value="">Select customer</option>
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {customers.length === 0 && <p className="text-amber-500 text-xs mt-1.5">Add a customer first from the Customers page.</p>}
+        </Field>
+        <Field label="Sender Name">
+          <select
+            className={inputCls}
+            value={senderId}
+            onChange={(e) => { setSenderId(e.target.value); setSenderAddress(""); }}
+          >
+            <option value="">Select sender (optional)</option>
+            {senderList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {senderList.length === 0 && <p className="text-slate-500 text-xs mt-1.5">No senders saved yet — add one from the Senders page to get a dropdown here.</p>}
+        </Field>
+      </div>
 
       <Field label="Sender Address">
         {senderAddresses.length > 0 && (
@@ -6612,24 +6615,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     />
                   )}
                 </div>
-                <div className="grid grid-cols-2 gap-2 mb-2">
-                  <input type="number" min="0" className={inputCls} value={c.amount} onChange={(e) => setContainerField(c.id, "amount", e.target.value)} placeholder="Amount (PKR)" />
-                  <input type="number" min="0" className={inputCls} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
-                </div>
-                {role !== "data_entry" && (
-                  <input className={cx(inputCls, "mb-2")} value={c.transporter} onChange={(e) => setContainerField(c.id, "transporter", e.target.value)} placeholder="Transporter" />
-                )}
-                {(!role || role === "admin") && (
-                  <div className="mt-2 pt-2 border-t border-slate-800">
-                    <label className="text-slate-500 text-xs font-medium block mb-1.5">Empty Return</label>
-                    <input className={cx(inputCls, "mb-2")} value={c.emptyReturnLocation} onChange={(e) => setContainerField(c.id, "emptyReturnLocation", e.target.value)} placeholder="Empty Return Location" />
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                      <input type="date" className={inputCls} value={c.emptyReturnDate || ""} onChange={(e) => setContainerField(c.id, "emptyReturnDate", e.target.value)} placeholder="Empty Return Date" />
-                      <input type="time" className={inputCls} value={c.emptyReturnTime || ""} onChange={(e) => setContainerField(c.id, "emptyReturnTime", e.target.value)} placeholder="Empty Return Time" />
-                    </div>
-                    <textarea className={inputCls} rows={2} value={c.emptyReturnDescription || ""} onChange={(e) => setContainerField(c.id, "emptyReturnDescription", e.target.value)} placeholder="Empty return notes (condition, gate, etc.)" />
-                  </div>
-                )}
+                <input type="number" min="0" className={cx(inputCls, "mb-2")} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
                 {role !== "data_entry" && (
                   <div className="mt-2 pt-2 border-t border-slate-800">
                     <label className="text-slate-500 text-xs font-medium block mb-1.5">Transporter Bill</label>
@@ -7221,46 +7207,6 @@ function OrderDetail({ order, data }) {
                   <div className="mt-3">
                     <TrackingProgress stageIndex={c.stageIndex ?? 0} cancelled={!!c.cancelled} stages={order.shipmentType === "Import" ? IMPORT_STAGES : STAGES} />
                   </div>
-                  {(c.dispatchPhoto || c.dispatchNotes || c.dispatchAt) && (
-                    <div className="mt-3 pt-3 border-t border-slate-800">
-                      <div className="text-slate-300 text-xs font-semibold mb-2 flex items-center gap-1.5"><Send size={13} className="text-blue-500" />Dispatch Details</div>
-                      <div className="grid grid-cols-2 gap-y-1.5 text-sm mb-2">
-                        <div className="text-slate-500 text-xs">Current Status</div><div className="text-right"><Badge text={trackingDisplayStatus(c, order.shipmentType)} className={orderStatusColor[trackingDisplayStatus(c, order.shipmentType)]} /></div>
-                        {c.dispatchAt && (<><div className="text-slate-500 text-xs">Dispatched</div><div className="text-slate-200 text-right">{fmtDateTime(c.dispatchAt)}</div></>)}
-                        {c.dispatchedBy && (<><div className="text-slate-500 text-xs">Dispatched By</div><div className="text-slate-200 text-right">{c.dispatchedBy}</div></>)}
-                      </div>
-                      {c.dispatchNotes && <div className="text-slate-300 text-sm bg-slate-900/60 rounded-lg p-2 mb-2">{c.dispatchNotes}</div>}
-                      <AttachmentPreview dataUrl={c.dispatchPhoto} alt="Dispatch photo" downloadName={`dispatch-${c.containerNumber || order.orderNumber}.jpg`} />
-                    </div>
-                  )}
-                  {(c.podPhoto || c.podNotes || c.podArrivalAt || c.podOffloadingAt) && (
-                    <div className="mt-3 pt-3 border-t border-slate-800">
-                      <div className="text-slate-300 text-xs font-semibold mb-2 flex items-center gap-1.5"><CheckCircle2 size={13} className="text-emerald-500" />Proof of Delivery</div>
-                      <div className="grid grid-cols-2 gap-y-1.5 text-sm mb-2">
-                        {c.podArrivalAt && (<><div className="text-slate-500 text-xs">Arrived</div><div className="text-slate-200 text-right">{fmtDateTime(c.podArrivalAt)}</div></>)}
-                        {c.podOffloadingAt && (<><div className="text-slate-500 text-xs">Offloading Date &amp; Time</div><div className="text-slate-200 text-right">{fmtDateTime(c.podOffloadingAt)}</div></>)}
-                        {c.podReceivedBy && (<><div className="text-slate-500 text-xs">Received By</div><div className="text-slate-200 text-right">{c.podReceivedBy}</div></>)}
-                      </div>
-                      {c.podNotes && <div className="text-slate-300 text-sm bg-slate-900/60 rounded-lg p-2 mb-2">{c.podNotes}</div>}
-                      <AttachmentPreview dataUrl={c.podPhoto} alt="Proof of delivery" downloadName={`pod-${c.containerNumber || order.orderNumber}.jpg`} />
-                    </div>
-                  )}
-                  {Array.isArray(c.history) && c.history.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-800">
-                      <div className="text-slate-300 text-xs font-semibold mb-2 flex items-center gap-1.5"><Clock size={13} className="text-slate-400" />Activity Log</div>
-                      <div className="space-y-2.5">
-                        {[...c.history].reverse().map((h, i) => (
-                          <div key={h.id || i} className="text-xs flex items-start justify-between gap-2">
-                            <div>
-                              <span className="text-slate-200">{h.message}</span>
-                              {h.by && <span className="text-slate-500"> — by {h.by}</span>}
-                            </div>
-                            <span className="text-slate-500 whitespace-nowrap">{fmtDateTime(h.at)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
