@@ -2840,7 +2840,7 @@ function PodModal({ containerLabel, showArrivalReference, existingArrivalDate, o
 // box has gone back to the empty yard: the date it happened and any notes. This is what
 // advances a container from Delivered (3) to the Import-only Completed (4) stage.
 function EmptyReturnModal({ containerLabel, defaultLocation, onClose, onConfirm }) {
-  const [emptyReturnDate, setEmptyReturnDate] = useState(todayISO());
+  const [emptyReturnDate, setEmptyReturnDate] = useState("");
   const [emptyReturnDescription, setEmptyReturnDescription] = useState("");
 
   function submit(e) {
@@ -5698,7 +5698,7 @@ function FuelForm({ initial, prefill, vehicles, onSave, onCancel }) {
   const f = initial || prefill || {};
   const [vehicleId, setVehicleId] = useState(f.vehicleId || "");
   const [cardNumber, setCardNumber] = useState(f.cardNumber || "");
-  const [allocatedDate, setAllocatedDate] = useState(f.allocatedDate || todayISO());
+  const [allocatedDate, setAllocatedDate] = useState(f.allocatedDate || "");
   const selectedVehicle = vehicles.find((v) => v.id === vehicleId);
 
   function submit(e) {
@@ -5723,7 +5723,7 @@ function FuelForm({ initial, prefill, vehicles, onSave, onCancel }) {
         </div>
       )}
       <Field label="Fuel Card Number"><input className={inputCls} value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} placeholder="Card number" /></Field>
-      <Field label="Allocated Date"><input type="date" className={inputCls} value={allocatedDate} onChange={(e) => setAllocatedDate(e.target.value)} /></Field>
+      <Field label="Allocated Date"><input type="date" className={inputCls} value={allocatedDate} onChange={(e) => setAllocatedDate(e.target.value)} required /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
         <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Fuel Card"}</button>
@@ -5762,7 +5762,7 @@ function SwapRow({ s, dateLabel, openModal, askDelete, fuelPriceMode }) {
 function FuelCardSwapForm({ initial, prefill, transporters, fuelPrices, fuelPriceMode, onSave, onCancel }) {
   const isEdit = !!initial;
   const f = initial || prefill || {};
-  const [swapDate, setSwapDate] = useState(f.swapDate || todayISO());
+  const [swapDate, setSwapDate] = useState(f.swapDate || "");
   const [department, setDepartment] = useState(f.department || "");
   const [swappedBy, setSwappedBy] = useState(f.swappedBy || "");
   const [cardNumber, setCardNumber] = useState(f.cardNumber || "");
@@ -5787,7 +5787,7 @@ function FuelCardSwapForm({ initial, prefill, transporters, fuelPrices, fuelPric
   return (
     <form onSubmit={submit}>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Swap Date"><input type="date" className={inputCls} value={swapDate} onChange={(e) => setSwapDate(e.target.value)} /></Field>
+        <Field label="Swap Date"><input type="date" className={inputCls} value={swapDate} onChange={(e) => setSwapDate(e.target.value)} required /></Field>
         <Field label="Department">
           <select className={inputCls} value={department} onChange={(e) => setDepartment(e.target.value)}>
             <option value="">Select department</option>
@@ -5824,7 +5824,7 @@ function FuelPriceForm({ initial, onSave, onCancel }) {
   const isEdit = !!initial;
   const f = initial || {};
   const [pricePerLiter, setPricePerLiter] = useState(f.pricePerLiter ?? "");
-  const [effectiveDate, setEffectiveDate] = useState(f.effectiveDate || todayISO());
+  const [effectiveDate, setEffectiveDate] = useState(f.effectiveDate || "");
 
   function submit(e) {
     e.preventDefault();
@@ -5836,7 +5836,7 @@ function FuelPriceForm({ initial, onSave, onCancel }) {
     <form onSubmit={submit}>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Price per Liter (PKR)"><input type="number" min="0" step="0.01" className={inputCls} value={pricePerLiter} onChange={(e) => setPricePerLiter(e.target.value)} placeholder="e.g. 281" /></Field>
-        <Field label="Effective Date"><input type="date" className={inputCls} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></Field>
+        <Field label="Effective Date"><input type="date" className={inputCls} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} required /></Field>
       </div>
       <p className="text-slate-600 text-xs -mt-1">Applies to shipments dispatched on or after this date, until a newer price is added.</p>
       <div className="flex justify-end gap-2 mt-2">
@@ -6177,7 +6177,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
   const [customerId, setCustomerId] = useState(o.customerId || "");
   const [origin, setOrigin] = useState(o.origin || "");
   const [description, setDescription] = useState(o.description || "");
-  const [eta, setEta] = useState(o.eta || addDaysISO(todayISO(), 3));
+  const [eta, setEta] = useState(o.eta || "");
   const [shipping, setShipping] = useState(() => {
     const init = {};
     SHIPPING_FIELDS.forEach((f) => { init[f.key] = o[f.key] || f.default || ""; });
@@ -6609,7 +6609,7 @@ function VehicleForm({ initial, drivers, onSave, onCancel }) {
   const [year, setYear] = useState(v.year || new Date().getFullYear());
   const [capacityKg, setCapacityKg] = useState(v.capacityKg ?? "");
   const [mileageKm, setMileageKm] = useState(v.mileageKm ?? "");
-  const [lastService, setLastService] = useState(v.lastService || todayISO());
+  const [lastService, setLastService] = useState(v.lastService || "");
   const [driverId, setDriverId] = useState(v.driverId || "");
   const [status, setStatus] = useState(v.status || "active");
   const driverOptions = drivers.filter((d) => d.role === "Driver");
@@ -6779,8 +6779,8 @@ function InvoiceForm({ initial, prefill, orders, customers, onSave, onCancel }) 
   const [orderId, setOrderId] = useState(inv.orderId || "");
   const [containerId, setContainerId] = useState(inv.containerId || "");
   const [customerId, setCustomerId] = useState(inv.customerId || "");
-  const [issued, setIssued] = useState(inv.issued || todayISO());
-  const [due, setDue] = useState(inv.due || addDaysISO(todayISO(), 30));
+  const [issued, setIssued] = useState(inv.issued || "");
+  const [due, setDue] = useState(inv.due || "");
   const [total, setTotal] = useState(inv.total ?? "");
   const [status, setStatus] = useState(inv.status || "Draft");
 
@@ -8921,4 +8921,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
-    
+
