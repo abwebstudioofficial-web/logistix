@@ -6489,13 +6489,11 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
         )}
       </Field>
 
-      <Field label="Est. Delivery Date"><input type="date" className={inputCls} value={eta} onChange={(e) => setEta(e.target.value)} /></Field>
-
       <div className="pt-3 mt-1 mb-3 border-t border-slate-800">
         <h4 className="text-slate-300 text-sm font-semibold">Shipment Details</h4>
         <p className="text-slate-500 text-xs mt-0.5">Customs &amp; documentation info — shown on the bilty receipt.</p>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {SHIPPING_FIELDS.map((f) => (
           <Field key={f.key} label={f.label}>
             {f.options ? (
