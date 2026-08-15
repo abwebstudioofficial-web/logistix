@@ -6560,43 +6560,51 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                 {isExpanded && (
                 <div className="animate-fade-in-up">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-                  <input className={inputCls} value={c.containerNumber} onChange={(e) => setContainerField(c.id, "containerNumber", e.target.value)} placeholder="Container No." />
-                  <input className={inputCls} value={c.sealNumber} onChange={(e) => setContainerField(c.id, "sealNumber", e.target.value)} placeholder="Seal No." />
-                  <input className={inputCls} value={c.qtyLabel} onChange={(e) => setContainerField(c.id, "qtyLabel", e.target.value)} placeholder="Qty, e.g. 40'" />
+                  <Field label="Container No."><input className={inputCls} value={c.containerNumber} onChange={(e) => setContainerField(c.id, "containerNumber", e.target.value)} placeholder="Container No." /></Field>
+                  <Field label="Seal No."><input className={inputCls} value={c.sealNumber} onChange={(e) => setContainerField(c.id, "sealNumber", e.target.value)} placeholder="Seal No." /></Field>
+                  <Field label="Qty"><input className={inputCls} value={c.qtyLabel} onChange={(e) => setContainerField(c.id, "qtyLabel", e.target.value)} placeholder="Qty, e.g. 40'" /></Field>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                  <input
-                    className={inputCls} list="container-size-options"
-                    value={c.containerSize} onChange={(e) => setContainerField(c.id, "containerSize", e.target.value)}
-                    placeholder="Container Size"
-                  />
-                  <input
-                    className={inputCls} list="container-type-options"
-                    value={c.containerType} onChange={(e) => setContainerField(c.id, "containerType", e.target.value)}
-                    placeholder="Container Type"
-                  />
+                  <Field label="Container Size">
+                    <input
+                      className={inputCls} list="container-size-options"
+                      value={c.containerSize} onChange={(e) => setContainerField(c.id, "containerSize", e.target.value)}
+                      placeholder="Container Size"
+                    />
+                  </Field>
+                  <Field label="Container Type">
+                    <input
+                      className={inputCls} list="container-type-options"
+                      value={c.containerType} onChange={(e) => setContainerField(c.id, "containerType", e.target.value)}
+                      placeholder="Container Type"
+                    />
+                  </Field>
                 </div>
                 {role !== "data_entry" && (
                   <div className="mb-2">
-                    <input className={inputCls} value={c.vehiclePlate || ""} onChange={(e) => setContainerField(c.id, "vehiclePlate", e.target.value)} placeholder="Vehicle No." />
+                    <Field label="Vehicle No."><input className={inputCls} value={c.vehiclePlate || ""} onChange={(e) => setContainerField(c.id, "vehiclePlate", e.target.value)} placeholder="Vehicle No." /></Field>
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-2 mb-2">
-                  <select className={inputCls} value={c.priority} onChange={(e) => setContainerField(c.id, "priority", e.target.value)}>
-                    {PRIORITIES.map((p) => <option key={p} value={p}>{p} priority</option>)}
-                  </select>
-                  <select className={inputCls} value={statusChoiceValue} onChange={(e) => setContainerStatus(c.id, e.target.value)}>
-                    {(role === "data_entry"
-                      ? ["Confirmed", "Cancelled"]
-                      : resolvedShipmentType === "Import" ? ["Confirmed", "In Transit", "Under Offloading", "Delivered", "Completed", "Cancelled"] : ORDER_STATUSES
-                    ).map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  <Field label="Priority">
+                    <select className={inputCls} value={c.priority} onChange={(e) => setContainerField(c.id, "priority", e.target.value)}>
+                      {PRIORITIES.map((p) => <option key={p} value={p}>{p} priority</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Status">
+                    <select className={inputCls} value={statusChoiceValue} onChange={(e) => setContainerStatus(c.id, e.target.value)}>
+                      {(role === "data_entry"
+                        ? ["Confirmed", "Cancelled"]
+                        : resolvedShipmentType === "Import" ? ["Confirmed", "In Transit", "Under Offloading", "Delivered", "Completed", "Cancelled"] : ORDER_STATUSES
+                      ).map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-2 mb-2">
-                  <input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="Origin (Loading Point), e.g. Karachi" />
-                  <input className={inputCls} value={c.destination} onChange={(e) => setContainerField(c.id, "destination", e.target.value)} placeholder="Destination, e.g. Lahore" />
+                  <Field label="Origin (Loading Point)"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="Origin (Loading Point), e.g. Karachi" /></Field>
+                  <Field label="Destination"><input className={inputCls} value={c.destination} onChange={(e) => setContainerField(c.id, "destination", e.target.value)} placeholder="Destination, e.g. Lahore" /></Field>
                 </div>
-                <div className="mb-2">
+                <Field label="Receiver's Address">
                   {cSavedAddresses.length > 0 ? (
                     <select
                       className={inputCls}
@@ -6616,8 +6624,10 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                       placeholder="Receiver's address"
                     />
                   )}
-                </div>
-                <input type="number" min="0" className={cx(inputCls, "mb-2")} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
+                </Field>
+                <Field label="Weight (kg)">
+                  <input type="number" min="0" className={inputCls} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
+                </Field>
                 </div>
                 )}
               </div>
