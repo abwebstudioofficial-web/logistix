@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Logistix — Fleet &amp; Drivers</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  body { background: #020617; }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  .animate-fade-in { animation: fade-in 0.15s ease-out; }
+  .animate-modal-in { animation: modal-in 0.18s ease-out; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+/* ==================== Supabase (same backend as the main app) ==================== */
+const SUPABASE_URL = "https://zonuxfqvyxhfkimdahkb.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpvbnV4ZnF2eXhoZmtpbWRhaGtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxMzU3MDIsImV4cCI6MjEwMDcxMTcwMn0.Pt6Ff5cArW8g5VRQF-JHTuLzMJmyQWkRH0h3q6BKNOQ";
+
+function createLiteClient(url, anonKey) {
+  const AUTH = url + "/auth/v1";
+  const REST = url + "/rest/v1";
+  const STORE_KEY = "sb-lite-session";
+  let session = null;
+  try { const raw = localStorage.getItem(STORE_KEY); if (raw) session = JSON.parse(raw); } catch (e) {}
+  let listeners = [];
+
+  function persistSession(s) {
+    session = s;
+    try { if (s) localStorage.setItem(STORE_KEY, JSON.stringify(s)); else localStorage.removeItem(STORE_KEY); } catch (e) {}
+    listeners.forEach((fn) => fn(s ? "SIGNED_IN" : "SIGNED_OUT", s));
+  }
+
+  async function authFetch(path, opts) {
+    opts = opts || {};
+    const res = await fetch(AUTH + path, { ...opts, headers: { "Content-Type": "application/json", apikey: anonKey, ...(opts.headers || {}) } });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { data: null, error: { message: json.error_description || json.msg || json.error || res.statusText } };
+    return { data: json, error: null };
+  }
+
+  async function refreshIfNeeded() {
+    if (!session) return;
+    if (session.expires_at && Date.now() / 1000 < session.expires_at - 30) return;
+    if (!session.refresh_token) { persistSession(null); return; }
+    const { data, error } = await authFetch("/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: session.refresh_token }) });
+    if (error) { persistSession(null); return; }
+    persistSession({ access_token: data.access_token, refresh_token: data.refresh_token, user: data.user, expires_at: Date.now() / 1000 + (data.expires_in || 3600) });
+  }
+
+  const auth = {
+    async getSession() { await refreshIfNeeded(); return { data: { session } }; },
+    onAuthStateChange(cb) {
+      listeners.push(cb);
+      return { data: { subscription: { unsubscribe() { listeners = listeners.filter((f) => f !== cb); } } } };
+    },
+    async signInWithPassword({ email, password }) {
+      const { data, error } = await authFetch("/token?grant_type=password", { method: "POST", body: JSON.stringify({ email, password }) });
+      if (error) return { error };
+      persistSession({ access_token: data.access_token, refresh_token: data.refresh_token, user: data.user, expires_at: Date.now() / 1000 + (data.expires_in || 3600) });
+      return { error: null };
+    },
+    async signOut() { persistSession(null); return { error: null }; },
+  };
+
+  async function headersFor(extra) {
+    await refreshIfNeeded();
+    const h = { apikey: anonKey, "Content-Type": "application/json", Authorization: "Bearer " + (session && session.access_token ? session.access_token : anonKey), ...(extra || {}) };
+    return h;
+  }
+
+  function from(table) {
+    return {
+      select(cols) {
+        let query = `${REST}/${table}?select=${encodeURIComponent(cols || "*")}`;
+        const builder = {
+          eq(col, val) { query += `&${col}=eq.${encodeURIComponent(val)}`; return builder; },
+          order(col, opts) { query += `&order=${col}.${opts && opts.ascending === false ? "desc" : "asc"}`; return builder; },
+          async maybeSingle() {
+            const res = await fetch(query, { headers: await headersFor() });
+            const json = await res.json().catch(() => []);
+            if (!res.ok) return { data: null, error: { message: (json && json.message) || res.statusText } };
+            return { data: Array.isArray(json) ? (json[0] || null) : json, error: null };
+          },
+          then(resolve, reject) {
+            return headersFor()
+              .then((headers) => fetch(query, { headers }))
+              .then(async (res) => {
+                const json = await res.json().catch(() => []);
+                if (!res.ok) return resolve({ data: null, error: { message: (json && json.message) || res.statusText } });
+                resolve({ data: json, error: null });
+              })
+              .catch(reject);
+          },
+        };
+        return builder;
+      },
+      async upsert(rows) {
+        const body = Array.isArray(rows) ? rows : [rows];
+        const res = await fetch(`${REST}/${table}`, { method: "POST", headers: await headersFor({ Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify(body) });
+        if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
+        return { error: null };
+      },
+      update(fields) {
+        return {
+          async eq(col, val) {
+            const res = await fetch(`${REST}/${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "PATCH", headers: await headersFor({ Prefer: "return=minimal" }), body: JSON.stringify(fields) });
+            if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
+            return { error: null };
+          },
+        };
+      },
+      delete() {
+        return {
+          async eq(col, val) {
+            const res = await fetch(`${REST}/${table}?${col}=eq.${encodeURIComponent(val)}`, { method: "DELETE", headers: await headersFor({ Prefer: "return=minimal" }) });
+            if (!res.ok) { const json = await res.json().catch(() => ({})); return { error: { message: json.message || res.statusText } }; }
+            return { error: null };
+          },
+        };
+      },
+    };
+  }
+
+  return { auth, from };
+}
+
+const supabaseClient = createLiteClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ==================== Helpers ==================== */
+function camelToSnake(s) { return s.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase()); }
+function snakeToCamel(s) { return s.replace(/_([a-z])/g, (_, c) => c.toUpperCase()); }
+function toDbRow(obj) {
+  const out = {};
+  Object.keys(obj).forEach((k) => { const v = obj[k]; out[camelToSnake(k)] = v === "" ? null : v; });
+  return out;
+}
+function fromDbRow(row) {
+  const out = {};
+  Object.keys(row).forEach((k) => { const v = row[k]; out[snakeToCamel(k)] = v === null ? "" : v; });
+  return out;
+}
+function uid(prefix) { return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function cx(...args) { return args.filter(Boolean).join(" "); }
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* ==================== Icons ==================== */
+function Truck({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></svg>;
+}
+function Users({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+}
+function Plus({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
+}
+function Search({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+}
+function Phone({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>;
+}
+function Pencil({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>;
+}
+function Trash2({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>;
+}
+function ArrowLeft({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>;
+}
+function X({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
+}
+function LogOut({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+}
+function Package({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>;
+}
+function Gauge({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>;
+}
+function Wrench({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>;
+}
+function AlertTriangle({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>;
+}
+
+/* ==================== Style constants (matching the main app exactly) ==================== */
+const cardCls = "bg-slate-900 border border-slate-800 rounded-xl transition-all duration-200 hover:-translate-y-1 hover:border-slate-500 hover:shadow-xl";
+const inputCls = "w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-600 transition-shadow duration-150";
+const btnPrimary = "inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-150 active:scale-[0.97]";
+const btnSecondary = "inline-flex items-center gap-1.5 border border-slate-700 hover:bg-slate-800 text-slate-300 text-sm font-medium px-4 py-2 rounded-lg transition-all duration-150 active:scale-[0.97]";
+const btnDanger = "inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-150 active:scale-[0.97]";
+const iconBtn = "p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-white transition-all duration-150 active:scale-90";
+const iconBtnDanger = "p-1.5 rounded-md hover:bg-red-950 text-slate-400 hover:text-red-400 transition-all duration-150 active:scale-90";
+
+const VEHICLE_STATUSES = ["active", "maintenance", "idle"];
+const DRIVER_STATUSES = ["Available", "On Duty", "Off Leave"];
+
+/* ==================== Shared UI primitives (matching the main app) ==================== */
+function Field({ label, children }) {
+  return (
+    <div className="mb-4">
+      <label className="block text-xs font-medium text-slate-400 mb-1.5">{label}</label>
+      {children}
+    </div>
+  );
+}
+function Modal({ title, onClose, children, wide, size }) {
+  const widthCls = size === "xl" ? "max-w-3xl" : (size === "lg" || wide) ? "max-w-xl" : "max-w-md";
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-start justify-center overflow-y-auto p-4 z-50 animate-fade-in" style={{ paddingTop: 48, paddingBottom: 48 }} onClick={onClose}>
+      <div className={cx("bg-slate-900 border border-slate-800 rounded-xl w-full animate-modal-in", widthCls)} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+          <h3 className="text-white font-semibold">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-transform duration-150 active:scale-90"><X size={18} /></button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+function ConfirmModal({ title, message, confirmLabel, danger = true, onConfirm, onCancel }) {
+  return (
+    <Modal title={title} onClose={onCancel}>
+      <p className="text-slate-400 text-sm mb-5">{message}</p>
+      <div className="flex justify-end gap-2">
+        <button className={btnSecondary} onClick={onCancel}>Cancel</button>
+        <button className={danger ? btnDanger : btnPrimary} onClick={onConfirm}>{confirmLabel || "Delete"}</button>
+      </div>
+    </Modal>
+  );
+}
+function Badge({ text, className }) {
+  return <span className={cx("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border whitespace-nowrap", className)}>{text}</span>;
+}
+function MiniStat({ label, value, color }) {
+  return (
+    <div className={cx(cardCls, "p-5")}>
+      <div className="text-slate-500 text-xs font-medium mb-2">{label}</div>
+      <div className={cx("text-3xl font-bold", color || "text-white")}>{value}</div>
+    </div>
+  );
+}
+function EmptyState({ icon: Icon, text, actionLabel, onAction }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <Icon size={32} className="text-slate-700 mb-3" />
+      <div className="text-slate-500 text-sm mb-4">{text}</div>
+      {actionLabel && <button className={btnPrimary} onClick={onAction}><Plus size={16} /> {actionLabel}</button>}
+    </div>
+  );
+}
+function SearchBox({ value, onChange, placeholder }) {
+  return (
+    <div className="relative flex-1">
+      <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+      <input className={inputCls + " pl-9"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+    </div>
+  );
+}
+
+/* ==================== Auth screen ==================== */
+function AuthScreen({ onLogin, busy, error }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function submit(e) {
+    e.preventDefault();
+    onLogin(email.trim(), password);
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-slate-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="flex items-center gap-2.5 justify-center mb-6">
+          <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><Truck size={20} className="text-white" /></div>
+          <div className="text-slate-900 font-bold tracking-wider">LOGISTIX · FLEET</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
+          <h2 className="text-slate-900 font-semibold text-xl text-center mb-6">Sign in</h2>
+          <form onSubmit={submit} className="space-y-3">
+            <input type="email" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required />
+            <input type="password" className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required minLength={6} />
+            {error && <p className="text-red-500 text-xs">{error}</p>}
+            <button type="submit" disabled={busy} className={cx("w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-full py-2.5 text-sm", busy && "opacity-60 cursor-not-allowed")}>
+              {busy ? "Please wait…" : "Sign in"}
+            </button>
+          </form>
+          <p className="text-slate-400 text-xs text-center pt-4">Use the same email and password as the main Logistix app. Only Admin and Data Entry accounts can access this site.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ==================== Drivers ==================== */
+function DriversView({ data, openModal, askDelete, updateDriverStatus }) {
+  const [q, setQ] = useState("");
+  const [role, setRole] = useState("All Roles");
+  const driverList = data.drivers.filter((d) => d.role === "Driver");
+  const available = driverList.filter((d) => d.status === "Available").length;
+  const onDuty = driverList.filter((d) => d.status === "On Duty").length;
+  const offLeave = driverList.filter((d) => d.status === "Off Leave").length;
+
+  const rows = data.drivers.filter((d) => {
+    const text = `${d.name} ${d.email}`.toLowerCase();
+    const matchesQ = !q || text.includes(q.toLowerCase());
+    const matchesRole = role === "All Roles" || d.role === role;
+    return matchesQ && matchesRole;
+  });
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Drivers &amp; Staff</h2>
+          <p className="text-slate-500 text-sm mt-1">Manage team members, roles, and availability</p>
+        </div>
+        <button className={btnPrimary} onClick={() => openModal({ type: "driver", mode: "add", item: null })}><Plus size={16} /> Add Team Member</button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <MiniStat label="Available" value={available} color="text-emerald-400" />
+        <MiniStat label="On Duty" value={onDuty} color="text-blue-400" />
+        <MiniStat label="Off / Leave" value={offLeave} color="text-slate-400" />
+      </div>
+      <div className="flex gap-3 flex-wrap">
+        <SearchBox value={q} onChange={setQ} placeholder="Search by name or email..." />
+        <select className={inputCls} style={{ width: 170 }} value={role} onChange={(e) => setRole(e.target.value)}>
+          {["All Roles", "Dispatcher", "Driver"].map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState icon={Users} text="No team members found." actionLabel="Add first team member" onAction={() => openModal({ type: "driver", mode: "add", item: null })} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {rows.map((d) => (
+            <div key={d.id} className={cx(cardCls, "p-5")}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold shrink-0">{d.name.charAt(0)}</div>
+                  <div className="min-w-0"><div className="text-white font-semibold truncate">{d.name}</div><div className="text-slate-500 text-xs truncate">{d.email}</div></div>
+                </div>
+                <button className={iconBtnDanger} onClick={() => askDelete({ entity: "drivers", id: d.id, label: "team member" })}><Trash2 size={14} /></button>
+              </div>
+              <div className="mb-3"><Badge text={d.role} className={d.role === "Driver" ? "bg-blue-950 text-blue-400 border-blue-800" : "bg-purple-950 text-purple-400 border-purple-800"} /></div>
+              {d.role === "Driver" ? (
+                <>
+                  <div className="flex items-center gap-1.5 text-slate-400 text-sm mb-3"><Phone size={13} />{d.phone || "—"}</div>
+                  <div className="flex items-center gap-2">
+                    <select className={inputCls} value={d.status} onChange={(e) => updateDriverStatus(d.id, e.target.value)}>
+                      {DRIVER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <button className={cx(btnSecondary, "shrink-0")} onClick={() => openModal({ type: "driver", mode: "edit", item: d })}><Pencil size={14} /> Edit</button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-end">
+                  <button className={btnSecondary} onClick={() => openModal({ type: "driver", mode: "edit", item: d })}><Pencil size={14} /> View / Edit</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DriverForm({ initial, onSave, onCancel }) {
+  const isEdit = !!initial;
+  const d = initial || {};
+  const [name, setName] = useState(d.name || "");
+  const [email, setEmail] = useState(d.email || "");
+  const [role, setRole] = useState(d.role || "Driver");
+  const [phone, setPhone] = useState(d.phone || "");
+  const [status, setStatus] = useState(d.status || "Available");
+
+  function submit(e) {
+    e.preventDefault();
+    if (!name.trim() || !email.trim()) return;
+    onSave({ id: d.id || uid("drv"), name: name.trim(), email: email.trim(), role, phone: role === "Driver" ? phone.trim() : "", status: role === "Driver" ? status : "" });
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <Field label="Full Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Gul Bahar" /></Field>
+      <Field label="Email"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" /></Field>
+      <Field label="Role">
+        <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="Dispatcher">Dispatcher</option>
+          <option value="Driver">Driver</option>
+        </select>
+      </Field>
+      {role === "Driver" && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Phone"><input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+92..." /></Field>
+          <Field label="Status">
+            <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
+              {DRIVER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
+      <div className="flex justify-end gap-2 mt-2">
+        <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
+        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Team Member"}</button>
+      </div>
+    </form>
+  );
+}
+
+/* ==================== Fleet / Vehicles ==================== */
+function FleetView({ data, openModal, askDelete }) {
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("All Statuses");
+  const active = data.vehicles.filter((v) => v.status === "active").length;
+  const maintenance = data.vehicles.filter((v) => v.status === "maintenance").length;
+  const idle = data.vehicles.filter((v) => v.status === "idle").length;
+  const driverById = new Map(data.drivers.map((d) => [d.id, d]));
+
+  const rows = data.vehicles.filter((v) => {
+    const text = `${v.plate} ${v.make} ${v.model} ${v.type}`.toLowerCase();
+    const matchesQ = !q || text.includes(q.toLowerCase());
+    const matchesStatus = status === "All Statuses" || v.status === status;
+    return matchesQ && matchesStatus;
+  });
+
+  const statusColor = { active: "bg-emerald-950 text-emerald-400 border-emerald-800", maintenance: "bg-amber-950 text-amber-400 border-amber-800", idle: "bg-slate-800 text-slate-400 border-slate-700" };
+  const statusIcon = { active: CheckCircle2, maintenance: Wrench, idle: AlertTriangle };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Fleet</h2>
+          <p className="text-slate-500 text-sm mt-1">Manage vehicles, assignments, and service status</p>
+        </div>
+        <button className={btnPrimary} onClick={() => openModal({ type: "vehicle", mode: "add", item: null })}><Plus size={16} /> Add Vehicle</button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <MiniStat label="Active" value={active} color="text-emerald-400" />
+        <MiniStat label="In Maintenance" value={maintenance} color="text-amber-400" />
+        <MiniStat label="Idle" value={idle} color="text-slate-400" />
+      </div>
+      <div className="flex gap-3 flex-wrap">
+        <SearchBox value={q} onChange={setQ} placeholder="Search by plate, make, or model..." />
+        <select className={inputCls} style={{ width: 170 }} value={status} onChange={(e) => setStatus(e.target.value)}>
+          {["All Statuses", ...VEHICLE_STATUSES].map((s) => <option key={s} value={s}>{s === "All Statuses" ? s : cap(s)}</option>)}
+        </select>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState icon={Truck} text="No vehicles found." actionLabel="Add first vehicle" onAction={() => openModal({ type: "vehicle", mode: "add", item: null })} />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {rows.map((v) => {
+            const driver = v.driverId ? driverById.get(v.driverId) : null;
+            const StatusIcon = statusIcon[v.status] || Truck;
+            return (
+              <div key={v.id} className={cx(cardCls, "p-5")}>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><Truck size={18} className="text-white" /></div>
+                    <div className="min-w-0">
+                      <div className="text-white font-semibold truncate font-mono">{v.plate}</div>
+                      <div className="text-slate-500 text-xs truncate">{v.make} {v.model} {v.year ? `· ${v.year}` : ""}</div>
+                    </div>
+                  </div>
+                  <button className={iconBtnDanger} onClick={() => askDelete({ entity: "vehicles", id: v.id, label: "vehicle" })}><Trash2 size={14} /></button>
+                </div>
+                <div className="mb-3"><Badge text={cap(v.status)} className={statusColor[v.status] || statusColor.idle} /></div>
+                <div className="space-y-1.5 text-slate-400 text-sm mb-3">
+                  <div className="flex items-center gap-1.5"><Package size={13} />{v.type || "—"}{v.capacityKg ? ` · ${Number(v.capacityKg).toLocaleString()} kg` : ""}</div>
+                  <div className="flex items-center gap-1.5"><Gauge size={13} />{v.mileageKm ? `${Number(v.mileageKm).toLocaleString()} km` : "—"}</div>
+                  <div className="flex items-center gap-1.5"><Wrench size={13} />Last service: {v.lastService || "—"}</div>
+                  <div className="flex items-center gap-1.5"><Users size={13} />{driver ? driver.name : "Unassigned"}</div>
+                </div>
+                <div className="flex justify-end">
+                  <button className={btnSecondary} onClick={() => openModal({ type: "vehicle", mode: "edit", item: v })}><Pencil size={14} /> Edit</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+function CheckCircle2({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 17 10"/></svg>;
+}
+
+function VehicleForm({ initial, drivers, onSave, onCancel }) {
+  const isEdit = !!initial;
+  const v = initial || {};
+  const [plate, setPlate] = useState(v.plate || "");
+  const [type, setType] = useState(v.type || "Truck");
+  const [make, setMake] = useState(v.make || "");
+  const [model, setModel] = useState(v.model || "");
+  const [year, setYear] = useState(v.year || new Date().getFullYear());
+  const [capacityKg, setCapacityKg] = useState(v.capacityKg ?? "");
+  const [mileageKm, setMileageKm] = useState(v.mileageKm ?? "");
+  const [lastService, setLastService] = useState(v.lastService || todayISO());
+  const [driverId, setDriverId] = useState(v.driverId || "");
+  const [status, setStatus] = useState(v.status || "active");
+  const driverOptions = drivers.filter((d) => d.role === "Driver");
+
+  function submit(e) {
+    e.preventDefault();
+    if (!plate.trim() || !make.trim() || !model.trim()) return;
+    onSave({ id: v.id || uid("veh"), plate: plate.trim().toUpperCase(), type, make: make.trim(), model: model.trim(), year: Number(year), capacityKg: Number(capacityKg) || 0, mileageKm: Number(mileageKm) || 0, lastService, driverId, status });
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Plate Number"><input className={inputCls} value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="e.g. JW-6205" /></Field>
+        <Field label="Vehicle Type"><input className={inputCls} value={type} onChange={(e) => setType(e.target.value)} placeholder="Truck" /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Make"><input className={inputCls} value={make} onChange={(e) => setMake(e.target.value)} placeholder="e.g. Isuzu" /></Field>
+        <Field label="Model"><input className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} placeholder="e.g. FVR-240" /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Year"><input type="number" className={inputCls} value={year} onChange={(e) => setYear(e.target.value)} /></Field>
+        <Field label="Capacity (kg)"><input type="number" className={inputCls} value={capacityKg} onChange={(e) => setCapacityKg(e.target.value)} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Mileage (km)"><input type="number" className={inputCls} value={mileageKm} onChange={(e) => setMileageKm(e.target.value)} /></Field>
+        <Field label="Last Service"><input type="date" className={inputCls} value={lastService} onChange={(e) => setLastService(e.target.value)} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Assigned Driver">
+          <select className={inputCls} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
+            <option value="">Unassigned</option>
+            {driverOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Status">
+          <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
+            {VEHICLE_STATUSES.map((s) => <option key={s} value={s}>{cap(s)}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="flex justify-end gap-2 mt-2">
+        <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
+        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Vehicle"}</button>
+      </div>
+    </form>
+  );
+}
+
+/* ==================== Modal router ==================== */
+function EntityModal({ modal, data, onSave, onClose }) {
+  if (!modal) return null;
+  const { type, mode, item } = modal;
+  const title = { vehicle: mode === "edit" ? "Edit Vehicle" : "Add Vehicle", driver: mode === "edit" ? "Edit Team Member" : "Add Team Member" }[type];
+  return (
+    <Modal title={title} onClose={onClose}>
+      {type === "vehicle" && <VehicleForm initial={mode === "edit" ? item : null} drivers={data.drivers} onSave={(i) => onSave("vehicles", i)} onCancel={onClose} />}
+      {type === "driver" && <DriverForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("drivers", i)} onCancel={onClose} />}
+    </Modal>
+  );
+}
+
+/* ==================== Main app ==================== */
+function FleetApp() {
+  const [authSession, setAuthSession] = useState(undefined); // undefined = not checked yet
+  const [profile, setProfile] = useState(null);
+  const [dataState, setDataState] = useState(null);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState(null);
+  const [tab, setTab] = useState("fleet"); // "fleet" | "drivers"
+  const [modal, setModal] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  useEffect(() => {
+    supabaseClient.auth.getSession().then(({ data }) => setAuthSession(data.session || null));
+    const { data: sub } = supabaseClient.auth.onAuthStateChange((_event, sess) => setAuthSession(sess));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (authSession) loadProfileAndData();
+    else if (authSession === null) { setProfile(null); setDataState(null); }
+    // eslint-disable-next-line
+  }, [authSession]);
+
+  async function loadProfileAndData() {
+    setDataLoading(true);
+    const userId = authSession.user.id;
+    const { data: profRow } = await supabaseClient.from("profiles").select("*").eq("id", userId).maybeSingle();
+    const prof = profRow ? fromDbRow(profRow) : { id: userId, name: authSession.user.email, role: "staff" };
+    setProfile(prof);
+    if (prof.role === "admin" || prof.role === "data_entry") await refreshData();
+    setDataLoading(false);
+  }
+
+  async function refreshData() {
+    const [driversRes, vehiclesRes] = await Promise.all([
+      supabaseClient.from("drivers").select("*").order("created_at", { ascending: false }),
+      supabaseClient.from("vehicles").select("*").order("created_at", { ascending: false }),
+    ]);
+    setDataState({
+      drivers: (driversRes.data || []).map(fromDbRow),
+      vehicles: (vehiclesRes.data || []).map(fromDbRow),
+    });
+  }
+
+  async function handleLogin(email, password) {
+    setAuthBusy(true); setAuthError(null);
+    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) setAuthError(error.message);
+    setAuthBusy(false);
+  }
+
+  async function handleLogout() { await supabaseClient.auth.signOut(); }
+
+  async function saveItem(entity, item) {
+    const row = toDbRow(item);
+    const { error } = await supabaseClient.from(entity).upsert(row);
+    if (error) { window.alert("Couldn't save: " + error.message); return; }
+    setDataState((prev) => {
+      const list = prev[entity];
+      const idx = list.findIndex((x) => x.id === item.id);
+      const next = idx > -1 ? list.map((x) => (x.id === item.id ? item : x)) : [item, ...list];
+      return { ...prev, [entity]: next };
+    });
+    setModal(null);
+  }
+
+  async function deleteItem(entity, id) {
+    const { error } = await supabaseClient.from(entity).delete().eq("id", id);
+    if (error) { window.alert("Couldn't delete: " + error.message); return; }
+    setDataState((prev) => ({ ...prev, [entity]: prev[entity].filter((x) => x.id !== id) }));
+    setConfirm(null);
+  }
+
+  async function updateDriverStatus(driverId, status) {
+    const { error } = await supabaseClient.from("drivers").update({ status }).eq("id", driverId);
+    if (error) { window.alert("Couldn't update driver: " + error.message); return; }
+    setDataState((prev) => ({ ...prev, drivers: prev.drivers.map((d) => (d.id === driverId ? { ...d, status } : d)) }));
+  }
+
+  // Still checking for an existing session
+  if (authSession === undefined) {
+    return <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center"><div className="text-slate-500 text-sm">Loading…</div></div>;
+  }
+
+  if (!authSession) {
+    return <AuthScreen onLogin={handleLogin} busy={authBusy} error={authError} />;
+  }
+
+  if (dataLoading || !profile) {
+    return <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center"><div className="text-slate-500 text-sm">Loading…</div></div>;
+  }
+
+  if (profile.role !== "admin" && profile.role !== "data_entry") {
+    return (
+      <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center p-4">
+        <div className="max-w-sm text-center">
+          <AlertTriangle size={32} className="text-amber-500 mx-auto mb-3" />
+          <h2 className="text-white font-semibold text-lg mb-1">Access restricted</h2>
+          <p className="text-slate-500 text-sm mb-5">The Fleet &amp; Drivers site is only available to Admin and Data Entry accounts. Signed in as {profile.name || profile.id} ({profile.role || "unknown role"}).</p>
+          <button className={btnSecondary} onClick={handleLogout}><LogOut size={14} /> Sign out</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!dataState) {
+    return <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center"><div className="text-slate-500 text-sm">Loading…</div></div>;
+  }
+
+  const tabBtnCls = (active) => cx("px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2", active ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-slate-900");
+
+  return (
+    <div className="min-h-screen w-full bg-slate-950 text-slate-200">
+      <header className="border-b border-slate-800 bg-slate-900/50">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><Truck size={18} className="text-white" /></div>
+            <div>
+              <div className="text-white font-bold text-sm tracking-wide">LOGISTIX · FLEET &amp; DRIVERS</div>
+              <div className="text-slate-500 text-xs">{profile.name || profile.id}</div>
+            </div>
+          </div>
+          <button className={cx(btnSecondary, "!px-3 !py-1.5")} onClick={handleLogout}><LogOut size={14} /> Sign out</button>
+        </div>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-3 flex gap-2">
+          <button className={tabBtnCls(tab === "fleet")} onClick={() => setTab("fleet")}><Truck size={15} /> Fleet</button>
+          <button className={tabBtnCls(tab === "drivers")} onClick={() => setTab("drivers")}><Users size={15} /> Drivers</button>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+        {tab === "fleet" ? (
+          <FleetView data={dataState} openModal={setModal} askDelete={setConfirm} />
+        ) : (
+          <DriversView data={dataState} openModal={setModal} askDelete={setConfirm} updateDriverStatus={updateDriverStatus} />
+        )}
+      </main>
+
+      <EntityModal modal={modal} data={dataState} onSave={saveItem} onClose={() => setModal(null)} />
+
+      {confirm && (
+        <ConfirmModal
+          title={`Delete this ${confirm.label}?`}
+          message="This action can't be undone."
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => deleteItem(confirm.entity, confirm.id)}
+        />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<FleetApp />);
+</script>
+</body>
+</html>
