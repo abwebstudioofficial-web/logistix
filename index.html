@@ -2595,7 +2595,7 @@ function ConfirmModal({ title, message, confirmLabel, danger = true, onConfirm, 
   );
 }
 
-function DispatchModal({ containerLabel, initial, transporters, isDomestic, contracts, contractGroups, customerId, loadingPoint, onClose, onConfirm }) {
+function DispatchModal({ containerLabel, initial, transporters, isDomestic, contracts, contractGroups, customerId, loadingPoint, destination, onClose, onConfirm }) {
   const c = initial || {};
   const isEdit = !!initial;
   const [photo, setPhoto] = useState(c.dispatchPhoto || "");
@@ -2628,11 +2628,11 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, cont
   const matchedContractRate = useMemo(() => {
     if (applyContractRate !== "yes") return null;
     const norm = (v) => (v || "").trim().toLowerCase();
-    const destination = norm(c.destination);
+    const normDestination = norm(destination);
     const match = (contracts || []).find((k) =>
       k.customerId === customerId &&
       norm(k.loadingPoint) === norm(loadingPoint) &&
-      norm(k.destination) === destination &&
+      norm(k.destination) === normDestination &&
       norm(k.movementThrough) === norm(movementThrough) &&
       norm(k.vehicleSize) === norm(vehicleSize) &&
       norm(k.axleLoadCategory) === norm(vehicleType)
@@ -2640,7 +2640,7 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, cont
     if (!match) return null;
     const groupsById = new Map((contractGroups || []).map((g) => [g.id, g]));
     return { ...match, group: match.contractGroupId ? groupsById.get(match.contractGroupId) : null };
-  }, [applyContractRate, contracts, contractGroups, customerId, loadingPoint, c.destination, movementThrough, vehicleSize, vehicleType]);
+  }, [applyContractRate, contracts, contractGroups, customerId, loadingPoint, destination, movementThrough, vehicleSize, vehicleType]);
 
   useEffect(() => {
     if (applyContractRate === "yes" && matchedContractRate) setFreightAmount(matchedContractRate.rate);
@@ -2761,7 +2761,7 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, cont
         {applyContractRate === "yes" && !matchedContractRate && (
           <div className="text-red-400 text-xs mb-3 -mt-2">
             <p>Rate not available for this route.</p>
-            <p className="text-slate-500 mt-1">Matching against: Loading Point "{loadingPoint || "(blank)"}" · Destination "{c.destination || "(blank)"}"</p>
+            <p className="text-slate-500 mt-1">Matching against: Loading Point "{loadingPoint || "(blank)"}" · Destination "{destination || "(blank)"}"</p>
           </div>
         )}
         <div className={cx("grid gap-3", isDomestic ? "grid-cols-1" : "grid-cols-2")}>
@@ -4085,7 +4085,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                     {canEditDispatch && si >= 1 && (
                       <button
                         className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                        onClick={() => setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: c, customerId: o.customerId, origin: o.origin })}
+                        onClick={() => setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: c, customerId: o.customerId, origin: o.origin, destination: c.destination })}
                       ><Pencil size={11} /> Edit</button>
                     )}
                   </div>
@@ -4112,7 +4112,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
                           if (nextIdx === arrivalStageIndex) setArrivalTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber });
                           else if (nextIdx === podStageIndex) setPodTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, stageIndex: podStageIndex });
                           else if (nextIdx === completedStageIndex) setEmptyReturnTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, defaultLocation: c.emptyReturnLocation || "" });
-                          else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null, customerId: o.customerId, origin: o.origin });
+                          else if (nextIdx === 1) setDispatchTarget({ orderId: o.id, containerId: c.id, label: c.containerNumber || o.orderNumber, editingContainer: null, customerId: o.customerId, origin: o.origin, destination: c.destination });
                           else updateContainerStage(o.id, c.id, nextIdx);
                         }}
                       >
@@ -4174,6 +4174,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
           contractGroups={data.contract_groups}
           customerId={dispatchTarget.customerId}
           loadingPoint={dispatchTarget.origin}
+          destination={dispatchTarget.destination}
           onClose={() => setDispatchTarget(null)}
           onConfirm={(dispatchData) => {
             if (dispatchTarget.editingContainer) updateContainerFields(dispatchTarget.orderId, dispatchTarget.containerId, dispatchData);
