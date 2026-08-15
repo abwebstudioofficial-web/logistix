@@ -6580,11 +6580,11 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                     />
                   </Field>
                 </div>
-                {role !== "data_entry" && (
-                  <div className="mb-2">
-                    <Field label="Vehicle No."><input className={inputCls} value={c.vehiclePlate || ""} onChange={(e) => setContainerField(c.id, "vehiclePlate", e.target.value)} placeholder="Vehicle No." /></Field>
-                  </div>
-                )}
+                <div className="mb-2">
+                  <Field label="Weight (kg)">
+                    <input type="number" min="0" className={inputCls} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
+                  </Field>
+                </div>
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <Field label="Priority">
                     <select className={inputCls} value={c.priority} onChange={(e) => setContainerField(c.id, "priority", e.target.value)}>
@@ -6624,9 +6624,6 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                       placeholder="Receiver's address"
                     />
                   )}
-                </Field>
-                <Field label="Weight (kg)">
-                  <input type="number" min="0" className={inputCls} value={c.weight} onChange={(e) => setContainerField(c.id, "weight", e.target.value)} placeholder="Weight (kg)" />
                 </Field>
                 </div>
                 )}
