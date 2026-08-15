@@ -2759,7 +2759,10 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, cont
           </select>
         </Field>
         {applyContractRate === "yes" && !matchedContractRate && (
-          <p className="text-red-400 text-xs mb-3 -mt-2">Rate not available for this route.</p>
+          <div className="text-red-400 text-xs mb-3 -mt-2">
+            <p>Rate not available for this route.</p>
+            <p className="text-slate-500 mt-1">Matching against: Loading Point "{loadingPoint || "(blank)"}" · Destination "{c.destination || "(blank)"}"</p>
+          </div>
         )}
         <div className={cx("grid gap-3", isDomestic ? "grid-cols-1" : "grid-cols-2")}>
           <Field label="Freight Amount (PKR)">
