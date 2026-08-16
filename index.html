@@ -611,6 +611,9 @@ const CONTAINER_TYPES = ["Standard", "High Cube", "Reefer", "Open Top", "Flat Ra
 const CONTAINER_SIZES = ["20'", "40'", "45'"];
 const MOVEMENT_THROUGH_OPTIONS = ["GT Road", "Motorway"];
 const DOMESTIC_CATEGORIES = ["Finished Goods (FG)", "Wrapping Materials", "WM Domestic Karachi"];
+// Clean display name per category, without the "(FG)" suffix - used for sheet names and
+// anywhere else a category needs to read naturally in a sentence/button label.
+const DOMESTIC_SHEET_NAME_FOR_CATEGORY = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
 const WEIGHT_CATEGORIES = ["Under 10 tons", "10-20 tons", "20-30 tons", "30+ tons"];
 const AXLE_LOAD_CATEGORIES = ["1x", "2x", "3x", "4x", "6x"];
 
@@ -2730,7 +2733,7 @@ function TabExcelBar({ label, meta, onAttachFile, onExport, onRevert }) {
         onClick={() => fileInputRef.current && fileInputRef.current.click()}
         className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
       >
-        <Upload size={12} /> {m.busy && !m.attached ? "Loading…" : m.attached ? "Attach another file" : `Attach file to ${label}`}
+        <Upload size={12} /> {m.busy && !m.attached ? "Loading…" : m.attached ? `Attach another ${label} file` : `Attach file to ${label}`}
       </button>
       <button
         disabled={m.busy}
@@ -8831,7 +8834,7 @@ function LogistixERP() {
       // Wrapping Materials and the new WM Domestic Karachi category both use the WM-style
       // layout (with the Sender column) per the request that the new tab match WM's layout;
       // Finished Goods keeps the original layout without Sender.
-      const sheetNameForCategory = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
+      const sheetNameForCategory = DOMESTIC_SHEET_NAME_FOR_CATEGORY;
       // categoryFilter is set when exporting from inside a specific category's tab (Finished
       // Goods, Wrapping Materials, etc.) rather than the category picker itself - scopes the
       // export to just that one category's orders/sheet instead of all three every time.
@@ -9292,7 +9295,7 @@ function LogistixERP() {
               {TAB_EXCEL_CONFIG[view] && (
                 <div className="mb-4">
                   <TabExcelBar
-                    label={TAB_EXCEL_CONFIG[view].label}
+                    label={view === "orders_domestic" && domesticCategory ? `${DOMESTIC_SHEET_NAME_FOR_CATEGORY[domesticCategory] || domesticCategory} Orders` : TAB_EXCEL_CONFIG[view].label}
                     meta={tabExcel[view]}
                     onAttachFile={(file) => handleTabAttachFile(view, file)}
                     onExport={() => handleTabExport(view, view === "orders_domestic" ? domesticCategory : null)}
