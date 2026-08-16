@@ -7973,8 +7973,12 @@ function LogistixERP() {
   async function refreshData() {
     const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
     setDataState((prev) => {
-      const next = { ...prev };
-      let anyTableChanged = false;
+      // prev is null on the very first load (before any data has ever been set) - refreshData
+      // is reused both for that initial load and the 15-second background poll, but only the
+      // poll case can assume prev already has real data to compare against.
+      const base = prev || {};
+      const next = { ...base };
+      let anyTableChanged = !prev;
       DATA_TABLES.forEach((t, i) => {
         const { data: rows, error } = results[i];
         if (error) {
@@ -7988,7 +7992,7 @@ function LogistixERP() {
         // actually triggers re-renders) if the data is genuinely different. Every 15s poll
         // was previously replacing every table's reference unconditionally, forcing the whole
         // app to re-render even when nothing in the database had actually changed.
-        if (JSON.stringify(fetched) !== JSON.stringify(prev[t])) {
+        if (!prev || JSON.stringify(fetched) !== JSON.stringify(base[t])) {
           next[t] = fetched;
           anyTableChanged = true;
         }
