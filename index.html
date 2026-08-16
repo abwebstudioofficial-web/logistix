@@ -1604,7 +1604,7 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
         // Every row gets an explicit height + customHeight="1" — without that flag, Excel
         // treats defaultRowHeight as a mere suggestion and auto-expands any row containing
         // wrapped text that needs more vertical room, which is exactly what was happening.
-        const height = isHeader ? 59.25 : 30.75;
+        const height = isHeader ? (s.headerRowHeight ?? 59.25) : (s.dataRowHeight ?? 30.75);
         return rowXml.replace(`<row r="${rowNum}">`, `<row r="${rowNum}" ht="${height}" customHeight="1">`);
       })
       .join("\n");
@@ -1614,7 +1614,7 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <dimension ref="A1:${lastCol}${lastRow}"/>
 <sheetViews>${sheetViewXml(s.freezeCols, s.freezeRows)}</sheetViews>
-<sheetFormatPr defaultRowHeight="30.75" customHeight="1"/>
+<sheetFormatPr defaultRowHeight="${s.dataRowHeight ?? 30.75}" customHeight="1"/>
 ${colsXml ? `<cols>${colsXml}</cols>` : ""}
 <sheetData>
 ${rowsXml}
@@ -8890,9 +8890,27 @@ function LogistixERP() {
     });
     const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "generalComponent", "fuelComponent", "rate", "validFrom", "validTo"];
     const displayHeaders = ["Id", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General Component", "Fuel Component", "Rate", "Valid From", "Valid To"];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, displayHeaders, "ContractRates"), "ContractRates");
-    XLSX.writeFile(wb, `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
+    const dataRows = rows.map((r) => schema.map((k) => (r[k] === null || r[k] === undefined ? "" : r[k])));
+    const sheetRows = [displayHeaders, ...dataRows];
+    // Style 6 = blue header, bold white Tahoma 10, centered, bordered, no wrap (matches the
+    // reference sheet exactly). Style 8 = Tahoma 10, centered/middle, bordered, no wrap - used
+    // uniformly for every data column, so all detail font/alignment stays identical across
+    // the sheet rather than varying by column type.
+    const headerOverrides = buildColStyleMap(schema.length, new Set(), 0, 6);
+    const contentDefault = buildColStyleMap(schema.length, new Set(), 0, 8);
+    const colWidths = colWidthsFor(displayHeaders);
+    buildXlsxBuffer([{
+      name: "ContractRates", rows: sheetRows, headerRowIndex: 1, colWidths, freezeRows: 1,
+      headerOverrides, contentDefaultCols: contentDefault, hiddenCols: [1], // Id — needed for Attach/Revert to match rows back correctly, not meant to be seen
+      headerRowHeight: 30.25,
+    }]).then((buffer) => {
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }).catch((err) => window.alert("Couldn't build the contract rates export: " + err.message));
   }
 
   function handleContractRatesAttach(customerId, contractGroupId, file) {
