@@ -2026,7 +2026,10 @@ function coerceContractRates(rows) {
         movementThrough: xstr(readField(r, "movementThrough")),
         vehicleSize: xstr(readField(r, "vehicleSize")),
         weightCategory: xstr(readField(r, "weightCategory")),
-        axleLoadCategory: xstr(readField(r, "axleLoadCategory")),
+        // "Vehicle Type" is this field's current export header (readField's automatic
+      // humanization would only try "Axle Load Category", missing the rename) - both accepted
+      // on import so older exported files still read back in correctly too.
+      axleLoadCategory: xstr(readAnyKey(r, ["axleLoadCategory", "Vehicle Type", "Axle Load Category"])),
         // A file re-exported from this app has generalComponent/fuelComponent columns already
         // filled in and rate as their total. An older file, or one where someone only typed a
         // single Rate column by hand, has neither - falls back to the old 50/50 split so it
@@ -8689,18 +8692,6 @@ function LogistixERP() {
           coerced = Array.from(seenDates.values());
         }
 
-        // Same class of bug as the fuel_prices case above, but keyed on id instead of date: two
-        // rows sharing an id in the uploaded file would make Postgres reject the whole upsert
-        // (it won't let ON CONFLICT DO UPDATE touch the same row twice in one statement). Rather
-        // than dropping one of them, only the first row to use a given id keeps it as an update;
-        // every later row with that same id gets a fresh id instead, so every row in the file
-        // is still saved as its own record rather than one silently overwriting another.
-        const seenRowIds = new Set();
-        coerced = coerced.map((row) => {
-          if (!seenRowIds.has(row.id)) { seenRowIds.add(row.id); return row; }
-          return { ...row, id: genUUID() };
-        });
-
         const existingById = new Map(existingList.map((r) => [r.id, r]));
         const priorMeta = tabExcel[viewKey] || {};
         const priorEntries = priorMeta.snapshot || [];
@@ -8898,8 +8889,9 @@ function LogistixERP() {
       };
     });
     const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "generalComponent", "fuelComponent", "rate", "validFrom", "validTo"];
+    const displayHeaders = ["Id", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General Component", "Fuel Component", "Rate", "Valid From", "Valid To"];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, null, "ContractRates"), "ContractRates");
+    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, displayHeaders, "ContractRates"), "ContractRates");
     XLSX.writeFile(wb, `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
@@ -8918,22 +8910,18 @@ function LogistixERP() {
         const rawCoerced = coerceContractRates(rows);
         const skippedCount = rows.length - rawCoerced.length;
         // Always stamped onto every row, never read from the file — see coerceContractRates.
-        const stamped = rawCoerced.map((r) => ({ ...r, customerId, contractGroupId: contractGroupId || "" }));
-
-        // Two rows in the file can end up with the same id (e.g. a row was copy-pasted in
-        // Excel to add a new rate period and the ID cell never got cleared). Sending both to
-        // Supabase as updates to the same id in one upsert makes Postgres reject the whole
-        // batch — it won't let ON CONFLICT DO UPDATE touch the same row twice in one statement
-        // — and simply discarding one of them would throw away real data (e.g. an expired rate
-        // whose own Valid From/Valid To is meant to stay on record). So only the FIRST row to
-        // use a given id keeps it and updates that record; every later row with the same id is
-        // treated as its own new entry and gets a fresh id instead, so nothing gets dropped.
+        // Also de-duplicates ids within this same file: if two rows share an id (e.g. someone
+        // copy-pasted an existing row in Excel as a starting point for a new one and forgot to
+        // clear its ID column), every occurrence after the first gets treated as a genuinely
+        // new row instead - two rows with the same id in one upsert() batch make Postgres
+        // reject the whole batch outright ("ON CONFLICT DO UPDATE command cannot affect row a
+        // second time"), so this has to be caught before it ever reaches the database.
         const seenIds = new Set();
-        let duplicateCount = 0;
-        const coerced = stamped.map((row) => {
-          if (!seenIds.has(row.id)) { seenIds.add(row.id); return row; }
-          duplicateCount++;
-          return { ...row, id: genUUID() };
+        const coerced = rawCoerced.map((r) => {
+          let id = r.id;
+          if (seenIds.has(id)) id = genUUID();
+          seenIds.add(id);
+          return { ...r, id, customerId, contractGroupId: contractGroupId || "" };
         });
 
         const existingList = data.contracts || [];
@@ -8961,7 +8949,7 @@ function LogistixERP() {
             attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
             message: error
               ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
-              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}${duplicateCount > 0 ? ` ${duplicateCount} row${duplicateCount === 1 ? "" : "s"} shared an ID with another row in the file — saved as ${duplicateCount === 1 ? "a separate new record" : "separate new records"} instead of overwriting.` : ""}` },
+              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}` },
           },
         }));
       } catch (err) {
@@ -9055,7 +9043,6 @@ function LogistixERP() {
         let updatedCount = 0, addedCount = 0, skippedCount = 0;
         const toWrite = [];
 
-        const usedIdsThisImport = new Set();
         rows.forEach((row) => {
           const swapId = xstr(readAnyKey(row, ["Swap ID", "swap id", "id"])).trim();
           const department = xstr(readAnyKey(row, ["Department"])).trim();
@@ -9067,14 +9054,7 @@ function LogistixERP() {
           if (!cardNumber && !department && !swapDate) return; // blank row
           if (!swapDate || !cardNumber) { skippedCount++; return; } // required fields missing
 
-          let id = swapId && existingById.has(swapId) ? swapId : genUUID();
-          // If this id was already claimed by an earlier row in this same file (two rows
-          // resolved to the same existing Swap ID, for instance), this row becomes its own new
-          // entry instead of silently overwriting the earlier one — otherwise Postgres would
-          // also reject sending two updates to the same id in a single upsert.
-          if (usedIdsThisImport.has(id)) id = genUUID();
-          usedIdsThisImport.add(id);
-
+          const id = swapId && existingById.has(swapId) ? swapId : genUUID();
           const record = { id, customerId, swapDate, department, swappedBy, cardNumber, qtyLtr, amountPkr };
           const prev = existingById.get(id) || null;
           if (prev) updatedCount++; else addedCount++;
