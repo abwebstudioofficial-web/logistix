@@ -8590,7 +8590,12 @@ function LogistixERP() {
               const destination = xstr(readAnyKey(row, ["Destination"])).trim();
               if (!customerName && !loadingPoint && !destination) return;
 
-              const matchedCustomer = (data.customers || []).find((cu) => (cu.name || "").trim().toLowerCase() === customerName.toLowerCase());
+              const matchedCustomer = (data.customers || []).find((cu) => {
+                const full = (cu.name || "").trim().toLowerCase();
+                const short = (cu.shortName || "").trim().toLowerCase();
+                const target = customerName.toLowerCase();
+                return full === target || (short && short === target);
+              });
               if (!matchedCustomer) { createIssues.push(`${rowLabel}: customer "${customerName}" not found — row not created.`); return; }
               if (!loadingPoint || !destination) { createIssues.push(`${rowLabel}: missing Loading Point or Destination — row not created.`); return; }
 
@@ -8639,6 +8644,23 @@ function LogistixERP() {
               createdCount++;
             });
           });
+
+          if (createdCount >= 5 && createdCount > updatedCount) {
+            const proceed = window.confirm(
+              `This file would create ${createdCount} new order${createdCount === 1 ? "" : "s"} and update only ${updatedCount}. ` +
+              `If this file was re-exported from this app, that usually means the hidden "Container ID" column didn't match existing records — ` +
+              `often because it got deleted or the file was re-saved by another program that stripped hidden columns. ` +
+              `Continuing will create ${createdCount} new orders rather than updating your existing ones, which may result in duplicates.\n\n` +
+              `Click OK only if you're sure these are genuinely new shipments. Click Cancel to stop and check the file first.`
+            );
+            if (!proceed) {
+              setTabExcel((prev) => ({
+                ...prev,
+                [viewKey]: { ...(prev[viewKey] || {}), busy: false, message: { ok: false, text: "Attach cancelled — no changes were made." } },
+              }));
+              return;
+            }
+          }
 
           const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id) || newOrderIds.has(o.id));
           const { error } = changedOrders.length ? await supabaseClient.from("orders").upsert(changedOrders.map(toDbRow)) : { error: null };
