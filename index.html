@@ -1909,7 +1909,7 @@ function downloadBiltyReceipt(order, data) {
       : [{ containerNumber: order.containerNumber || "", sealNumber: order.sealNumber || "", qtyLabel: order.qtyLabel || "" }];
     const container = containers[0] || {};
 
-    const SCALE = 3;
+    const SCALE = 3.5;
     const INK = "#111827", SUB = "#4b5563", LINE = "#111827", BAR = "#111827";
 
     function box(ctx, x, y, w, h, opts) {
@@ -2064,7 +2064,7 @@ function downloadBiltyReceipt(order, data) {
     // ---- compute layout height up-front (depends on how many containers there are AND how
     // many lines the description wraps to) ----
     const W = 870;
-    const pColsForMeasure = [32, 346, 424, 514, 604, 718, W - 32];
+    const pColsForMeasure = [32, 410, 488, 578, 668, 753, W - 32];
     // A temporary canvas purely for measuring text width before the real one exists (the real
     // canvas's size depends on pBodyH, which depends on how many lines the description needs -
     // can't create the real canvas until that's known).
@@ -2189,7 +2189,7 @@ function downloadBiltyReceipt(order, data) {
     txt(ctx, "Empty Return:  " + (container.emptyReturnLocation || "—"), infoCols[3] + 8, infoY + 17, { size: 10.5 });
 
     // ---- particulars table ----
-    const pCols = [32, 346, 424, 514, 604, 718, W - 32];
+    const pCols = [32, 410, 488, 578, 668, 753, W - 32];
     const pHead = ["Particulars", "QTY", "Amount", "Weight", "Advance", "Balance"];
     ctx.fillStyle = BAR; ctx.fillRect(32, pY, W - 64, 24);
     for (let i = 0; i < pHead.length; i++) {
