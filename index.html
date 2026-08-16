@@ -1038,6 +1038,19 @@ function contractRateCoversDate(k, dateISO) {
   if (k.validTo && dateISO > k.validTo) return false;
   return true;
 }
+// General/Fixed and Fuel are independently editable on each rate row now, rather than always
+// being exactly half of a single number - this lets the annual Fixed-component revision (e.g.
+// +10%) apply without disturbing the Fuel component's base, which should only move with fuel
+// price changes. Rows saved before this split existed only have "rate" set, so those fall back
+// to the old 50/50 behavior automatically.
+function contractRateComponents(k) {
+  const hasSplit = k.generalComponent !== undefined && k.generalComponent !== "" && k.generalComponent !== null;
+  if (hasSplit) {
+    return { general: xnum(k.generalComponent), fuelComponent: xnum(k.fuelComponent) };
+  }
+  const total = xnum(k.rate) || 0;
+  return { general: total * 0.5, fuelComponent: total * 0.5 };
+}
 function matchContractRateAnyCustomer(customerId, origin, c, allContracts, allGroups, shipmentDate) {
   const norm = (v) => (v || "").trim().toLowerCase();
   const loadingPoint = norm(origin);
@@ -1915,16 +1928,29 @@ function coerceFuelPrices(rows) {
 // into a different customer's or contract's rates just by what's typed in a spreadsheet).
 function coerceContractRates(rows) {
   return rows
-    .map((r) => ({
-      id: xstr(readField(r, "id")) || genUUID(),
-      loadingPoint: xstr(readField(r, "loadingPoint")),
-      destination: xstr(readField(r, "destination")),
-      movementThrough: xstr(readField(r, "movementThrough")),
-      vehicleSize: xstr(readField(r, "vehicleSize")),
-      weightCategory: xstr(readField(r, "weightCategory")),
-      axleLoadCategory: xstr(readField(r, "axleLoadCategory")),
-      rate: xnum(readField(r, "rate")),
-    }))
+    .map((r) => {
+      const generalComponent = xnum(readField(r, "generalComponent"), null);
+      const fuelComponent = xnum(readField(r, "fuelComponent"), null);
+      const hasSplit = generalComponent !== null && fuelComponent !== null;
+      return {
+        id: xstr(readField(r, "id")) || genUUID(),
+        loadingPoint: xstr(readField(r, "loadingPoint")),
+        destination: xstr(readField(r, "destination")),
+        movementThrough: xstr(readField(r, "movementThrough")),
+        vehicleSize: xstr(readField(r, "vehicleSize")),
+        weightCategory: xstr(readField(r, "weightCategory")),
+        axleLoadCategory: xstr(readField(r, "axleLoadCategory")),
+        // A file re-exported from this app has generalComponent/fuelComponent columns already
+        // filled in and rate as their total. An older file, or one where someone only typed a
+        // single Rate column by hand, has neither - falls back to the old 50/50 split so it
+        // still imports usably rather than being rejected.
+        generalComponent: hasSplit ? generalComponent : xnum(readField(r, "rate")) * 0.5,
+        fuelComponent: hasSplit ? fuelComponent : xnum(readField(r, "rate")) * 0.5,
+        rate: hasSplit ? generalComponent + fuelComponent : xnum(readField(r, "rate")),
+        validFrom: normalizeDateStr(readField(r, "validFrom")),
+        validTo: normalizeDateStr(readField(r, "validTo")),
+      };
+    })
     .filter((row) => row.loadingPoint && row.destination);
 }
 const COERCE_FUNCTIONS = { coerceOrders, coerceCustomers, coerceSenders, coerceTransporters, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices, coerceContractRates };
@@ -4990,10 +5016,9 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
   // "Unassigned Rates" bucket has no Fuel Base Rate to compare against).
   const fuelPriceForDate = calcDate ? fuelPriceOnDate(data.fuel_prices, calcDate) : 0;
   const canCalculate = !!group && group.fuelBaseRate && !!calcDate && fuelPriceForDate > 0;
-  function adjustedRateFor(baseRate) {
+  function adjustedRateFor(k) {
     if (!canCalculate) return null;
-    const general = baseRate * 0.5;
-    const fuelComponent = baseRate * 0.5;
+    const { general, fuelComponent } = contractRateComponents(k);
     // Fuel component (an amount, e.g. Rs 50,000) ÷ Fuel Base Rate (e.g. Rs 272.77/L) gives
     // how many litres that amount represents at the contract's base price. Multiplying that
     // litre quantity by the fuel price on the chosen date gives the adjusted fuel amount.
@@ -5065,7 +5090,9 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                 <SortableTh label="Vehicle Size" active={rateSortCol === "vehicle"} direction={rateSortDir} onSort={(dir) => sortRate("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Vehicle Type</th>
-                <SortableTh label="Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>General (PKR)</th>
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel (PKR)</th>
+                <SortableTh label="Total Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Valid Period</th>
                 {canCalculate && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
@@ -5073,7 +5100,8 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
             </thead>
             <tbody>
               {rows.map((k) => {
-                const adjusted = adjustedRateFor(k.rate);
+                const adjusted = adjustedRateFor(k);
+                const { general, fuelComponent } = contractRateComponents(k);
                 return (
                   <tr key={k.id} className={trCls}>
                     <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.loadingPoint}</td>
@@ -5082,6 +5110,8 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                     <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{k.vehicleSize || "—"}</td>
                     <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.weightCategory || "—"}</td>
                     <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.axleLoadCategory || "—"}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{formatPKR(general)}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{formatPKR(fuelComponent)}</td>
                     <td className="px-4 py-3 whitespace-normal text-white font-medium" style={{ maxWidth: 100 }}>{formatPKR(k.rate)}</td>
                     <td className="px-4 py-3 text-slate-300 whitespace-normal text-xs" style={{ maxWidth: 130 }}>
                       {k.validFrom || k.validTo
@@ -5115,19 +5145,27 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
   const [vehicleSize, setVehicleSize] = useState(k.vehicleSize || "");
   const [weightCategory, setWeightCategory] = useState(k.weightCategory || "");
   const [axleLoadCategory, setAxleLoadCategory] = useState(k.axleLoadCategory || "");
-  const [rate, setRate] = useState(k.rate ?? "");
+  // General/Fixed and Fuel are now independently editable, rather than always being exactly
+  // half of a single rate figure. Existing rows (saved before this split existed) only have
+  // "rate" — default each half to rate/2 here so editing an old row doesn't silently lose
+  // its value, but from this point on the two are tracked and revised separately.
+  const [generalComponent, setGeneralComponent] = useState(k.generalComponent ?? (k.rate ? k.rate / 2 : ""));
+  const [fuelComponent, setFuelComponent] = useState(k.fuelComponent ?? (k.rate ? k.rate / 2 : ""));
   const [validFrom, setValidFrom] = useState(k.validFrom || "");
   const [validTo, setValidTo] = useState(k.validTo || "");
+  const totalRate = (Number(generalComponent) || 0) + (Number(fuelComponent) || 0);
 
   function submit(e) {
     e.preventDefault();
-    if (!loadingPoint.trim() || !destination.trim() || rate === "") return;
+    if (!loadingPoint.trim() || !destination.trim() || generalComponent === "" || fuelComponent === "") return;
     if (validFrom && validTo && validTo < validFrom) return;
     onSave({
       id: k.id || genUUID(), customerId: k.customerId, contractGroupId: k.contractGroupId,
       loadingPoint: loadingPoint.trim(), destination: destination.trim(), movementThrough,
       vehicleSize: vehicleSize.trim(), weightCategory: weightCategory.trim(), axleLoadCategory: axleLoadCategory.trim(),
-      rate: Number(rate), validFrom, validTo,
+      generalComponent: Number(generalComponent), fuelComponent: Number(fuelComponent),
+      rate: totalRate, // kept in sync as the total, for existing sort/display/search code that reads it directly
+      validFrom, validTo,
     });
   }
 
@@ -5163,7 +5201,11 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
           selectPlaceholder="Select vehicle type" customPlaceholder="e.g. 5x"
         />
       </Field>
-      <Field label="Agreed Rate (PKR)"><input type="number" min="0" className={inputCls} value={rate} onChange={(e) => setRate(e.target.value)} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="General/Fixed Component (PKR)"><input type="number" min="0" className={inputCls} value={generalComponent} onChange={(e) => setGeneralComponent(e.target.value)} /></Field>
+        <Field label="Fuel Component (PKR)"><input type="number" min="0" className={inputCls} value={fuelComponent} onChange={(e) => setFuelComponent(e.target.value)} /></Field>
+      </div>
+      <p className="text-slate-400 text-sm -mt-2 mb-3">Total Rate: <span className="text-white font-medium">{formatPKR(totalRate)}</span></p>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Valid From (optional)"><input type="date" className={inputCls} value={validFrom} onChange={(e) => setValidFrom(e.target.value)} /></Field>
         <Field label="Valid To (optional)"><input type="date" className={inputCls} value={validTo} onChange={(e) => setValidTo(e.target.value)} /></Field>
@@ -5390,7 +5432,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         // Automatic contract-rate lookup + fuel escalation, minus any fuel already swapped on
         // the same date, matching the design set for Contract Rates.
         const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
-        const fuelComponentAmount = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
+        const fuelComponentAmount = matchedRate ? contractRateComponents(matchedRate).fuelComponent : null;
         const impliedLitres = (fuelComponentAmount !== null && fuelBaseRate) ? fuelComponentAmount / fuelBaseRate : null;
         const receivablePKR = (impliedLitres !== null && price) ? impliedLitres * price : null;
         const receivableLitres = impliedLitres;
@@ -8561,11 +8603,11 @@ function LogistixERP() {
     const sender = (data.senders || []).find((s) => s.id === o.senderId) || null;
     const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups, c.loadingDate);
     const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
-    const generalComponent = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
-    const impliedLitres = (generalComponent !== null && fuelBaseRate) ? generalComponent / fuelBaseRate : null;
+    const { general: generalAmount, fuelComponent: fuelComponentAmount } = matchedRate ? contractRateComponents(matchedRate) : { general: null, fuelComponent: null };
+    const impliedLitres = (fuelComponentAmount !== null && fuelBaseRate) ? fuelComponentAmount / fuelBaseRate : null;
     const price = c.loadingDate ? fuelPriceOnDate(data.fuel_prices, c.loadingDate) : 0;
     const fuelAdjustment = (impliedLitres !== null && price) ? impliedLitres * price : null;
-    const fullFreight = (generalComponent !== null && fuelAdjustment !== null) ? generalComponent + fuelAdjustment : null;
+    const fullFreight = (generalAmount !== null && fuelAdjustment !== null) ? generalAmount + fuelAdjustment : null;
     const invoice = (data.invoices || []).find((inv) => inv.containerId === c.id);
     const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for loading date" : "";
     return [
@@ -8573,7 +8615,7 @@ function LogistixERP() {
       c.vehiclePlate || "", c.vehicleSize || "",
       ...(includeSender ? [senderShortLabel(o, sender)] : []),
       o.origin || "", c.destination || "",
-      generalComponent !== null ? generalComponent : noMatchNote,
+      generalAmount !== null ? generalAmount : noMatchNote,
       fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
       fullFreight !== null ? fullFreight : noMatchNote,
       c.transporter || "", invoice ? invoice.invoiceNumber || "" : "",
@@ -8674,8 +8716,11 @@ function LogistixERP() {
   }
 
   function handleContractRatesExport(customerId, contractGroupId, contractTitle) {
-    const rows = contractRatesFor(customerId, contractGroupId);
-    const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "rate"];
+    const rows = contractRatesFor(customerId, contractGroupId).map((k) => {
+      const { general, fuelComponent } = contractRateComponents(k);
+      return { ...k, generalComponent: general, fuelComponent };
+    });
+    const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "generalComponent", "fuelComponent", "rate", "validFrom", "validTo"];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, null, "ContractRates"), "ContractRates");
     XLSX.writeFile(wb, `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
