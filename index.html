@@ -384,9 +384,16 @@ function createLiteClient(url, anonKey) {
     return {
       select(cols) {
         let query = `${REST}/${table}?select=${encodeURIComponent(cols || "*")}`;
+        let rangeHeader = null;
         const builder = {
           eq(col, val) { query += `&${col}=eq.${encodeURIComponent(val)}`; return builder; },
           order(col, opts) { query += `&order=${col}.${opts && opts.ascending === false ? "desc" : "asc"}`; return builder; },
+          // PostgREST's row-count pagination: range(0, 999) asks for rows 0-999 (the first
+          // 1000) via the Range header. Without this, every query is silently capped at the
+          // server's default max-rows limit (commonly 1000) no matter how many rows actually
+          // exist - this resurfaces the rest via count (below), so a caller can loop through
+          // however many pages it actually takes to get everything.
+          range(from, to) { rangeHeader = `${from}-${to}`; return builder; },
           async maybeSingle() {
             const res = await fetch(query, { headers: await headersFor() });
             const json = await res.json().catch(() => []);
@@ -394,12 +401,17 @@ function createLiteClient(url, anonKey) {
             return { data: Array.isArray(json) ? (json[0] || null) : json, error: null };
           },
           then(resolve, reject) {
-            return headersFor()
+            const extraHeaders = rangeHeader ? { Range: rangeHeader, Prefer: "count=exact" } : {};
+            return headersFor(extraHeaders)
               .then((headers) => fetch(query, { headers }))
               .then(async (res) => {
                 const json = await res.json().catch(() => []);
                 if (!res.ok) return resolve({ data: null, error: { message: (json && json.message) || res.statusText } });
-                resolve({ data: json, error: null });
+                // Content-Range looks like "0-999/2345" - the total after the slash is how
+                // many rows exist in total, "*" if the count wasn't requested.
+                const contentRange = res.headers.get("content-range") || "";
+                const total = contentRange.includes("/") ? parseInt(contentRange.split("/")[1], 10) : null;
+                resolve({ data: json, error: null, count: Number.isFinite(total) ? total : null });
               })
               .catch(reject);
           },
@@ -8243,8 +8255,30 @@ function LogistixERP() {
     await supabaseClient.auth.signOut();
   }
 
+  // Loops through a table in pages of 1000 (Supabase/PostgREST's typical default max-rows
+  // limit) until every row has been fetched, rather than silently stopping at whatever that
+  // limit is - a single .select("*") with no range() would otherwise cap out there
+  // regardless of how many rows actually exist, which is exactly what happened once total
+  // orders crossed 1000: newer rows pushed older ones out of the truncated result entirely.
+  async function fetchAllRows(table) {
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    let all = [];
+    while (true) {
+      const { data, error, count } = await supabaseClient.from(table).select("*").order("created_at", { ascending: false }).range(from, from + PAGE_SIZE - 1);
+      if (error) return { data: all.length ? all : null, error };
+      all = all.concat(data || []);
+      const total = count != null ? count : null;
+      const gotFullPage = (data || []).length === PAGE_SIZE;
+      from += PAGE_SIZE;
+      if (!gotFullPage) break; // last page was short (or empty) - nothing more to fetch
+      if (total != null && all.length >= total) break; // reached the known total early
+    }
+    return { data: all, error: null };
+  }
+
   async function refreshData() {
-    const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
+    const results = await Promise.all(DATA_TABLES.map((t) => fetchAllRows(t)));
     setDataState((prev) => {
       // prev is null on the very first load (before any data has ever been set) - refreshData
       // is reused both for that initial load and the 15-second background poll, but only the
