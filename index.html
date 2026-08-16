@@ -8525,7 +8525,7 @@ function LogistixERP() {
           const newOrderIds = new Set(); // created orders don't need a "prev" snapshot entry - reverting just deletes them
 
           sheetNames.forEach((sheetName) => {
-            const hasSender = sheetName === "Wrapping Materials" || sheetName === "WM Domestic Karachi";
+            const hasSender = true; // Sender now applies to all Domestic categories, including Finished Goods
             const sheetCategory = { "Finished Goods": DOMESTIC_CATEGORIES[0], "Wrapping Materials": DOMESTIC_CATEGORIES[1], "WM Domestic Karachi": DOMESTIC_CATEGORIES[2] }[sheetName];
             const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "", raw: false });
             rows.forEach((row, rowIdx) => {
@@ -8823,7 +8823,7 @@ function LogistixERP() {
       // Finished Goods keeps the original layout without Sender.
       const sheetNameForCategory = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
       const sheets = DOMESTIC_CATEGORIES.map((category) => {
-        const hasSender = category !== DOMESTIC_CATEGORIES[0];
+        const hasSender = true; // Sender now applies to all Domestic categories, including Finished Goods - same layout/styling as Wrapping Materials
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
         const flat = flattenContainers(catOrders, () => true).filter(({ c }) => inExportRange(c.loadingDate));
         const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c, hasSender));
