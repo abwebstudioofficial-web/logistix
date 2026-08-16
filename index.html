@@ -1022,15 +1022,23 @@ function resolveEffectiveFuelPrice(fuelPrices, dateISO, mode) {
 }
 
 // Finds the contract rate matching a shipment's customer, Loading Point, Destination,
-// Vehicle Size, and Movement Through, across ALL customers at once — used by exports that
-// cover multiple customers together. Same match criteria (and same Axle Load Category
+// Vehicle Size, Movement Through, AND date (a rate only matches if the shipment's date falls
+// within its Valid From/Valid To range — a rate with neither set matches any date, for
+// backward compatibility with rates entered before date ranges existed). Used by exports
+// that cover multiple customers together. Same match criteria (and same Axle Load Category
 // limitation — no such field exists on any order/container) as the per-customer version
 // used in the Fuel Management report; kept as a separate function since that one is scoped
 // to a single customer's already-filtered rates and isn't worth risking a refactor of.
 // Takes origin explicitly rather than reading c.origin — origin (Loading Point) lives on
 // the order, not the container, and callers don't consistently merge it onto the container
 // object, so reading c.origin directly silently matched nothing.
-function matchContractRateAnyCustomer(customerId, origin, c, allContracts, allGroups) {
+function contractRateCoversDate(k, dateISO) {
+  if (!dateISO) return true; // no date to check against - don't exclude on this basis
+  if (k.validFrom && dateISO < k.validFrom) return false;
+  if (k.validTo && dateISO > k.validTo) return false;
+  return true;
+}
+function matchContractRateAnyCustomer(customerId, origin, c, allContracts, allGroups, shipmentDate) {
   const norm = (v) => (v || "").trim().toLowerCase();
   const loadingPoint = norm(origin);
   const destination = norm(c.destination);
@@ -1041,7 +1049,8 @@ function matchContractRateAnyCustomer(customerId, origin, c, allContracts, allGr
     norm(k.loadingPoint) === loadingPoint &&
     norm(k.destination) === destination &&
     norm(k.vehicleSize) === vehicleSize &&
-    norm(k.movementThrough) === movementThrough
+    norm(k.movementThrough) === movementThrough &&
+    contractRateCoversDate(k, shipmentDate)
   );
   if (!match) return null;
   const groupsById = new Map((allGroups || []).map((g) => [g.id, g]));
@@ -2756,18 +2765,20 @@ function DispatchModal({ containerLabel, initial, transporters, isDomestic, cont
     if (applyContractRate !== "yes") return null;
     const norm = (v) => (v || "").trim().toLowerCase();
     const normDestination = norm(destination);
+    const shipmentDate = dispatchAt ? dispatchAt.slice(0, 10) : "";
     const match = (contracts || []).find((k) =>
       k.customerId === customerId &&
       norm(k.loadingPoint) === norm(loadingPoint) &&
       norm(k.destination) === normDestination &&
       norm(k.movementThrough) === norm(movementThrough) &&
       norm(k.vehicleSize) === norm(vehicleSize) &&
-      norm(k.axleLoadCategory) === norm(vehicleType)
+      norm(k.axleLoadCategory) === norm(vehicleType) &&
+      contractRateCoversDate(k, shipmentDate)
     );
     if (!match) return null;
     const groupsById = new Map((contractGroups || []).map((g) => [g.id, g]));
     return { ...match, group: match.contractGroupId ? groupsById.get(match.contractGroupId) : null };
-  }, [applyContractRate, contracts, contractGroups, customerId, loadingPoint, destination, movementThrough, vehicleSize, vehicleType]);
+  }, [applyContractRate, contracts, contractGroups, customerId, loadingPoint, destination, movementThrough, vehicleSize, vehicleType, dispatchAt]);
 
   useEffect(() => {
     if (applyContractRate === "yes" && matchedContractRate) setFreightAmount(matchedContractRate.rate);
@@ -5055,6 +5066,7 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>
                 <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Vehicle Type</th>
                 <SortableTh label="Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
+                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Valid Period</th>
                 {canCalculate && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
               </tr>
@@ -5071,6 +5083,11 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                     <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.weightCategory || "—"}</td>
                     <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.axleLoadCategory || "—"}</td>
                     <td className="px-4 py-3 whitespace-normal text-white font-medium" style={{ maxWidth: 100 }}>{formatPKR(k.rate)}</td>
+                    <td className="px-4 py-3 text-slate-300 whitespace-normal text-xs" style={{ maxWidth: 130 }}>
+                      {k.validFrom || k.validTo
+                        ? `${k.validFrom ? fmtDate(k.validFrom) : "Any"} \u2192 ${k.validTo ? fmtDate(k.validTo) : "Any"}`
+                        : <span className="text-slate-500 italic">Always valid</span>}
+                    </td>
                     {canCalculate && <td className="px-4 py-3 whitespace-normal text-emerald-400 font-medium" style={{ maxWidth: 130 }}>{adjusted !== null ? formatPKR(adjusted) : "—"}</td>}
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
@@ -5099,15 +5116,18 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
   const [weightCategory, setWeightCategory] = useState(k.weightCategory || "");
   const [axleLoadCategory, setAxleLoadCategory] = useState(k.axleLoadCategory || "");
   const [rate, setRate] = useState(k.rate ?? "");
+  const [validFrom, setValidFrom] = useState(k.validFrom || "");
+  const [validTo, setValidTo] = useState(k.validTo || "");
 
   function submit(e) {
     e.preventDefault();
     if (!loadingPoint.trim() || !destination.trim() || rate === "") return;
+    if (validFrom && validTo && validTo < validFrom) return;
     onSave({
       id: k.id || genUUID(), customerId: k.customerId, contractGroupId: k.contractGroupId,
       loadingPoint: loadingPoint.trim(), destination: destination.trim(), movementThrough,
       vehicleSize: vehicleSize.trim(), weightCategory: weightCategory.trim(), axleLoadCategory: axleLoadCategory.trim(),
-      rate: Number(rate),
+      rate: Number(rate), validFrom, validTo,
     });
   }
 
@@ -5144,6 +5164,11 @@ function ContractForm({ initial, prefill, onSave, onCancel }) {
         />
       </Field>
       <Field label="Agreed Rate (PKR)"><input type="number" min="0" className={inputCls} value={rate} onChange={(e) => setRate(e.target.value)} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Valid From (optional)"><input type="date" className={inputCls} value={validFrom} onChange={(e) => setValidFrom(e.target.value)} /></Field>
+        <Field label="Valid To (optional)"><input type="date" className={inputCls} value={validTo} onChange={(e) => setValidTo(e.target.value)} /></Field>
+      </div>
+      <p className="text-slate-500 text-xs -mt-2 mb-3">Leave both blank for a rate that's always valid. When a shipment's date matches more than one rate for the same route, the one with a narrower/more specific range should be dated to avoid ambiguity — the system picks whichever it finds first.</p>
       <div className="flex justify-end gap-2 mt-2">
         <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
         <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Rate"}</button>
@@ -5301,10 +5326,11 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
   }, [data.contracts, data.contract_groups, customer.id]);
 
   // Finds the contract rate matching a shipment's Loading Point, Destination, Vehicle Size,
-  // and Movement Through. Axle Load Category is deliberately NOT part of this match — there
-  // is no such field anywhere on an order or container to compare it against, only on
-  // contract rates themselves, so it can't be used to narrow down a shipment's match.
-  function matchContractRate(c) {
+  // Movement Through, AND date (falls within the rate's Valid From/Valid To range, if set).
+  // Axle Load Category is deliberately NOT part of this match — there is no such field
+  // anywhere on an order or container to compare it against, only on contract rates
+  // themselves, so it can't be used to narrow down a shipment's match.
+  function matchContractRate(c, shipmentDate) {
     const norm = (v) => (v || "").trim().toLowerCase();
     const loadingPoint = norm(c.origin);
     const destination = norm(c.destination);
@@ -5314,7 +5340,8 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
       norm(k.loadingPoint) === loadingPoint &&
       norm(k.destination) === destination &&
       norm(k.vehicleSize) === vehicleSize &&
-      norm(k.movementThrough) === movementThrough
+      norm(k.movementThrough) === movementThrough &&
+      contractRateCoversDate(k, shipmentDate)
     ) || null;
   }
 
@@ -5351,7 +5378,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         // Domestic/Import: Freight is auto-retrieved from the matching contract rate rather
         // than relying on what was manually typed into the dispatch form — falls back to the
         // manual entry only when no contract rate matches this shipment at all.
-        const matchedRate = matchContractRate(c);
+        const matchedRate = matchContractRate(c, dispatchDateISO);
         const freightAmount = matchedRate ? xnum(matchedRate.rate) : manualFreightAmount;
         const base = {
           id: c.id, dispatchAtRaw: d.getTime(), month: fmtMonthYear(d),
@@ -8532,7 +8559,7 @@ function LogistixERP() {
   function buildDomesticExportRow(sr, o, c, includeSender) {
     const cust = getCustomer(data, o.customerId);
     const sender = (data.senders || []).find((s) => s.id === o.senderId) || null;
-    const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups);
+    const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups, c.loadingDate);
     const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
     const generalComponent = matchedRate ? xnum(matchedRate.rate) * 0.5 : null;
     const impliedLitres = (generalComponent !== null && fuelBaseRate) ? generalComponent / fuelBaseRate : null;
