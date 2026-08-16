@@ -903,6 +903,16 @@ function receiverAddressShortLabel(container, customer) {
   }
   return container.receiverAddressCustom || "";
 }
+// The selected delivery address's supervisor contact number - shown on the bilty so it reflects
+// whichever specific factory/warehouse this shipment is actually going to, not just the
+// customer's general office number.
+function receiverAddressContactNumber(container, customer) {
+  if (container.receiverAddressId) {
+    const match = ((customer && customer.deliveryAddresses) || []).find((a) => a.id === container.receiverAddressId);
+    if (match) return match.contactNumber || "";
+  }
+  return "";
+}
 
 function orderStatus(o) {
   if (o.cancelled) return "Cancelled";
@@ -2045,7 +2055,7 @@ async function downloadBiltyReceipt(order, data) {
       txt(ctx, order.senderAddress || order.origin || "", 42, srY + 60, { size: 11, color: SUB });
       txt(ctx, cust ? cust.name : "Unknown Customer", 32 + (W - 64) / 2 + 10, srY + 42, { size: 13, weight: "bold" });
       txt(ctx, resolveReceiverAddress(container, cust) || (cust ? cust.location || "" : ""), 32 + (W - 64) / 2 + 10, srY + 60, { size: 11, color: SUB });
-      txt(ctx, "Contact# " + (cust ? cust.phone || "—" : "—"), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
+      txt(ctx, "Contact# " + (receiverAddressContactNumber(container, cust) || (cust ? cust.phone || "—" : "—")), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
 
       // loading point / destination / movement through / vehicle size
       const infoCols = [32, 244, 456, 656, W - 32];
@@ -2208,7 +2218,7 @@ async function downloadBiltyReceipt(order, data) {
     txt(ctx, order.senderAddress || order.origin || "", 42, srY + 60, { size: 11, color: SUB });
     txt(ctx, cust ? cust.name : "Unknown Customer", 32 + (W - 64) / 2 + 10, srY + 42, { size: 13, weight: "bold" });
     txt(ctx, resolveReceiverAddress(container, cust) || (cust ? cust.location || "" : ""), 32 + (W - 64) / 2 + 10, srY + 60, { size: 11, color: SUB });
-    txt(ctx, "Contact# " + (cust ? cust.phone || "—" : "—"), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
+    txt(ctx, "Contact# " + (receiverAddressContactNumber(container, cust) || (cust ? cust.phone || "—" : "—")), 32 + (W - 64) / 2 + 10, srY + 75, { size: 11, color: SUB });
 
     // ---- loading point / destination / shipping line / empty return ----
     const infoCols = [32, 244, 456, 656, W - 32];
@@ -6966,11 +6976,11 @@ function CustomerForm({ initial, onSave, onCancel }) {
   const [deliveryAddresses, setDeliveryAddresses] = useState(() =>
     Array.isArray(c.deliveryAddresses) && c.deliveryAddresses.length
       ? c.deliveryAddresses
-      : [{ id: uid("addr"), label: "", address: "" }]
+      : [{ id: uid("addr"), label: "", address: "", contactNumber: "" }]
   );
 
   function addAddress() {
-    setDeliveryAddresses((a) => [...a, { id: uid("addr"), label: "", address: "" }]);
+    setDeliveryAddresses((a) => [...a, { id: uid("addr"), label: "", address: "", contactNumber: "" }]);
   }
   function removeAddress(id) {
     setDeliveryAddresses((a) => (a.length > 1 ? a.filter((x) => x.id !== id) : a));
@@ -7004,11 +7014,12 @@ function CustomerForm({ initial, onSave, onCancel }) {
             <Plus size={12} /> Add Address
           </button>
         </div>
-        <p className="text-slate-500 text-xs mb-2">These show up as a dropdown when creating orders for this customer — e.g. their actual factory or warehouse, not just their office.</p>
+        <p className="text-slate-500 text-xs mb-2">These show up as a dropdown when creating orders for this customer — e.g. their actual factory or warehouse, not just their office. Contact Number is that location's supervisor — it's what shows on the Bilty receipt when this address is selected.</p>
         <div className="space-y-2">
           {deliveryAddresses.map((a, idx) => (
-            <div key={a.id} className="grid grid-cols-[1fr_2fr_auto] gap-2 items-center bg-slate-900/50 border border-slate-800 rounded-lg p-2">
+            <div key={a.id} className="grid grid-cols-[1fr_1fr_2fr_auto] gap-2 items-center bg-slate-900/50 border border-slate-800 rounded-lg p-2">
               <input className={inputCls} value={a.label} onChange={(e) => setAddressField(a.id, "label", e.target.value)} placeholder={`Label (e.g. Factory ${idx + 1})`} />
+              <input className={inputCls} value={a.contactNumber || ""} onChange={(e) => setAddressField(a.id, "contactNumber", e.target.value)} placeholder="Supervisor's contact no." />
               <input className={inputCls} value={a.address} onChange={(e) => setAddressField(a.id, "address", e.target.value)} placeholder="Full address" />
               <button type="button" onClick={() => removeAddress(a.id)} disabled={deliveryAddresses.length === 1} className="text-slate-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed p-1.5">
                 <Trash2 size={14} />
