@@ -8689,14 +8689,17 @@ function LogistixERP() {
           coerced = Array.from(seenDates.values());
         }
 
-        // Same class of bug as the fuel_prices case above, but keyed on id instead of date:
-        // two rows sharing an id in the uploaded file would otherwise reach Supabase in the
-        // same upsert call, and Postgres rejects an ON CONFLICT DO UPDATE that touches the
-        // same row twice in one statement — failing the entire batch. Collapse to one row per
-        // id (last one in the file wins) before writing.
-        const seenIds = new Map();
-        coerced.forEach((row) => seenIds.set(row.id, row));
-        coerced = Array.from(seenIds.values());
+        // Same class of bug as the fuel_prices case above, but keyed on id instead of date: two
+        // rows sharing an id in the uploaded file would make Postgres reject the whole upsert
+        // (it won't let ON CONFLICT DO UPDATE touch the same row twice in one statement). Rather
+        // than dropping one of them, only the first row to use a given id keeps it as an update;
+        // every later row with that same id gets a fresh id instead, so every row in the file
+        // is still saved as its own record rather than one silently overwriting another.
+        const seenRowIds = new Set();
+        coerced = coerced.map((row) => {
+          if (!seenRowIds.has(row.id)) { seenRowIds.add(row.id); return row; }
+          return { ...row, id: genUUID() };
+        });
 
         const existingById = new Map(existingList.map((r) => [r.id, r]));
         const priorMeta = tabExcel[viewKey] || {};
@@ -8918,15 +8921,20 @@ function LogistixERP() {
         const stamped = rawCoerced.map((r) => ({ ...r, customerId, contractGroupId: contractGroupId || "" }));
 
         // Two rows in the file can end up with the same id (e.g. a row was copy-pasted in
-        // Excel to add a similar rate and the ID cell never got cleared). Supabase's upsert
-        // sends every row in one statement, and Postgres refuses an ON CONFLICT DO UPDATE that
-        // would touch the same row twice in a single command — so duplicate ids need collapsing
-        // to one row (last one in the file wins) before anything is written, or the entire
-        // batch is rejected and nothing saves.
-        const byId = new Map();
-        stamped.forEach((row) => byId.set(row.id, row));
-        const coerced = Array.from(byId.values());
-        const duplicateCount = stamped.length - coerced.length;
+        // Excel to add a new rate period and the ID cell never got cleared). Sending both to
+        // Supabase as updates to the same id in one upsert makes Postgres reject the whole
+        // batch — it won't let ON CONFLICT DO UPDATE touch the same row twice in one statement
+        // — and simply discarding one of them would throw away real data (e.g. an expired rate
+        // whose own Valid From/Valid To is meant to stay on record). So only the FIRST row to
+        // use a given id keeps it and updates that record; every later row with the same id is
+        // treated as its own new entry and gets a fresh id instead, so nothing gets dropped.
+        const seenIds = new Set();
+        let duplicateCount = 0;
+        const coerced = stamped.map((row) => {
+          if (!seenIds.has(row.id)) { seenIds.add(row.id); return row; }
+          duplicateCount++;
+          return { ...row, id: genUUID() };
+        });
 
         const existingList = data.contracts || [];
         const existingById = new Map(existingList.map((r) => [r.id, r]));
@@ -8953,7 +8961,7 @@ function LogistixERP() {
             attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
             message: error
               ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
-              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}${duplicateCount > 0 ? ` ${duplicateCount} row${duplicateCount === 1 ? "" : "s"} shared an ID with another row in the file — only the last one was kept.` : ""}` },
+              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}${duplicateCount > 0 ? ` ${duplicateCount} row${duplicateCount === 1 ? "" : "s"} shared an ID with another row in the file — saved as ${duplicateCount === 1 ? "a separate new record" : "separate new records"} instead of overwriting.` : ""}` },
           },
         }));
       } catch (err) {
@@ -9047,6 +9055,7 @@ function LogistixERP() {
         let updatedCount = 0, addedCount = 0, skippedCount = 0;
         const toWrite = [];
 
+        const usedIdsThisImport = new Set();
         rows.forEach((row) => {
           const swapId = xstr(readAnyKey(row, ["Swap ID", "swap id", "id"])).trim();
           const department = xstr(readAnyKey(row, ["Department"])).trim();
@@ -9058,7 +9067,14 @@ function LogistixERP() {
           if (!cardNumber && !department && !swapDate) return; // blank row
           if (!swapDate || !cardNumber) { skippedCount++; return; } // required fields missing
 
-          const id = swapId && existingById.has(swapId) ? swapId : genUUID();
+          let id = swapId && existingById.has(swapId) ? swapId : genUUID();
+          // If this id was already claimed by an earlier row in this same file (two rows
+          // resolved to the same existing Swap ID, for instance), this row becomes its own new
+          // entry instead of silently overwriting the earlier one — otherwise Postgres would
+          // also reject sending two updates to the same id in a single upsert.
+          if (usedIdsThisImport.has(id)) id = genUUID();
+          usedIdsThisImport.add(id);
+
           const record = { id, customerId, swapDate, department, swappedBy, cardNumber, qtyLtr, amountPkr };
           const prev = existingById.get(id) || null;
           if (prev) updatedCount++; else addedCount++;
@@ -9068,15 +9084,7 @@ function LogistixERP() {
           toWrite.push(record);
         });
 
-        // Same protection as the other import paths: if two rows in the file resolved to the
-        // same id (e.g. both matched an existing Swap ID already in the database), sending both
-        // in one upsert would make Postgres reject the whole batch with an ON CONFLICT DO
-        // UPDATE error. Keep only the last row per id.
-        const seenSwapIds = new Map();
-        toWrite.forEach((row) => seenSwapIds.set(row.id, row));
-        const dedupedWrite = Array.from(seenSwapIds.values());
-
-        const { error } = dedupedWrite.length ? await supabaseClient.from("fuel_card_swaps").upsert(dedupedWrite.map(toDbRow)) : { error: null };
+        const { error } = toWrite.length ? await supabaseClient.from("fuel_card_swaps").upsert(toWrite.map(toDbRow)) : { error: null };
         setDataState((prevData) => ({ ...prevData, fuel_card_swaps: mergedList }));
         setSwapExcel((prev) => ({
           ...prev,
