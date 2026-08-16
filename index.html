@@ -2098,7 +2098,7 @@ function downloadBiltyReceipt(order, data) {
     const descExtraLines = Math.max(0, descLines.length - 1);
     const fixedRows = 4; // Item Description, DN/LC/SAP No., Job No., B/L No.
     const pBodyH = 18 + fixedRows * 22 + descExtraLines * 16 + containers.length * 40 + 12;
-    const gateBodyH = 110; // Reporting/Gate In/Gate Out section's writable body height
+    const gateBodyH = 60; // Reporting/Gate In/Gate Out section's writable body height
     const srY = 150;
     const infoY = srY + 82;
     const pY = infoY + 26;
