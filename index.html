@@ -3536,10 +3536,16 @@ function Dashboard({ data }) {
 
 /* ==================== Orders ==================== */
 
-function OrdersView({ data, openModal, askDelete, shipmentType, role, isColVisible }) {
+function OrdersView({ data, openModal, askDelete, shipmentType, role, isColVisible, domesticCategory: domesticCategoryProp, setDomesticCategory: setDomesticCategoryProp }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("All Status");
-  const [domesticCategory, setDomesticCategory] = useState(null); // null = show category tiles
+  // Import/Export don't pass these props at all (they have no Domestic category concept),
+  // so this falls back to a local, unused state pair for them - only the Domestic instance's
+  // props actually matter, and those are lifted to the root so the Export/Attach bar
+  // (rendered outside this component) can see which category is currently open.
+  const [localDomesticCategory, setLocalDomesticCategory] = useState(null);
+  const domesticCategory = domesticCategoryProp !== undefined ? domesticCategoryProp : localDomesticCategory;
+  const setDomesticCategory = setDomesticCategoryProp || setLocalDomesticCategory;
   const typeLabel = { Domestic: "Domestic", Import: "Import", Export: "Export" }[shipmentType] || "";
   const isDomestic = shipmentType === "Domestic";
   // Import and (once a category is picked) Domestic both get the full status block row —
@@ -8141,6 +8147,10 @@ function LogistixERP() {
   const [data, setDataState] = useState(null);
   const [dataLoading, setDataLoading] = useState(false);
   const [view, setView] = useState("dashboard");
+  // Lifted out of OrdersView so the Export/Attach bar (rendered at this level, above the tab
+  // content) can know which Domestic category is currently open and scope the Excel
+  // export/attach to just that one, instead of always covering all three categories.
+  const [domesticCategory, setDomesticCategory] = useState(null);
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [viewSession, setViewSession] = useState({ role: "admin", customerId: null });
@@ -8786,7 +8796,7 @@ function LogistixERP() {
     ];
   }
 
-  async function handleTabExport(viewKey) {
+  async function handleTabExport(viewKey, categoryFilter) {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
     if (viewKey === "orders_domestic") {
@@ -8822,7 +8832,11 @@ function LogistixERP() {
       // layout (with the Sender column) per the request that the new tab match WM's layout;
       // Finished Goods keeps the original layout without Sender.
       const sheetNameForCategory = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
-      const sheets = DOMESTIC_CATEGORIES.map((category) => {
+      // categoryFilter is set when exporting from inside a specific category's tab (Finished
+      // Goods, Wrapping Materials, etc.) rather than the category picker itself - scopes the
+      // export to just that one category's orders/sheet instead of all three every time.
+      const categoriesToExport = categoryFilter ? [categoryFilter] : DOMESTIC_CATEGORIES;
+      const sheets = categoriesToExport.map((category) => {
         const hasSender = true; // Sender now applies to all Domestic categories, including Finished Goods - same layout/styling as Wrapping Materials
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
         const flat = flattenContainers(catOrders, () => true).filter(({ c }) => inExportRange(c.loadingDate));
@@ -8843,7 +8857,8 @@ function LogistixERP() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         const rangeLabel = hasDateFilter ? `-${domesticExportFrom || "start"}-to-${domesticExportTo || "end"}` : "";
-        a.href = url; a.download = `Domestic-Orders${rangeLabel}-${todayISO()}.xlsx`;
+        const namePrefix = categoryFilter ? `${sheetNameForCategory[categoryFilter].replace(/\s+/g, "-")}-Orders` : "Domestic-Orders";
+        a.href = url; a.download = `${namePrefix}${rangeLabel}-${todayISO()}.xlsx`;
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } catch (err) {
@@ -9280,7 +9295,7 @@ function LogistixERP() {
                     label={TAB_EXCEL_CONFIG[view].label}
                     meta={tabExcel[view]}
                     onAttachFile={(file) => handleTabAttachFile(view, file)}
-                    onExport={() => handleTabExport(view)}
+                    onExport={() => handleTabExport(view, view === "orders_domestic" ? domesticCategory : null)}
                     onRevert={() => handleTabRevert(view)}
                   />
                   {view === "orders_domestic" && (
@@ -9299,7 +9314,7 @@ function LogistixERP() {
                 </div>
               )}
               {view === "dashboard" && <Dashboard data={data} />}
-              {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} isColVisible={isColVisible} />}
+              {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} isColVisible={isColVisible} domesticCategory={domesticCategory} setDomesticCategory={setDomesticCategory} />}
               {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "orders_export" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Export" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "tracking_import" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Import" />}
