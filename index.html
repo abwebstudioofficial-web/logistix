@@ -569,6 +569,40 @@ const COLUMN_REGISTRY = {
       { key: "validPeriod", label: "Valid Period" },
     ],
   },
+  invoices: {
+    label: "Invoices",
+    columns: [
+      { key: "invoice", label: "Invoice" },
+      { key: "customer", label: "Customer" },
+      { key: "issued", label: "Issued" },
+      { key: "due", label: "Due" },
+      { key: "total", label: "Total" },
+      { key: "status", label: "Status" },
+    ],
+  },
+  transporterBills: {
+    label: "Transporter Bills",
+    columns: [
+      { key: "jobNo", label: "Job No." },
+      { key: "customer", label: "Customer" },
+      { key: "transporterName", label: "Transporter Name" },
+      { key: "containerNo", label: "Container No." },
+      { key: "vehicleNo", label: "Vehicle No." },
+      { key: "freightAmount", label: "Freight Amount" },
+      { key: "totalBillAmount", label: "Total Bill Amount Approved" },
+    ],
+  },
+  orderHistory: {
+    label: "Order History",
+    columns: [
+      { key: "jobNo", label: "Job No." },
+      { key: "customer", label: "Customer" },
+      { key: "containerNo", label: "Container No." },
+      { key: "vehicleNo", label: "Vehicle No." },
+      { key: "completedOn", label: "Completed On" },
+      { key: "notes", label: "Notes" },
+    ],
+  },
 };
 const COLUMN_VISIBILITY_STORAGE_KEY = "logistix_column_visibility_v1";
 function loadColumnVisibility() {
@@ -605,7 +639,7 @@ const ROLE_ALLOWED_VIEWS = {
   empty_return_receiver: ["tracking_import"],
   data_entry: ["orders_domestic", "orders_import", "orders_export", "customers", "senders", "transporters", "settings"],
   finance_manager: ["invoices", "contracts", "fuel_management", "settings"],
-  bill_checker: ["bill_checker"],
+  bill_checker: ["bill_checker", "settings"],
 };
 const ROLE_LABELS = {
   admin: "Admin", staff: "Staff", customer: "Customer",
@@ -1525,7 +1559,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 // 13=Loading Point red 14=Loading Point green   15=Loading Point cyan   16=Loading Point blue/white
 // 17=Bilty duplicate red, centered + wrap (Bilty No. content is itself a "wrap" column)
 // Every style above (except 0/7) now carries a thin border on all 4 sides. 18-21 are freeze-pane-boundary
-// variants used only on Import Transportation-2020's columns G(7)/H(8), dropping the border right at the split:
+// variants used only on Import Transportation's columns G(7)/H(8), dropping the border right at the split:
 // 18=cream header wrap, no-left border  (col H, "Description")
 // 19=cream header wrap, no-right border (col G, "Transporter")
 // 20=data center no-wrap, no-right border (col G content)
@@ -1695,7 +1729,7 @@ function colWidthsFor(headers) {
   return headers.map((h) => Math.min(Math.max(String(h || "").length + 6, 14), 50));
 }
 
-// Exact widths given for the Import Transportation-2020 sheet's first 30 columns.
+// Exact widths given for the Import Transportation sheet's first 30 columns.
 // "Remarks" and "YEAR" (columns 31-32) weren't included in that list, so those two still
 // fall back to the auto-computed width.
 const IMPORT_EXACT_WIDTHS = [6.29, 12.29, 20.14, 15.57, 20.57, 22.71, 24.14, 38, 21.14, 17.14, 17.14, 7.86, 9.86, 14.43, 20.71, 18.86, 18.86, 15.14, 11.43, 17, 26.71, 20.71, 20.71, 20.71, 20.71, 26.57, 19.86, 19.86, 19.86, 23.86];
@@ -1757,7 +1791,7 @@ async function buildTemplateWorkbook(data, mode) {
   // Damage Repair/Other Chgs, Total Amount Payable in PKR.
   [40, 42, 43, 44, 45].forEach((col) => { clearedContentDefault[col] = 22; });
 
-  // --- Import Transportation-2020 (cream header) ---
+  // --- Import Transportation (cream header) ---
   // Header wrap: everything except Job#, B/L No., Container No., Bilty No., Truck No., YEAR.
   const importHeaderNoWrap = new Set([2, 9, 10, 18, 19, 32]);
   const importHeaderWrap = new Set(Array.from({ length: 32 }, (_, i) => i + 1).filter((c) => !importHeaderNoWrap.has(c)));
@@ -1781,7 +1815,7 @@ async function buildTemplateWorkbook(data, mode) {
   const importDataRows = importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data));
   const importRows = [IMPORT_HEADERS, ...importDataRows];
   sheets.push({
-    name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1,
+    name: "Import Transportation", rows: importRows, headerRowIndex: 1,
     colWidths: importColWidths(), freezeCols: 7, freezeRows: 1,
     headerOverrides: importHeaderOverrides, contentDefaultCols: importContentDefault,
     conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 18: duplicateStyleFn(importDataRows.map((r) => r[17]), 17) },
@@ -1835,66 +1869,48 @@ async function buildTemplateWorkbook(data, mode) {
     conditionalCols: { 17: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 15: duplicateStyleFn(expDataRows.map((r) => r[14]), 17) },
   });
 
-  // --- Customer-specific sheets — same layout/rules as Cleared Cases-01 ---
-  TEMPLATE_COMPANY_SHEETS.forEach((sheetName) => {
-    const key = sheetName.toLowerCase();
-    const filtered = flattenContainers(orders, (o) => {
-      const cust = getCustomer(data, o.customerId);
-      return cust && cust.name && cust.name.toLowerCase().includes(key);
-    });
-    const rows = [Array(48).fill("")];
-    const tRow = Array(48).fill(""); tRow[3] = `${sheetName} - Detention Calculation & Payment Details`; tRow[47] = today;
-    rows.push(tRow);
-    rows.push(Array(48).fill(""));
-    rows.push(CLEARED_CASES_HEADERS);
-    filtered.forEach(({ o, c }, i) => rows.push(buildClearedRow(i + 1, o, c, data)));
-    sheets.push({
-      name: sheetName, rows, headerRowIndex: 4, titleCell: { row: 2, col: 4 },
-      colWidths: colWidthsFor(CLEARED_CASES_HEADERS),
-      headerOverrides: clearedHeaderOverrides, contentDefaultCols: clearedContentDefault,
-      conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE },
-    });
-  });
 
   // --- Fuel Prices (blue header, all effective dates) ---
-  const fuelPriceHeaders = ["Effective Date", "Price per Liter (PKR)"];
+  const fuelPriceHeaders = ["Sr#", "Effective Date", "Price per Liter (PKR)"];
   const fuelPriceRows = [fuelPriceHeaders, ...(data.fuel_prices || [])
     .slice()
     .sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || ""))
-    .map((p) => [p.effectiveDate ? fmtDate(p.effectiveDate) : "", xnum(p.pricePerLiter, "")])];
+    .map((p, i) => [i + 1, p.effectiveDate ? fmtDate(p.effectiveDate) : "", xnum(p.pricePerLiter, "")])];
   sheets.push({
     name: "Fuel Prices", rows: fuelPriceRows, headerRowIndex: 1, freezeRows: 1,
     colWidths: colWidthsFor(fuelPriceHeaders),
-    headerOverrides: buildColStyleMap(2, new Set(), 0, 6),
-    contentDefaultCols: buildColStyleMap(2, new Set(), 0, 8),
+    headerOverrides: buildColStyleMap(3, new Set(), 0, 6),
+    contentDefaultCols: buildColStyleMap(3, new Set(), 0, 8),
   });
 
   // --- Contract Rates (blue header, every customer's rates combined into one sheet, with
   // a Customer column added since this isn't scoped to one customer like the per-customer
   // Contracts page export is) ---
-  const contractHeaders = ["Customer", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General (PKR)", "Fuel (PKR)", "Total Rate (PKR)", "Valid From", "Valid To"];
-  const contractRows = [contractHeaders, ...(data.contracts || []).map((k) => {
+  const contractHeaders = ["Sr#", "Customer", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General (PKR)", "Fuel (PKR)", "Total Rate (PKR)", "Valid From", "Valid To"];
+  const contractRows = [contractHeaders, ...(data.contracts || []).map((k, i) => {
     const cust = getCustomer(data, k.customerId);
     const { general, fuelComponent } = contractRateComponents(k);
     return [
-      cust ? (cust.shortName || cust.name) : "", k.loadingPoint || "", k.destination || "", k.movementThrough || "",
+      i + 1, cust ? (cust.shortName || cust.name) : "", k.loadingPoint || "", k.destination || "", k.movementThrough || "",
       k.vehicleSize || "", k.weightCategory || "", k.axleLoadCategory || "",
       general, fuelComponent, xnum(k.rate),
       k.validFrom ? fmtDate(k.validFrom) : "", k.validTo ? fmtDate(k.validTo) : "",
     ];
   })];
+  const contractContentDefault = buildColStyleMap(contractHeaders.length, new Set(), 0, 8);
+  contractContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
   sheets.push({
     name: "Contract Rates", rows: contractRows, headerRowIndex: 1, freezeRows: 1,
     colWidths: colWidthsFor(contractHeaders),
     headerOverrides: buildColStyleMap(contractHeaders.length, new Set(), 0, 6),
-    contentDefaultCols: buildColStyleMap(contractHeaders.length, new Set(), 0, 8),
+    contentDefaultCols: contractContentDefault,
   });
 
   // --- Fuel Report (blue header, every customer's Import & Domestic dispatched shipments
   // combined into one sheet, with a Customer column) — same freight/fuel-adjustment formula
   // as the Fuel Management report and Contract Rates' Adjusted Rate, using the contract rate
   // that was actually valid on each shipment's own dispatch date.
-  const fuelReportHeaders = ["Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Adjustment (PKR)", "Total Receivable (PKR)"];
+  const fuelReportHeaders = ["Sr#", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Adjustment (PKR)", "Total Receivable (PKR)"];
   const fuelReportFlat = flattenContainers(orders, (o) => {
     const st = (o.shipmentType || "Import");
     return (st === "Import" || st === "Domestic") && !!(orderContainers(o).length);
@@ -1913,17 +1929,19 @@ async function buildTemplateWorkbook(data, mode) {
     const fullFreight = (general !== null && fuelAdjustment !== null) ? general + fuelAdjustment : null;
     const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for this date" : "";
     fuelReportRows.push([
-      cust ? (cust.shortName || cust.name) : "", fmtDate(dispatchDateISO), c.vehiclePlate || "",
+      fuelReportRows.length, cust ? (cust.shortName || cust.name) : "", fmtDate(dispatchDateISO), c.vehiclePlate || "",
       general !== null ? general : noMatchNote,
       fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
       fullFreight !== null ? fullFreight : noMatchNote,
     ]);
   });
+  const fuelReportContentDefault = buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 8);
+  fuelReportContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
   sheets.push({
     name: "Fuel Report", rows: fuelReportRows, headerRowIndex: 1, freezeRows: 1,
     colWidths: colWidthsFor(fuelReportHeaders),
     headerOverrides: buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 6),
-    contentDefaultCols: buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 8),
+    contentDefaultCols: fuelReportContentDefault,
   });
 
   return buildXlsxBuffer(sheets);
@@ -4581,7 +4599,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
 
 /* ==================== Invoices ==================== */
 
-function InvoicesView({ data, openModal, askDelete }) {
+function InvoicesView({ data, openModal, askDelete, isColVisible }) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
   const [showPicker, setShowPicker] = useState(false);
@@ -4676,12 +4694,12 @@ function InvoicesView({ data, openModal, askDelete }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className={thCls}>Invoice</th>
-                <th className={thCls}>Customer</th>
-                <th className={thCls}>Issued</th>
-                <th className={thCls}>Due</th>
-                <th className={thCls}>Total</th>
-                <th className={thCls}>Status</th>
+                {isColVisible("invoices", "invoice") && <th className={thCls}>Invoice</th>}
+                {isColVisible("invoices", "customer") && <th className={thCls}>Customer</th>}
+                {isColVisible("invoices", "issued") && <th className={thCls}>Issued</th>}
+                {isColVisible("invoices", "due") && <th className={thCls}>Due</th>}
+                {isColVisible("invoices", "total") && <th className={thCls}>Total</th>}
+                {isColVisible("invoices", "status") && <th className={thCls}>Status</th>}
                 <th className={thCls}></th>
               </tr>
             </thead>
@@ -4691,18 +4709,22 @@ function InvoicesView({ data, openModal, askDelete }) {
                 const ord = getOrder(data, i.orderId);
                 return (
                   <tr key={i.id} className={trCls}>
-                    <td className={tdCls}>
-                      <div className="text-blue-400 font-mono">{i.invoiceNumber}</div>
-                      {ord && <div className="text-slate-600 text-xs font-mono">{ord.orderNumber}</div>}
-                    </td>
-                    <td className={tdCls}>
-                      <div className="text-white font-medium">{cust ? cust.name : "Unknown"}</div>
-                      <div className="text-slate-600 text-xs">{cust ? cust.email : ""}</div>
-                    </td>
-                    <td className={tdCls}>{fmtDate(i.issued)}</td>
-                    <td className={tdCls}>{fmtDate(i.due)}</td>
-                    <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(i.total)}</td>
-                    <td className={tdCls}><Badge text={i.computedStatus} className={invoiceStatusColor[i.computedStatus]} /></td>
+                    {isColVisible("invoices", "invoice") && (
+                      <td className={tdCls}>
+                        <div className="text-blue-400 font-mono">{i.invoiceNumber}</div>
+                        {ord && <div className="text-slate-600 text-xs font-mono">{ord.orderNumber}</div>}
+                      </td>
+                    )}
+                    {isColVisible("invoices", "customer") && (
+                      <td className={tdCls}>
+                        <div className="text-white font-medium">{cust ? cust.name : "Unknown"}</div>
+                        <div className="text-slate-600 text-xs">{cust ? cust.email : ""}</div>
+                      </td>
+                    )}
+                    {isColVisible("invoices", "issued") && <td className={tdCls}>{fmtDate(i.issued)}</td>}
+                    {isColVisible("invoices", "due") && <td className={tdCls}>{fmtDate(i.due)}</td>}
+                    {isColVisible("invoices", "total") && <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(i.total)}</td>}
+                    {isColVisible("invoices", "status") && <td className={tdCls}><Badge text={i.computedStatus} className={invoiceStatusColor[i.computedStatus]} /></td>}
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
                         <button className={iconBtn} title="View" onClick={() => openModal({ type: "invoice", mode: "view", item: i })}><Eye size={15} /></button>
@@ -4909,7 +4931,7 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
-function TransporterBillsView({ data, updateContainerFields }) {
+function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container }
   const flat = [];
@@ -4936,13 +4958,13 @@ function TransporterBillsView({ data, updateContainerFields }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className={thCls}>Job No.</th>
-                <th className={thCls}>Customer</th>
-                <th className={thCls}>Transporter Name</th>
-                <th className={thCls}>Container No.</th>
-                <th className={thCls}>Vehicle No.</th>
-                <th className={thCls}>Freight Amount</th>
-                <th className={thCls}>Total Bill Amount Approved</th>
+                {isColVisible("transporterBills", "jobNo") && <th className={thCls}>Job No.</th>}
+                {isColVisible("transporterBills", "customer") && <th className={thCls}>Customer</th>}
+                {isColVisible("transporterBills", "transporterName") && <th className={thCls}>Transporter Name</th>}
+                {isColVisible("transporterBills", "containerNo") && <th className={thCls}>Container No.</th>}
+                {isColVisible("transporterBills", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
+                {isColVisible("transporterBills", "freightAmount") && <th className={thCls}>Freight Amount</th>}
+                {isColVisible("transporterBills", "totalBillAmount") && <th className={thCls}>Total Bill Amount Approved</th>}
               </tr>
             </thead>
             <tbody>
@@ -4950,21 +4972,23 @@ function TransporterBillsView({ data, updateContainerFields }) {
                 const cust = getCustomer(data, o.customerId);
                 return (
                   <tr key={c.id} className={trCls}>
-                    <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
-                    <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
-                    <td className={tdCls}>{c.transporter || "—"}</td>
-                    <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
-                    <td className={tdCls}>{c.vehiclePlate || "—"}</td>
-                    <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>
-                    <td className={tdCls}>
-                      <button
-                        type="button"
-                        onClick={() => setEditing({ order: o, container: c })}
-                        className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
-                      >
-                        {formatPKR(containerTotalBillAmount(c))}
-                      </button>
-                    </td>
+                    {isColVisible("transporterBills", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>}
+                    {isColVisible("transporterBills", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>}
+                    {isColVisible("transporterBills", "transporterName") && <td className={tdCls}>{c.transporter || "—"}</td>}
+                    {isColVisible("transporterBills", "containerNo") && <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>}
+                    {isColVisible("transporterBills", "vehicleNo") && <td className={tdCls}>{c.vehiclePlate || "—"}</td>}
+                    {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
+                    {isColVisible("transporterBills", "totalBillAmount") && (
+                      <td className={tdCls}>
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ order: o, container: c })}
+                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
+                        >
+                          {formatPKR(containerTotalBillAmount(c))}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -6401,7 +6425,7 @@ function ActivityLogView({ data }) {
 // Admin-only archive of every Completed order, regardless of age — the permanent record
 // that dispatcher/receiver/Empty Return Receiver/Data Entry lose day-to-day visibility
 // into once a container has been Completed for 2+ days (see isSettledOut).
-function OrderHistoryView({ data, openModal }) {
+function OrderHistoryView({ data, openModal, isColVisible }) {
   const [q, setQ] = useState("");
 
   const rows = [];
@@ -6434,24 +6458,24 @@ function OrderHistoryView({ data, openModal }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <th className={thCls}>Job No.</th>
-                <th className={thCls}>Customer</th>
-                <th className={thCls}>Container No.</th>
-                <th className={thCls}>Vehicle No.</th>
-                <th className={thCls}>Completed On</th>
-                <th className={thCls}>Notes</th>
+                {isColVisible("orderHistory", "jobNo") && <th className={thCls}>Job No.</th>}
+                {isColVisible("orderHistory", "customer") && <th className={thCls}>Customer</th>}
+                {isColVisible("orderHistory", "containerNo") && <th className={thCls}>Container No.</th>}
+                {isColVisible("orderHistory", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
+                {isColVisible("orderHistory", "completedOn") && <th className={thCls}>Completed On</th>}
+                {isColVisible("orderHistory", "notes") && <th className={thCls}>Notes</th>}
                 <th className={thCls}></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map(({ order: o, container: c, customerName }) => (
                 <tr key={c.id} className={trCls}>
-                  <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || o.orderNumber}</td>
-                  <td className={cx(tdCls, "text-white font-medium")}>{customerName}</td>
-                  <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
-                  <td className={tdCls}>{c.vehiclePlate || "—"}</td>
-                  <td className={tdCls}>{c.emptyReturnDate ? fmtDate(c.emptyReturnDate) : "—"}</td>
-                  <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 260 }}>{c.emptyReturnDescription || "—"}</td>
+                  {isColVisible("orderHistory", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || o.orderNumber}</td>}
+                  {isColVisible("orderHistory", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{customerName}</td>}
+                  {isColVisible("orderHistory", "containerNo") && <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>}
+                  {isColVisible("orderHistory", "vehicleNo") && <td className={tdCls}>{c.vehiclePlate || "—"}</td>}
+                  {isColVisible("orderHistory", "completedOn") && <td className={tdCls}>{c.emptyReturnDate ? fmtDate(c.emptyReturnDate) : "—"}</td>}
+                  {isColVisible("orderHistory", "notes") && <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 260 }}>{c.emptyReturnDescription || "—"}</td>}
                   <td className={tdCls}>
                     <button className={iconBtn} title="View order" onClick={() => openModal({ type: "order", mode: "view", item: o })}><Eye size={15} /></button>
                   </td>
@@ -9473,7 +9497,7 @@ function LogistixERP() {
                   isColVisible={isColVisible}
                 />
               )}
-              {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
+              {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} isColVisible={isColVisible} />}
               {view === "fuel_management" && (
                 <FuelManagementView
                   data={data} openModal={setModal} askDelete={setConfirm}
@@ -9489,9 +9513,9 @@ function LogistixERP() {
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "analytics" && <AnalyticsView data={data} />}
-              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} />}
+              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}
-              {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} />}
+              {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} isColVisible={isColVisible} />}
               {view === "settings" && <SettingsView columnVisibility={columnVisibility} setColumnVisibility={setColumnVisibility} isColVisible={isColVisible} />}
               {view === "users" && viewSession.role === "admin" && <ManageUsersView />}
             </>
