@@ -121,24 +121,36 @@
 
   /* ---- Tracking progress stepper: pulsing ring on the current stage, flowing shimmer on
      completed connector lines ---- */
-  @keyframes softPulseRing {
-    0%, 100% { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.35); }
-    50% { box-shadow: 0 0 0 7px rgba(37, 99, 235, 0.12); }
+  /* Both use only transform/opacity (GPU-composited, no repaint needed per frame) via a
+     pseudo-element, rather than animating box-shadow or background-position directly on the
+     element - those properties force the browser to repaint every frame, which is fine for
+     one element but adds up fast with many tracking cards animating simultaneously. */
+  @keyframes pulseRingExpand {
+    0% { transform: scale(1); opacity: 0.45; }
+    100% { transform: scale(1.9); opacity: 0; }
   }
-  @keyframes progressShimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+  @keyframes shimmerSweep {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
   }
-  .animate-pulse-ring { animation: softPulseRing 1.8s ease-in-out infinite; }
+  .animate-pulse-ring { position: relative; }
+  .animate-pulse-ring::after {
+    content: ""; position: absolute; inset: -4px; border-radius: 9999px; z-index: -1;
+    background: #2563eb; pointer-events: none;
+    animation: pulseRingExpand 1.8s ease-out infinite;
+  }
   .animate-progress-shimmer {
-    background-image: linear-gradient(90deg, #2563eb 0%, #60a5fa 50%, #2563eb 100%);
-    background-size: 200% 100%;
-    animation: progressShimmer 2.2s linear infinite;
+    position: relative; overflow: hidden; background-color: #2563eb;
+  }
+  .animate-progress-shimmer::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%);
+    animation: shimmerSweep 2.2s linear infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .animate-fade-in, .animate-fade-in-up, .animate-modal-in,
-    .animate-pulse-ring, .animate-progress-shimmer { animation: none; }
+    .animate-fade-in, .animate-fade-in-up, .animate-modal-in { animation: none; }
+    .animate-pulse-ring::after, .animate-progress-shimmer::after { animation: none; display: none; }
   }
 </style>
 </head>
