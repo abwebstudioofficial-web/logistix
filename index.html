@@ -267,6 +267,9 @@ function Moon({ size = 16, className = "" }) {
 function Zap({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>;
 }
+function Settings({ size = 16, className = "" }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="18" r="2" fill="currentColor" stroke="none"/></svg>;
+}
 function Shield({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>;
 }
@@ -488,8 +491,82 @@ const NAV_ITEMS = [
   { key: "analytics", label: "Analytics", icon: BarChart3 },
   { key: "activity_log", label: "Activity Log", icon: Clock },
   { key: "order_history", label: "Order History", icon: CheckCircle2 },
+  { key: "settings", label: "Settings", icon: Settings },
   { key: "users", label: "Manage Users", icon: Users },
 ];
+
+// Every column that can be individually shown/hidden via Settings, grouped by the table it
+// belongs to. Purely a display preference - stored per-browser (not synced to the database),
+// since it's about how one person likes to view data, not shared data itself. Any column not
+// explicitly turned off here defaults to visible, so this list only needs an entry when
+// someone actually hides something - nothing needs to be pre-populated for it to work correctly.
+const COLUMN_REGISTRY = {
+  ordersImportExport: {
+    label: "Orders — Import & Export",
+    columns: [
+      { key: "jobNo", label: "Job No." },
+      { key: "customer", label: "Customer" },
+      { key: "destination", label: "Destination" },
+      { key: "description", label: "Description" },
+      { key: "containerNo", label: "Container No." },
+      { key: "vehicleNo", label: "Vehicle No." },
+      { key: "status", label: "Status" },
+      { key: "emptyStatus", label: "Empty Status (Import only)" },
+    ],
+  },
+  ordersDomestic: {
+    label: "Orders — Domestic",
+    columns: [
+      { key: "customer", label: "Customer" },
+      { key: "poSap", label: "PO / SAP No." },
+      { key: "movementThrough", label: "Movement Through" },
+      { key: "loadingDate", label: "Loading Date" },
+      { key: "vehicleNo", label: "Vehicle No." },
+      { key: "vehicleSize", label: "Vehicle Size" },
+      { key: "sender", label: "Sender" },
+      { key: "loadingPoint", label: "Loading Point" },
+      { key: "destination", label: "Destination" },
+      { key: "transporterName", label: "Transporter Name" },
+      { key: "status", label: "Status" },
+    ],
+  },
+  fuelConsumption: {
+    label: "Fuel Management — Import & Domestic Consumption Report",
+    columns: [
+      { key: "dispatchDate", label: "Dispatch Date" },
+      { key: "vehicleNo", label: "Vehicle No." },
+      { key: "freight", label: "Freight (PKR)" },
+      { key: "fuelSwappedPkr", label: "Fuel Swapped (PKR)" },
+      { key: "fuelSwappedLitre", label: "Fuel Swapped (Litre)" },
+      { key: "receivablePkr", label: "Receivable (PKR)" },
+      { key: "receivableLitre", label: "Receivable (Litre)" },
+    ],
+  },
+  contractRates: {
+    label: "Contract Management — Contract Rates",
+    columns: [
+      { key: "loadingPoint", label: "Loading Point" },
+      { key: "destination", label: "Destination" },
+      { key: "movementThrough", label: "Movement Through" },
+      { key: "vehicleSize", label: "Vehicle Size" },
+      { key: "weightCategory", label: "Weight Category" },
+      { key: "vehicleType", label: "Vehicle Type" },
+      { key: "general", label: "General (PKR)" },
+      { key: "fuel", label: "Fuel (PKR)" },
+      { key: "totalRate", label: "Total Rate (PKR)" },
+      { key: "validPeriod", label: "Valid Period" },
+    ],
+  },
+};
+const COLUMN_VISIBILITY_STORAGE_KEY = "logistix_column_visibility_v1";
+function loadColumnVisibility() {
+  try {
+    const raw = window.localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
 
 const VIEW_TITLES = {
   dashboard: "Dashboard",
@@ -514,8 +591,8 @@ const ROLE_ALLOWED_VIEWS = {
   receiver_import_domestic: ["tracking_import", "tracking_domestic"],
   receiver_export: ["tracking_export"],
   empty_return_receiver: ["tracking_import"],
-  data_entry: ["orders_domestic", "orders_import", "orders_export", "customers", "senders", "transporters"],
-  finance_manager: ["invoices", "contracts", "fuel_management"],
+  data_entry: ["orders_domestic", "orders_import", "orders_export", "customers", "senders", "transporters", "settings"],
+  finance_manager: ["invoices", "contracts", "fuel_management", "settings"],
   bill_checker: ["bill_checker"],
 };
 const ROLE_LABELS = {
@@ -1908,6 +1985,16 @@ function normalizeDateStr(v) {
   if (v instanceof Date) return isNaN(v) ? "" : toLocalDateStr(v);
   const s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // dd/mm/yyyy - this app's own display format (and now also its own export format). Handled
+  // explicitly and first, since JS's native Date parser treats slash-separated dates as
+  // ambiguous and can misread dd/mm/yyyy as mm/dd/yyyy, silently failing whenever day > 12.
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) {
+    const day = Number(dmy[1]), month = Number(dmy[2]), year = Number(dmy[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
   const d = new Date(s);
   return isNaN(d) ? "" : toLocalDateStr(d);
 }
@@ -3446,7 +3533,7 @@ function Dashboard({ data }) {
 
 /* ==================== Orders ==================== */
 
-function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
+function OrdersView({ data, openModal, askDelete, shipmentType, role, isColVisible }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("All Status");
   const [domesticCategory, setDomesticCategory] = useState(null); // null = show category tiles
@@ -3601,29 +3688,29 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
               <tr>
                 {isDomestic ? (
                   <>
-                    <th className={thCls}>Customer</th>
-                    <th className={thCls}>PO / SAP No.</th>
-                    <th className={thCls}>Movement Through</th>
-                    <th className={thCls}>Loading Date</th>
-                    <th className={thCls}>Vehicle No.</th>
-                    <th className={thCls}>Vehicle Size</th>
-                    {(domesticCategory === DOMESTIC_CATEGORIES[1] || domesticCategory === DOMESTIC_CATEGORIES[2]) && <th className={thCls}>Sender</th>}
-                    <th className={thCls}>Loading Point</th>
-                    <th className={thCls}>Destination</th>
-                    <th className={thCls}>Transporter Name</th>
-                    <th className={thCls}>Status</th>
+                    {isColVisible("ordersDomestic", "customer") && <th className={thCls}>Customer</th>}
+                    {isColVisible("ordersDomestic", "poSap") && <th className={thCls}>PO / SAP No.</th>}
+                    {isColVisible("ordersDomestic", "movementThrough") && <th className={thCls}>Movement Through</th>}
+                    {isColVisible("ordersDomestic", "loadingDate") && <th className={thCls}>Loading Date</th>}
+                    {isColVisible("ordersDomestic", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
+                    {isColVisible("ordersDomestic", "vehicleSize") && <th className={thCls}>Vehicle Size</th>}
+                    {isColVisible("ordersDomestic", "sender") && (domesticCategory === DOMESTIC_CATEGORIES[1] || domesticCategory === DOMESTIC_CATEGORIES[2]) && <th className={thCls}>Sender</th>}
+                    {isColVisible("ordersDomestic", "loadingPoint") && <th className={thCls}>Loading Point</th>}
+                    {isColVisible("ordersDomestic", "destination") && <th className={thCls}>Destination</th>}
+                    {isColVisible("ordersDomestic", "transporterName") && <th className={thCls}>Transporter Name</th>}
+                    {isColVisible("ordersDomestic", "status") && <th className={thCls}>Status</th>}
                     <th className={thCls}></th>
                   </>
                 ) : (
                   <>
-                    <th className={thCls}>Job No.</th>
-                    <th className={thCls}>Customer</th>
-                    <th className={thCls}>Destination</th>
-                    <th className={thCls}>Description</th>
-                    <th className={thCls}>Container No.</th>
-                    <th className={thCls}>Vehicle No.</th>
-                    <th className={thCls}>Status</th>
-                    {shipmentType === "Import" && <th className={thCls}>Empty Status</th>}
+                    {isColVisible("ordersImportExport", "jobNo") && <th className={thCls}>Job No.</th>}
+                    {isColVisible("ordersImportExport", "customer") && <th className={thCls}>Customer</th>}
+                    {isColVisible("ordersImportExport", "destination") && <th className={thCls}>Destination</th>}
+                    {isColVisible("ordersImportExport", "description") && <th className={thCls}>Description</th>}
+                    {isColVisible("ordersImportExport", "containerNo") && <th className={thCls}>Container No.</th>}
+                    {isColVisible("ordersImportExport", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
+                    {isColVisible("ordersImportExport", "status") && <th className={thCls}>Status</th>}
+                    {isColVisible("ordersImportExport", "emptyStatus") && shipmentType === "Import" && <th className={thCls}>Empty Status</th>}
                     <th className={thCls}></th>
                   </>
                 )}
@@ -3639,28 +3726,28 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role }) {
                   <tr key={c ? c.id : o.id + "-" + idx} className={trCls}>
                     {isDomestic ? (
                       <>
-                        <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
-                        <td className={cx(tdCls, "font-mono text-slate-200")}>{c ? (c.poSapNo || "—") : "—"}</td>
-                        <td className={tdCls}>{c ? (c.movementThrough || "—") : "—"}</td>
-                        <td className={tdCls}>{c && c.loadingDate ? fmtDate(c.loadingDate) : "—"}</td>
-                        <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
-                        <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>
-                        {(domesticCategory === DOMESTIC_CATEGORIES[1] || domesticCategory === DOMESTIC_CATEGORIES[2]) && <td className={tdCls}>{senderShortLabel(o, sender) || "—"}</td>}
-                        <td className={tdCls}>{o.origin || "—"}</td>
-                        <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
-                        <td className={tdCls}>{c ? (c.transporter || "—") : "—"}</td>
-                        <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>
+                        {isColVisible("ordersDomestic", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>}
+                        {isColVisible("ordersDomestic", "poSap") && <td className={cx(tdCls, "font-mono text-slate-200")}>{c ? (c.poSapNo || "—") : "—"}</td>}
+                        {isColVisible("ordersDomestic", "movementThrough") && <td className={tdCls}>{c ? (c.movementThrough || "—") : "—"}</td>}
+                        {isColVisible("ordersDomestic", "loadingDate") && <td className={tdCls}>{c && c.loadingDate ? fmtDate(c.loadingDate) : "—"}</td>}
+                        {isColVisible("ordersDomestic", "vehicleNo") && <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>}
+                        {isColVisible("ordersDomestic", "vehicleSize") && <td className={tdCls}>{c ? (c.vehicleSize || "—") : "—"}</td>}
+                        {isColVisible("ordersDomestic", "sender") && (domesticCategory === DOMESTIC_CATEGORIES[1] || domesticCategory === DOMESTIC_CATEGORIES[2]) && <td className={tdCls}>{senderShortLabel(o, sender) || "—"}</td>}
+                        {isColVisible("ordersDomestic", "loadingPoint") && <td className={tdCls}>{o.origin || "—"}</td>}
+                        {isColVisible("ordersDomestic", "destination") && <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>}
+                        {isColVisible("ordersDomestic", "transporterName") && <td className={tdCls}>{c ? (c.transporter || "—") : "—"}</td>}
+                        {isColVisible("ordersDomestic", "status") && <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>}
                       </>
                     ) : (
                       <>
-                        <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
-                        <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
-                        <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>
-                        <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 220 }}>{o.description || "—"}</td>
-                        <td className={cx(tdCls, "font-mono")}>{c ? (c.containerNumber || "—") : "—"}</td>
-                        <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>
-                        <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>
-                        {shipmentType === "Import" && (
+                        {isColVisible("ordersImportExport", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>}
+                        {isColVisible("ordersImportExport", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>}
+                        {isColVisible("ordersImportExport", "destination") && <td className={tdCls}>{c ? (c.destination || "—") : "—"}</td>}
+                        {isColVisible("ordersImportExport", "description") && <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 220 }}>{o.description || "—"}</td>}
+                        {isColVisible("ordersImportExport", "containerNo") && <td className={cx(tdCls, "font-mono")}>{c ? (c.containerNumber || "—") : "—"}</td>}
+                        {isColVisible("ordersImportExport", "vehicleNo") && <td className={tdCls}>{c ? (c.vehiclePlate || "—") : "—"}</td>}
+                        {isColVisible("ordersImportExport", "status") && <td className={tdCls}><Badge text={st} className={orderStatusColor[st]} /></td>}
+                        {isColVisible("ordersImportExport", "emptyStatus") && shipmentType === "Import" && (
                           <td className={tdCls}>{emptyStatus === "—" ? "—" : <Badge text={emptyStatus} className={emptyStatusColor[emptyStatus]} />}</td>
                         )}
                       </>
@@ -4847,7 +4934,7 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
 
 /* ==================== Contracts (Finance Manager + Admin) ==================== */
 
-function ContractsView({ data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert }) {
+function ContractsView({ data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, isColVisible }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
@@ -4859,6 +4946,7 @@ function ContractsView({ data, openModal, askDelete, role, contractExcel, onCont
         contractExcel={contractExcel} onContractRatesExport={onContractRatesExport}
         onContractRatesAttach={onContractRatesAttach} onContractRatesRevert={onContractRatesRevert}
         onBack={() => setSelectedCustomerId(null)}
+        isColVisible={isColVisible}
       />
     );
   }
@@ -4896,7 +4984,7 @@ function ContractsView({ data, openModal, askDelete, role, contractExcel, onCont
   );
 }
 
-function CustomerContractsDetail({ customer, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
+function CustomerContractsDetail({ customer, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack, isColVisible }) {
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const groups = (data.contract_groups || []).filter((g) => g.customerId === customer.id);
   const allRates = (data.contracts || []).filter((k) => k.customerId === customer.id);
@@ -4915,6 +5003,7 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
         contractExcel={contractExcel} onContractRatesExport={onContractRatesExport}
         onContractRatesAttach={onContractRatesAttach} onContractRatesRevert={onContractRatesRevert}
         onBack={() => setSelectedGroupId(null)}
+        isColVisible={isColVisible}
       />
     );
   }
@@ -4982,7 +5071,7 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
   );
 }
 
-function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack }) {
+function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack, isColVisible }) {
   const [q, setQ] = useState("");
   const [calcDate, setCalcDate] = useState("");
   const [rateSortCol, setRateSortCol] = useState("loading");
@@ -5084,16 +5173,16 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <SortableTh label="Loading Point" active={rateSortCol === "loading"} direction={rateSortDir} onSort={(dir) => sortRate("loading", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <SortableTh label="Destination" active={rateSortCol === "destination"} direction={rateSortDir} onSort={(dir) => sortRate("destination", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Movement Through</th>
-                <SortableTh label="Vehicle Size" active={rateSortCol === "vehicle"} direction={rateSortDir} onSort={(dir) => sortRate("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Vehicle Type</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>General (PKR)</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel (PKR)</th>
-                <SortableTh label="Total Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Valid Period</th>
+                {isColVisible("contractRates", "loadingPoint") && <SortableTh label="Loading Point" active={rateSortCol === "loading"} direction={rateSortDir} onSort={(dir) => sortRate("loading", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("contractRates", "destination") && <SortableTh label="Destination" active={rateSortCol === "destination"} direction={rateSortDir} onSort={(dir) => sortRate("destination", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("contractRates", "movementThrough") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Movement Through</th>}
+                {isColVisible("contractRates", "vehicleSize") && <SortableTh label="Vehicle Size" active={rateSortCol === "vehicle"} direction={rateSortDir} onSort={(dir) => sortRate("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("contractRates", "weightCategory") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Weight Category</th>}
+                {isColVisible("contractRates", "vehicleType") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 110 }}>Vehicle Type</th>}
+                {isColVisible("contractRates", "general") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>General (PKR)</th>}
+                {isColVisible("contractRates", "fuel") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel (PKR)</th>}
+                {isColVisible("contractRates", "totalRate") && <SortableTh label="Total Rate (PKR)" active={rateSortCol === "rate"} direction={rateSortDir} onSort={(dir) => sortRate("rate", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("contractRates", "validPeriod") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Valid Period</th>}
                 {canCalculate && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 130 }}>Adjusted Rate ({fmtDate(calcDate)})</th>}
                 <th className={thCls}></th>
               </tr>
@@ -5104,20 +5193,22 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
                 const { general, fuelComponent } = contractRateComponents(k);
                 return (
                   <tr key={k.id} className={trCls}>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.loadingPoint}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.destination}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.movementThrough || "—"}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{k.vehicleSize || "—"}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.weightCategory || "—"}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.axleLoadCategory || "—"}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{formatPKR(general)}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{formatPKR(fuelComponent)}</td>
-                    <td className="px-4 py-3 whitespace-normal text-white font-medium" style={{ maxWidth: 100 }}>{formatPKR(k.rate)}</td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-normal text-xs" style={{ maxWidth: 130 }}>
-                      {k.validFrom || k.validTo
-                        ? `${k.validFrom ? fmtDate(k.validFrom) : "Any"} \u2192 ${k.validTo ? fmtDate(k.validTo) : "Any"}`
-                        : <span className="text-slate-500 italic">Always valid</span>}
-                    </td>
+                    {isColVisible("contractRates", "loadingPoint") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.loadingPoint}</td>}
+                    {isColVisible("contractRates", "destination") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.destination}</td>}
+                    {isColVisible("contractRates", "movementThrough") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.movementThrough || "—"}</td>}
+                    {isColVisible("contractRates", "vehicleSize") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{k.vehicleSize || "—"}</td>}
+                    {isColVisible("contractRates", "weightCategory") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.weightCategory || "—"}</td>}
+                    {isColVisible("contractRates", "vehicleType") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 110 }}>{k.axleLoadCategory || "—"}</td>}
+                    {isColVisible("contractRates", "general") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{formatPKR(general)}</td>}
+                    {isColVisible("contractRates", "fuel") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{formatPKR(fuelComponent)}</td>}
+                    {isColVisible("contractRates", "totalRate") && <td className="px-4 py-3 whitespace-normal text-white font-medium" style={{ maxWidth: 100 }}>{formatPKR(k.rate)}</td>}
+                    {isColVisible("contractRates", "validPeriod") && (
+                      <td className="px-4 py-3 text-slate-300 whitespace-normal text-xs" style={{ maxWidth: 130 }}>
+                        {k.validFrom || k.validTo
+                          ? `${k.validFrom ? fmtDate(k.validFrom) : "Any"} \u2192 ${k.validTo ? fmtDate(k.validTo) : "Any"}`
+                          : <span className="text-slate-500 italic">Always valid</span>}
+                      </td>
+                    )}
                     {canCalculate && <td className="px-4 py-3 whitespace-normal text-emerald-400 font-medium" style={{ maxWidth: 130 }}>{adjusted !== null ? formatPKR(adjusted) : "—"}</td>}
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
@@ -5285,7 +5376,7 @@ function groupFuelByVehicle(containers, fuelPrices) {
   return Array.from(map.values()).sort((a, b) => b.fuelTotal - a.fuelTotal || b.trips - a.trips);
 }
 
-function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate }) {
+function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
@@ -5297,6 +5388,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
           customer={cust} data={data} openModal={openModal} askDelete={askDelete} onBack={() => setSelectedCustomerId(null)}
           fuelPriceExcel={fuelPriceExcel} onFuelPriceAttach={onFuelPriceAttach} onFuelPriceExport={onFuelPriceExport} onFuelPriceRevert={onFuelPriceRevert}
           swapExcel={swapExcel} onSwapAttach={onSwapAttach} onSwapExport={onSwapExport} onSwapRevert={onSwapRevert} onSwapRecalculate={onSwapRecalculate}
+          isColVisible={isColVisible}
         />
       );
     }
@@ -5338,7 +5430,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
   );
 }
 
-function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate }) {
+function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnightly | monthly
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
@@ -5842,13 +5934,13 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                <SortableTh label="Dispatch Date" active={consumptionSortCol === "date"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("date", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <SortableTh label="Vehicle No." active={consumptionSortCol === "vehicle"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <SortableTh label="Freight (PKR)" active={consumptionSortCol === "freight"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("freight", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (PKR)</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (Litre)</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (PKR)</th>
-                <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (Litre)</th>
+                {isColVisible("fuelConsumption", "dispatchDate") && <SortableTh label="Dispatch Date" active={consumptionSortCol === "date"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("date", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("fuelConsumption", "vehicleNo") && <SortableTh label="Vehicle No." active={consumptionSortCol === "vehicle"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("vehicle", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("fuelConsumption", "freight") && <SortableTh label="Freight (PKR)" active={consumptionSortCol === "freight"} direction={consumptionSortDir} onSort={(dir) => sortConsumption("freight", dir)} className="text-left font-medium px-4 py-3 whitespace-normal" />}
+                {isColVisible("fuelConsumption", "fuelSwappedPkr") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (PKR)</th>}
+                {isColVisible("fuelConsumption", "fuelSwappedLitre") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Fuel Swapped (Litre)</th>}
+                {isColVisible("fuelConsumption", "receivablePkr") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (PKR)</th>}
+                {isColVisible("fuelConsumption", "receivableLitre") && <th className="text-left font-medium px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>Receivable (Litre)</th>}
               </tr>
             </thead>
             <tbody>
@@ -5862,34 +5954,40 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                 return (
                   <React.Fragment key={g.key || "no-month"}>
                     <tr className="bg-slate-800/40 hover:bg-slate-800/70 cursor-pointer border-b border-slate-800" onClick={() => toggleMonth(g.key)}>
-                      <td className="px-4 py-3 whitespace-normal border-l-2 border-l-blue-600/30" style={{ maxWidth: 90 }}>
-                        <div className="flex items-center gap-1.5">
-                          {isCollapsed ? <ChevronRight size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
-                          <span className="text-white font-medium">{g.key || "No month"}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 whitespace-normal font-mono text-white font-medium" style={{ maxWidth: 90 }}>{g.items.length} shipment{g.items.length !== 1 ? "s" : ""}</td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{formatPKR(groupFreight)}</td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupSwappedPKR ? formatPKR(groupSwappedPKR) : "—"}</td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupSwappedLitres ? `${groupSwappedLitres.toLocaleString()} L` : "—"}</td>
-                      <td className="px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>
-                        <span className={cx("font-medium", groupReceivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(groupReceivablePKR)}</span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupReceivableLitres ? `${groupReceivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>
+                      {isColVisible("fuelConsumption", "dispatchDate") && (
+                        <td className="px-4 py-3 whitespace-normal border-l-2 border-l-blue-600/30" style={{ maxWidth: 90 }}>
+                          <div className="flex items-center gap-1.5">
+                            {isCollapsed ? <ChevronRight size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+                            <span className="text-white font-medium">{g.key || "No month"}</span>
+                          </div>
+                        </td>
+                      )}
+                      {isColVisible("fuelConsumption", "vehicleNo") && <td className="px-4 py-3 whitespace-normal font-mono text-white font-medium" style={{ maxWidth: 90 }}>{g.items.length} shipment{g.items.length !== 1 ? "s" : ""}</td>}
+                      {isColVisible("fuelConsumption", "freight") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{formatPKR(groupFreight)}</td>}
+                      {isColVisible("fuelConsumption", "fuelSwappedPkr") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupSwappedPKR ? formatPKR(groupSwappedPKR) : "—"}</td>}
+                      {isColVisible("fuelConsumption", "fuelSwappedLitre") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupSwappedLitres ? `${groupSwappedLitres.toLocaleString()} L` : "—"}</td>}
+                      {isColVisible("fuelConsumption", "receivablePkr") && (
+                        <td className="px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>
+                          <span className={cx("font-medium", groupReceivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(groupReceivablePKR)}</span>
+                        </td>
+                      )}
+                      {isColVisible("fuelConsumption", "receivableLitre") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{groupReceivableLitres ? `${groupReceivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>}
                     </tr>
                     {!isCollapsed && g.items.map((r) => (
                       <tr key={r.id} className={cx(trCls, r.noDispatch && "bg-amber-950/10")}>
-                        <td className="px-4 py-3 text-slate-300 whitespace-normal border-l-2 border-l-blue-600/30" style={{ maxWidth: 90 }}>{r.dispatchDate}</td>
-                        <td className="px-4 py-3 whitespace-normal font-mono text-white font-medium" style={{ maxWidth: 90 }}>{r.vehiclePlate}</td>
-                        <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{r.noDispatch ? <span className="text-slate-500 italic text-xs">No dispatch</span> : formatPKR(r.freightAmount)}</td>
-                        <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedPKR ? formatPKR(r.swappedPKR) : "—"}</td>
-                        <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedLitres ? `${r.swappedLitres.toLocaleString()} L` : "—"}</td>
-                        <td className="px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>
-                          {r.receivablePKR === null
-                            ? <span className="text-amber-500 italic text-xs">{r.noDispatch ? "No dispatch on this date" : !r.matchedRate ? "No matching contract rate" : !r.fuelBaseRate ? "Contract has no Fuel Base Rate" : "No fuel price set for this date"}</span>
-                            : <span className={cx("font-medium", r.receivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(r.receivablePKR)}</span>}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.receivableLitres !== null ? `${r.receivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>
+                        {isColVisible("fuelConsumption", "dispatchDate") && <td className="px-4 py-3 text-slate-300 whitespace-normal border-l-2 border-l-blue-600/30" style={{ maxWidth: 90 }}>{r.dispatchDate}</td>}
+                        {isColVisible("fuelConsumption", "vehicleNo") && <td className="px-4 py-3 whitespace-normal font-mono text-white font-medium" style={{ maxWidth: 90 }}>{r.vehiclePlate}</td>}
+                        {isColVisible("fuelConsumption", "freight") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 90 }}>{r.noDispatch ? <span className="text-slate-500 italic text-xs">No dispatch</span> : formatPKR(r.freightAmount)}</td>}
+                        {isColVisible("fuelConsumption", "fuelSwappedPkr") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedPKR ? formatPKR(r.swappedPKR) : "—"}</td>}
+                        {isColVisible("fuelConsumption", "fuelSwappedLitre") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.swappedLitres ? `${r.swappedLitres.toLocaleString()} L` : "—"}</td>}
+                        {isColVisible("fuelConsumption", "receivablePkr") && (
+                          <td className="px-4 py-3 whitespace-normal" style={{ maxWidth: 100 }}>
+                            {r.receivablePKR === null
+                              ? <span className="text-amber-500 italic text-xs">{r.noDispatch ? "No dispatch on this date" : !r.matchedRate ? "No matching contract rate" : !r.fuelBaseRate ? "Contract has no Fuel Base Rate" : "No fuel price set for this date"}</span>
+                              : <span className={cx("font-medium", r.receivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(r.receivablePKR)}</span>}
+                          </td>
+                        )}
+                        {isColVisible("fuelConsumption", "receivableLitre") && <td className="px-4 py-3 text-slate-300 whitespace-normal" style={{ maxWidth: 100 }}>{r.receivableLitres !== null ? `${r.receivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L` : "—"}</td>}
                       </tr>
                     ))}
                   </React.Fragment>
@@ -5898,12 +5996,14 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             </tbody>
             <tfoot>
               <tr className="border-t border-slate-800">
-                <td className={cx(tdCls, "font-semibold text-slate-300")} colSpan={2}>Total</td>
-                <td className={cx(tdCls, "font-semibold text-slate-300")}>{formatPKR(grandFreight)}</td>
-                <td className={cx(tdCls, "font-semibold text-white")}>{formatPKR(grandSwappedPKR)}</td>
-                <td className={cx(tdCls, "font-semibold text-white")}>{grandSwappedLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L</td>
-                <td className={cx(tdCls, "font-semibold", grandReceivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(grandReceivablePKR)}</td>
-                <td className={cx(tdCls, "font-semibold text-white")}>{grandReceivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L</td>
+                {(isColVisible("fuelConsumption", "dispatchDate") || isColVisible("fuelConsumption", "vehicleNo")) && (
+                  <td className={cx(tdCls, "font-semibold text-slate-300")} colSpan={(isColVisible("fuelConsumption", "dispatchDate") ? 1 : 0) + (isColVisible("fuelConsumption", "vehicleNo") ? 1 : 0)}>Total</td>
+                )}
+                {isColVisible("fuelConsumption", "freight") && <td className={cx(tdCls, "font-semibold text-slate-300")}>{formatPKR(grandFreight)}</td>}
+                {isColVisible("fuelConsumption", "fuelSwappedPkr") && <td className={cx(tdCls, "font-semibold text-white")}>{formatPKR(grandSwappedPKR)}</td>}
+                {isColVisible("fuelConsumption", "fuelSwappedLitre") && <td className={cx(tdCls, "font-semibold text-white")}>{grandSwappedLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L</td>}
+                {isColVisible("fuelConsumption", "receivablePkr") && <td className={cx(tdCls, "font-semibold", grandReceivablePKR < 0 ? "text-red-400" : "text-emerald-400")}>{formatPKR(grandReceivablePKR)}</td>}
+                {isColVisible("fuelConsumption", "receivableLitre") && <td className={cx(tdCls, "font-semibold text-white")}>{grandReceivableLitres.toLocaleString(undefined, { maximumFractionDigits: 2 })} L</td>}
               </tr>
             </tfoot>
           </table>
@@ -6261,6 +6361,54 @@ function OrderHistoryView({ data, openModal }) {
 }
 
 /* ==================== Manage Users (admin only) ==================== */
+
+function SettingsView({ columnVisibility, setColumnVisibility, isColVisible }) {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-white">Settings</h2>
+        <p className="text-slate-500 text-sm mt-1">Choose which columns show up on your tables. This only affects what you see in this browser — everyone else keeps seeing their own choice.</p>
+      </div>
+      {Object.entries(COLUMN_REGISTRY).map(([tableKey, table]) => (
+        <div key={tableKey} className={cx(cardCls, "p-5")}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-white font-semibold">{table.label}</h3>
+            <div className="flex gap-2">
+              <button
+                className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                onClick={() => table.columns.forEach((c) => setColumnVisibility(tableKey, c.key, true))}
+              >
+                Show all
+              </button>
+              <span className="text-slate-700">|</span>
+              <button
+                className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                onClick={() => table.columns.forEach((c) => setColumnVisibility(tableKey, c.key, false))}
+              >
+                Hide all
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+            {table.columns.map((c) => {
+              const checked = isColVisible(tableKey, c.key);
+              return (
+                <label key={c.key} className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox" checked={checked}
+                    onChange={(e) => setColumnVisibility(tableKey, c.key, e.target.checked)}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <span className={cx("text-sm", checked ? "text-slate-200" : "text-slate-500")}>{c.label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ManageUsersView() {
   const [profiles, setProfiles] = useState(null);
@@ -7994,6 +8142,19 @@ function LogistixERP() {
   const [confirm, setConfirm] = useState(null);
   const [viewSession, setViewSession] = useState({ role: "admin", customerId: null });
   const [excelMeta, setExcelMeta] = useState({ attached: false, filename: null, snapshot: null });
+  // Per-browser display preference for which table columns show/hide, managed from Settings.
+  const [columnVisibility, setColumnVisibilityState] = useState(loadColumnVisibility);
+  function setColumnVisibility(tableKey, columnKey, visible) {
+    setColumnVisibilityState((prev) => {
+      const next = { ...prev, [tableKey]: { ...(prev[tableKey] || {}), [columnKey]: visible } };
+      try { window.localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+  function isColVisible(tableKey, columnKey) {
+    const v = columnVisibility[tableKey] && columnVisibility[tableKey][columnKey];
+    return v !== false; // undefined (never toggled) or true -> visible; only explicit false hides it
+  }
   const [importMsg, setImportMsg] = useState(null);
   const [excelBusy, setExcelBusy] = useState(false);
   const [tabExcel, setTabExcel] = useState({}); // { [viewKey]: { attached, filename, snapshot, busy, message } }
@@ -8718,7 +8879,11 @@ function LogistixERP() {
   function handleContractRatesExport(customerId, contractGroupId, contractTitle) {
     const rows = contractRatesFor(customerId, contractGroupId).map((k) => {
       const { general, fuelComponent } = contractRateComponents(k);
-      return { ...k, generalComponent: general, fuelComponent };
+      return {
+        ...k, generalComponent: general, fuelComponent,
+        validFrom: k.validFrom ? fmtDate(k.validFrom) : "",
+        validTo: k.validTo ? fmtDate(k.validTo) : "",
+      };
     });
     const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "generalComponent", "fuelComponent", "rate", "validFrom", "validTo"];
     const wb = XLSX.utils.book_new();
@@ -9100,9 +9265,9 @@ function LogistixERP() {
                 </div>
               )}
               {view === "dashboard" && <Dashboard data={data} />}
-              {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} />}
-              {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} />}
-              {view === "orders_export" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Export" role={viewSession.role} />}
+              {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} isColVisible={isColVisible} />}
+              {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} isColVisible={isColVisible} />}
+              {view === "orders_export" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Export" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "tracking_import" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Import" />}
               {view === "tracking_domestic" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Domestic" />}
               {view === "tracking_export" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Export" />}
@@ -9113,6 +9278,7 @@ function LogistixERP() {
                   onContractRatesExport={handleContractRatesExport}
                   onContractRatesAttach={handleContractRatesAttach}
                   onContractRatesRevert={handleContractRatesRevert}
+                  isColVisible={isColVisible}
                 />
               )}
               {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
@@ -9124,6 +9290,7 @@ function LogistixERP() {
                   onFuelPriceExport={() => handleTabExport("fuel_prices")}
                   onFuelPriceRevert={() => handleTabRevert("fuel_prices")}
                   swapExcel={swapExcel} onSwapAttach={handleSwapAttach} onSwapExport={handleSwapExport} onSwapRevert={handleSwapRevert} onSwapRecalculate={handleSwapRecalculate}
+                  isColVisible={isColVisible}
                 />
               )}
               {view === "customers" && <CustomersView data={data} openModal={setModal} askDelete={setConfirm} />}
@@ -9133,6 +9300,7 @@ function LogistixERP() {
               {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}
               {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} />}
+              {view === "settings" && <SettingsView columnVisibility={columnVisibility} setColumnVisibility={setColumnVisibility} isColVisible={isColVisible} />}
               {view === "users" && viewSession.role === "admin" && <ManageUsersView />}
             </>
           )}
