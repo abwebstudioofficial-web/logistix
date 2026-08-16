@@ -1726,8 +1726,19 @@ const CARGO_TYPE_RULE = (val) => {
 };
 const LOADING_POINT_RULE = textContainsStyle([["PICT", 13], ["QICT", 14], ["KICT", 15], ["SAPT", 16]]);
 
-async function buildTemplateWorkbook(data) {
-  const orders = data.orders || [];
+async function buildTemplateWorkbook(data, mode) {
+  const allOrders = data.orders || [];
+  // "current" = only active/ongoing shipments, filtered out once a container reaches
+  // Completed - Export has no Completed stage at all (it stops at Delivered), so this only
+  // meaningfully filters Import/Domestic. Applied per-container, not per-order, since an
+  // order's other containers might still be active even if one of them is done.
+  const orders = mode === "current"
+    ? allOrders.map((o) => {
+        const st = o.shipmentType || "Import";
+        const containers = orderContainers(o).filter((c) => trackingDisplayStatus(c, st) !== "Completed");
+        return { ...o, containers };
+      }).filter((o) => orderContainers(o).length > 0)
+    : allOrders;
   const today = todayISO();
   const sheets = [];
 
@@ -1843,6 +1854,76 @@ async function buildTemplateWorkbook(data) {
       headerOverrides: clearedHeaderOverrides, contentDefaultCols: clearedContentDefault,
       conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE },
     });
+  });
+
+  // --- Fuel Prices (blue header, all effective dates) ---
+  const fuelPriceHeaders = ["Effective Date", "Price per Liter (PKR)"];
+  const fuelPriceRows = [fuelPriceHeaders, ...(data.fuel_prices || [])
+    .slice()
+    .sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || ""))
+    .map((p) => [p.effectiveDate ? fmtDate(p.effectiveDate) : "", xnum(p.pricePerLiter, "")])];
+  sheets.push({
+    name: "Fuel Prices", rows: fuelPriceRows, headerRowIndex: 1, freezeRows: 1,
+    colWidths: colWidthsFor(fuelPriceHeaders),
+    headerOverrides: buildColStyleMap(2, new Set(), 0, 6),
+    contentDefaultCols: buildColStyleMap(2, new Set(), 0, 8),
+  });
+
+  // --- Contract Rates (blue header, every customer's rates combined into one sheet, with
+  // a Customer column added since this isn't scoped to one customer like the per-customer
+  // Contracts page export is) ---
+  const contractHeaders = ["Customer", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General (PKR)", "Fuel (PKR)", "Total Rate (PKR)", "Valid From", "Valid To"];
+  const contractRows = [contractHeaders, ...(data.contracts || []).map((k) => {
+    const cust = getCustomer(data, k.customerId);
+    const { general, fuelComponent } = contractRateComponents(k);
+    return [
+      cust ? (cust.shortName || cust.name) : "", k.loadingPoint || "", k.destination || "", k.movementThrough || "",
+      k.vehicleSize || "", k.weightCategory || "", k.axleLoadCategory || "",
+      general, fuelComponent, xnum(k.rate),
+      k.validFrom ? fmtDate(k.validFrom) : "", k.validTo ? fmtDate(k.validTo) : "",
+    ];
+  })];
+  sheets.push({
+    name: "Contract Rates", rows: contractRows, headerRowIndex: 1, freezeRows: 1,
+    colWidths: colWidthsFor(contractHeaders),
+    headerOverrides: buildColStyleMap(contractHeaders.length, new Set(), 0, 6),
+    contentDefaultCols: buildColStyleMap(contractHeaders.length, new Set(), 0, 8),
+  });
+
+  // --- Fuel Report (blue header, every customer's Import & Domestic dispatched shipments
+  // combined into one sheet, with a Customer column) — same freight/fuel-adjustment formula
+  // as the Fuel Management report and Contract Rates' Adjusted Rate, using the contract rate
+  // that was actually valid on each shipment's own dispatch date.
+  const fuelReportHeaders = ["Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Adjustment (PKR)", "Total Receivable (PKR)"];
+  const fuelReportFlat = flattenContainers(orders, (o) => {
+    const st = (o.shipmentType || "Import");
+    return (st === "Import" || st === "Domestic") && !!(orderContainers(o).length);
+  });
+  const fuelReportRows = [fuelReportHeaders];
+  fuelReportFlat.forEach(({ o, c }) => {
+    const dispatchDateISO = c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : (c.loadingDate || "");
+    if (!dispatchDateISO) return; // never dispatched - nothing to report
+    const cust = getCustomer(data, o.customerId);
+    const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups, dispatchDateISO);
+    const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
+    const { general, fuelComponent } = matchedRate ? contractRateComponents(matchedRate) : { general: null, fuelComponent: null };
+    const impliedLitres = (fuelComponent !== null && fuelBaseRate) ? fuelComponent / fuelBaseRate : null;
+    const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
+    const fuelAdjustment = (impliedLitres !== null && price) ? impliedLitres * price : null;
+    const fullFreight = (general !== null && fuelAdjustment !== null) ? general + fuelAdjustment : null;
+    const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for this date" : "";
+    fuelReportRows.push([
+      cust ? (cust.shortName || cust.name) : "", fmtDate(dispatchDateISO), c.vehiclePlate || "",
+      general !== null ? general : noMatchNote,
+      fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
+      fullFreight !== null ? fullFreight : noMatchNote,
+    ]);
+  });
+  sheets.push({
+    name: "Fuel Report", rows: fuelReportRows, headerRowIndex: 1, freezeRows: 1,
+    colWidths: colWidthsFor(fuelReportHeaders),
+    headerOverrides: buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 6),
+    contentDefaultCols: buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 8),
   });
 
   return buildXlsxBuffer(sheets);
@@ -8185,6 +8266,7 @@ function LogistixERP() {
   }
   const [importMsg, setImportMsg] = useState(null);
   const [excelBusy, setExcelBusy] = useState(false);
+  const [showExportChoice, setShowExportChoice] = useState(false);
   const [tabExcel, setTabExcel] = useState({}); // { [viewKey]: { attached, filename, snapshot, busy, message } }
   const [domesticExportFrom, setDomesticExportFrom] = useState("");
   const [domesticExportTo, setDomesticExportTo] = useState("");
@@ -9257,15 +9339,17 @@ function LogistixERP() {
     XLSX.writeFile(wb, name);
   }
 
-  async function handleExportTemplate() {
+  async function handleExportTemplate(mode) {
+    setShowExportChoice(false);
     setExcelBusy(true);
     try {
-      const buffer = await buildTemplateWorkbook(data);
+      const buffer = await buildTemplateWorkbook(data, mode);
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const today = todayISO();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `Transportation-${today}.xlsx`;
+      const suffix = mode === "current" ? "-Current" : "-All";
+      a.href = url; a.download = `Transportation${suffix}-${today}.xlsx`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -9341,7 +9425,7 @@ function LogistixERP() {
         mobileOpen={mobileNavOpen} onCloseMobileNav={() => setMobileNavOpen(false)}
       />
       <div className="flex-1 min-w-0 flex flex-col">
-        <TopBar title={isAdmin ? VIEW_TITLES[view] : "My Orders"} onExportTemplate={handleExportTemplate} onOpenMobileNav={() => setMobileNavOpen(true)} excelBusy={excelBusy} />
+        <TopBar title={isAdmin ? VIEW_TITLES[view] : "My Orders"} onExportTemplate={() => setShowExportChoice(true)} onOpenMobileNav={() => setMobileNavOpen(true)} excelBusy={excelBusy} />
         <div className="p-4 sm:p-6" key={isAdmin ? view : "portal"}>
           <div className="animate-fade-in-up">
           {!isAdmin ? (
@@ -9416,6 +9500,27 @@ function LogistixERP() {
         </div>
       </div>
 
+      {showExportChoice && (
+        <Modal title="Export Master Excel File" onClose={() => setShowExportChoice(false)}>
+          <p className="text-slate-400 text-sm mb-4">Choose what this export should include.</p>
+          <div className="space-y-3">
+            <button
+              onClick={() => handleExportTemplate("current")}
+              className="w-full text-left p-4 rounded-lg border border-slate-800 hover:border-blue-600 hover:bg-slate-800/60 transition-colors"
+            >
+              <div className="text-white font-medium">Export Current Data</div>
+              <div className="text-slate-500 text-sm mt-0.5">Only active/ongoing shipments — anything already Completed is left out.</div>
+            </button>
+            <button
+              onClick={() => handleExportTemplate("all")}
+              className="w-full text-left p-4 rounded-lg border border-slate-800 hover:border-blue-600 hover:bg-slate-800/60 transition-colors"
+            >
+              <div className="text-white font-medium">Export All</div>
+              <div className="text-slate-500 text-sm mt-0.5">Every shipment on file, including everything already Completed — useful for a full year-end record.</div>
+            </button>
+          </div>
+        </Modal>
+      )}
       {modal && <EntityModal modal={modal} data={data} onClose={() => setModal(null)} onSave={saveItem} role={viewSession.role} />}
       {confirm && (
         <ConfirmModal
