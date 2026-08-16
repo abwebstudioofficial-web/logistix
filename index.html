@@ -3967,39 +3967,51 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
 
   // Flatten every order's containers into individual trackable rows, scoped to this
   // page's shipment type (Import/Domestic/Export each get their own Tracking page).
-  const flat = [];
-  data.orders.forEach((o) => {
-    if (shipmentTypeFilter && (o.shipmentType || "Import") !== shipmentTypeFilter) return;
-    orderContainers(o).forEach((c) => flat.push({ order: o, container: c }));
-  });
-  const visible = isReceiver
-    ? flat.filter((r) => {
-        const si = r.container.stageIndex ?? 0;
-        if (r.container.cancelled) return false;
-        if (isSettledOut(r.container)) return false;
-        return si >= 1 && si <= (shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import" ? 4 : 3); // Picked Up / In Transit / (Under Offloading) / Delivered — categorized into tabs below
-      })
-    : isEmptyReturnReceiver
-    ? flat.filter((r) => {
-        if (r.container.cancelled) return false;
-        if ((r.order.shipmentType || "Import") !== "Import") return false;
-        if (isSettledOut(r.container)) return false;
-        const si = r.container.stageIndex ?? 0;
-        return si === 4 || si === 5;
-      })
-    : isDispatcher
-    ? flat.filter((r) => !r.container.cancelled && (r.container.stageIndex ?? 0) < 2) // gone once advanced to In Transit
-    : flat; // admin/staff see everything, unrestricted — Order History is the archive for them
+  const flat = useMemo(() => {
+    const out = [];
+    data.orders.forEach((o) => {
+      if (shipmentTypeFilter && (o.shipmentType || "Import") !== shipmentTypeFilter) return;
+      orderContainers(o).forEach((c) => out.push({ order: o, container: c }));
+    });
+    return out;
+  }, [data.orders, shipmentTypeFilter]);
 
-  const confirmedCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Confirmed").length;
-  const pickedUpCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Picked Up").length;
-  const inTransitCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "In Transit").length;
-  const underOffloadingCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Under Offloading").length;
-  const deliveredTodayCount = visible.filter((r) => r.container.deliveredDate === today).length;
-  const deliveredAllCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Delivered").length;
-  const completedCount = visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Completed").length;
+  const visible = useMemo(() => (
+    isReceiver
+      ? flat.filter((r) => {
+          const si = r.container.stageIndex ?? 0;
+          if (r.container.cancelled) return false;
+          if (isSettledOut(r.container)) return false;
+          return si >= 1 && si <= (shipmentTypeFilter === "Domestic" || shipmentTypeFilter === "Import" ? 4 : 3); // Picked Up / In Transit / (Under Offloading) / Delivered — categorized into tabs below
+        })
+      : isEmptyReturnReceiver
+      ? flat.filter((r) => {
+          if (r.container.cancelled) return false;
+          if ((r.order.shipmentType || "Import") !== "Import") return false;
+          if (isSettledOut(r.container)) return false;
+          const si = r.container.stageIndex ?? 0;
+          return si === 4 || si === 5;
+        })
+      : isDispatcher
+      ? flat.filter((r) => !r.container.cancelled && (r.container.stageIndex ?? 0) < 2) // gone once advanced to In Transit
+      : flat // admin/staff see everything, unrestricted — Order History is the archive for them
+  ), [flat, isReceiver, isEmptyReturnReceiver, isDispatcher, shipmentTypeFilter]);
 
-  const rows = visible.filter(({ order, container }) => {
+  const counts = useMemo(() => ({
+    confirmedCount: visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Confirmed").length,
+    pickedUpCount: visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Picked Up").length,
+    inTransitCount: visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "In Transit").length,
+    underOffloadingCount: visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Under Offloading").length,
+    deliveredTodayCount: visible.filter((r) => r.container.deliveredDate === today).length,
+    deliveredAllCount: visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Delivered").length,
+    completedCount: visible.filter((r) => trackingDisplayStatus(r.container, shipmentTypeFilter) === "Completed").length,
+  }), [visible, shipmentTypeFilter, today]);
+  const {
+    confirmedCount, pickedUpCount, inTransitCount, underOffloadingCount,
+    deliveredTodayCount, deliveredAllCount, completedCount,
+  } = counts;
+
+  const rows = useMemo(() => visible.filter(({ order, container }) => {
     const st = trackingDisplayStatus(container, shipmentTypeFilter);
     const cust = getCustomer(data, order.customerId);
     const text = `${order.orderNumber} ${cust ? cust.name : ""} ${container.containerNumber || ""}`.toLowerCase();
@@ -4021,7 +4033,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
     else if (filter === "under_offloading") matchesFilter = st === "Under Offloading";
     else if (filter === "delivered_today") matchesFilter = container.deliveredDate === today;
     return matchesQ && matchesFilter;
-  });
+  }), [visible, shipmentTypeFilter, data, q, isReceiver, receiverTab, filter, today]);
 
   return (
     <div className="space-y-5">
@@ -7962,6 +7974,7 @@ function LogistixERP() {
     const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
     setDataState((prev) => {
       const next = { ...prev };
+      let anyTableChanged = false;
       DATA_TABLES.forEach((t, i) => {
         const { data: rows, error } = results[i];
         if (error) {
@@ -7970,9 +7983,17 @@ function LogistixERP() {
           console.error(`Failed refreshing ${t}:`, error.message);
           return;
         }
-        next[t] = (rows || []).map(fromDbRow);
+        const fetched = (rows || []).map(fromDbRow);
+        // Cheap-ish but reliable: only swap in the new array (a new reference, which is what
+        // actually triggers re-renders) if the data is genuinely different. Every 15s poll
+        // was previously replacing every table's reference unconditionally, forcing the whole
+        // app to re-render even when nothing in the database had actually changed.
+        if (JSON.stringify(fetched) !== JSON.stringify(prev[t])) {
+          next[t] = fetched;
+          anyTableChanged = true;
+        }
       });
-      return next;
+      return anyTableChanged ? next : prev; // no change anywhere -> keep the exact same state object
     });
   }
 
