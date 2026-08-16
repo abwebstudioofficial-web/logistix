@@ -3945,6 +3945,10 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
   const [arrivalTarget, setArrivalTarget] = useState(null); // { orderId, containerId, label } - Domestic's In Transit -> Under Offloading step
   const [dispatchTarget, setDispatchTarget] = useState(null); // { orderId, containerId, label }
   const [emptyReturnTarget, setEmptyReturnTarget] = useState(null); // { orderId, containerId, label, defaultLocation } - Delivered -> Completed step, Import only
+  // Rendering every matching row at once got expensive with hundreds of orders in the system -
+  // each tracking card is a fairly heavy subtree (progress bar, multiple animated segments,
+  // several buttons). Cap what's actually in the DOM and let people load more as needed.
+  const [visibleCount, setVisibleCount] = useState(30);
   const today = todayISO();
   const isDispatcher = role === "dispatcher_import" || role === "dispatcher_domestic" || role === "dispatcher_export";
   const isReceiver = role === "receiver_import_domestic" || role === "receiver_export";
@@ -4047,6 +4051,8 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
     return matchesQ && matchesFilter;
   }), [visible, shipmentTypeFilter, data, q, isReceiver, receiverTab, filter, today]);
 
+  useEffect(() => { setVisibleCount(30); }, [shipmentTypeFilter, q, receiverTab, filter]);
+  const visibleRows = rows.slice(0, visibleCount);
   return (
     <div className="space-y-5">
       <div>
@@ -4143,7 +4149,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
         <EmptyState icon={Navigation} text="No containers to track." />
       ) : (
         <div className="space-y-3">
-          {rows.map(({ order: o, container: c }) => {
+          {visibleRows.map(({ order: o, container: c }) => {
             const st = trackingDisplayStatus(c, shipmentTypeFilter);
             const cust = getCustomer(data, o.customerId);
             const maxIdx = maxStageIndex(o);
@@ -4273,6 +4279,13 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
               </div>
             );
           })}
+        </div>
+      )}
+      {rows.length > visibleCount && (
+        <div className="flex justify-center pt-2">
+          <button className={btnSecondary} onClick={() => setVisibleCount((n) => n + 30)}>
+            Load More ({rows.length - visibleCount} remaining)
+          </button>
         </div>
       )}
       {podTarget && (() => {
