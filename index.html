@@ -119,8 +119,26 @@
   .animate-fade-in-up { animation: fadeInUp 0.22s ease-out; }
   .animate-modal-in { animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
 
+  /* ---- Tracking progress stepper: pulsing ring on the current stage, flowing shimmer on
+     completed connector lines ---- */
+  @keyframes softPulseRing {
+    0%, 100% { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.35); }
+    50% { box-shadow: 0 0 0 7px rgba(37, 99, 235, 0.12); }
+  }
+  @keyframes progressShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .animate-pulse-ring { animation: softPulseRing 1.8s ease-in-out infinite; }
+  .animate-progress-shimmer {
+    background-image: linear-gradient(90deg, #2563eb 0%, #60a5fa 50%, #2563eb 100%);
+    background-size: 200% 100%;
+    animation: progressShimmer 2.2s linear infinite;
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .animate-fade-in, .animate-fade-in-up, .animate-modal-in { animation: none; }
+    .animate-fade-in, .animate-fade-in-up, .animate-modal-in,
+    .animate-pulse-ring, .animate-progress-shimmer { animation: none; }
   }
 </style>
 </head>
@@ -2156,16 +2174,16 @@ function downloadBiltyReceipt(order, data) {
     badgeStamp(shipmentType, 430, 58, "#111827");
 
     // right info box: Bilty No / Loading Date / Vehicle No
-    const rbX = 606, rbW = 214;
-    box(ctx, rbX, 26, rbW, 112, { lw: 1.2 });
-    line(ctx, rbX, 26 + 37, rbX + rbW, 26 + 37);
-    line(ctx, rbX, 26 + 74, rbX + rbW, 26 + 74);
-    txt(ctx, "BILTY NO.", rbX + 10, 42, { size: 9.5, weight: "bold", color: SUB });
-    txt(ctx, container.biltyNumber || order.biltyNumber || "—", rbX + 10, 58, { size: 15, weight: "bold" });
-    txt(ctx, "LOADING DATE", rbX + 10, 79, { size: 9.5, weight: "bold", color: SUB });
-    txt(ctx, fmtDate(order.createdDate), rbX + 10, 94, { size: 13 });
-    txt(ctx, "VEHICLE NO.", rbX + 10, 116, { size: 9.5, weight: "bold", color: SUB });
-    txt(ctx, container.vehiclePlate || "Unassigned", rbX + 10, 131, { size: 13, weight: "bold" });
+    const rbX = 640, rbW = 180;
+    box(ctx, rbX, 26, rbW, 95, { lw: 1.2 });
+    line(ctx, rbX, 26 + 31, rbX + rbW, 26 + 31);
+    line(ctx, rbX, 26 + 62, rbX + rbW, 26 + 62);
+    txt(ctx, "BILTY NO.", rbX + 8, 40, { size: 8, weight: "bold", color: SUB });
+    txt(ctx, container.biltyNumber || order.biltyNumber || "—", rbX + 8, 54, { size: 12.5, weight: "bold" });
+    txt(ctx, "LOADING DATE", rbX + 8, 71, { size: 8, weight: "bold", color: SUB });
+    txt(ctx, fmtDate(order.createdDate), rbX + 8, 84, { size: 11 });
+    txt(ctx, "VEHICLE NO.", rbX + 8, 101, { size: 8, weight: "bold", color: SUB });
+    txt(ctx, container.vehiclePlate || "Unassigned", rbX + 8, 114, { size: 11, weight: "bold" });
 
     // ---- sender / receiver ----
     box(ctx, 32, srY, W - 64, 82, { lw: 1.2 });
@@ -3009,14 +3027,14 @@ function TrackingProgress({ stageIndex, cancelled, stages }) {
               "w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-semibold",
               cancelled ? "bg-slate-800 text-slate-600"
                 : i < stageIndex ? "bg-blue-600 text-white"
-                : i === stageIndex ? "bg-blue-600 text-white ring-4 ring-blue-950"
+                : i === stageIndex ? "bg-blue-600 text-white animate-pulse-ring"
                 : "bg-slate-800 text-slate-600"
             )}
           >
             {i < stageIndex ? "✓" : i + 1}
           </div>
           {i < list.length - 1 && (
-            <div className={cx("flex-1 h-0.5", !cancelled && i < stageIndex ? "bg-blue-600" : "bg-slate-800")} />
+            <div className={cx("flex-1 h-0.5", !cancelled && i < stageIndex ? "animate-progress-shimmer" : "bg-slate-800")} />
           )}
         </React.Fragment>
       ))}
