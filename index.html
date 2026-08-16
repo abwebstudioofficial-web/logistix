@@ -1986,8 +1986,16 @@ async function downloadBiltyReceipt(order, data) {
         return;
       }
       const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [W, H], compress: true });
-      pdf.addImage(imgData, "JPEG", 0, 0, W, H, undefined, "FAST");
+      // A4 landscape at 96dpi (297mm x 210mm) - a real, standard page size a printer knows how
+      // to handle, rather than a custom page sized to the canvas's own raw pixel dimensions.
+      const A4_W = 1123, A4_H = 794;
+      const margin = 24;
+      const availW = A4_W - margin * 2, availH = A4_H - margin * 2;
+      const scale = Math.min(availW / W, availH / H, 1); // never upscale past the content's own resolution
+      const drawW = W * scale, drawH = H * scale;
+      const offsetX = (A4_W - drawW) / 2, offsetY = (A4_H - drawH) / 2;
+      const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [A4_W, A4_H], compress: true });
+      pdf.addImage(imgData, "JPEG", offsetX, offsetY, drawW, drawH, undefined, "FAST");
       pdf.save(`Bilty-${order.orderNumber}.pdf`);
     }
 
@@ -2061,10 +2069,16 @@ async function downloadBiltyReceipt(order, data) {
       const infoCols = [32, 244, 456, 656, W - 32];
       box(ctx, 32, infoY, W - 64, 26, { lw: 1.2 });
       for (let i = 1; i < infoCols.length - 1; i++) line(ctx, infoCols[i], infoY, infoCols[i], infoY + 26);
-      txt(ctx, "Loading Point:  " + (order.origin || "—"), infoCols[0] + 8, infoY + 17, { size: 10.5 });
-      txt(ctx, "Destination:  " + (container.destination || "—"), infoCols[1] + 8, infoY + 17, { size: 10.5 });
-      txt(ctx, "Movement Through:  " + (container.movementThrough || "—"), infoCols[2] + 8, infoY + 17, { size: 10.5 });
-      txt(ctx, "Vehicle Size:  " + (container.vehicleSize || "—"), infoCols[3] + 8, infoY + 17, { size: 10.5 });
+      function labelValue(label, value, x) {
+        txt(ctx, label, x, infoY + 17, { size: 10.5, weight: "bold" });
+        ctx.font = "bold 10.5px Arial";
+        const lw = ctx.measureText(label).width;
+        txt(ctx, value, x + lw, infoY + 17, { size: 10.5 });
+      }
+      labelValue("Loading Point:  ", order.origin || "—", infoCols[0] + 8);
+      labelValue("Destination:  ", container.destination || "—", infoCols[1] + 8);
+      labelValue("Movement Through:  ", container.movementThrough || "—", infoCols[2] + 8);
+      labelValue("Vehicle Size:  ", container.vehicleSize || "—", infoCols[3] + 8);
 
       // particulars — simple field list, no container/seal line items, no QTY/Amount/Weight grid
       ctx.fillStyle = BAR; ctx.fillRect(32, pY, W - 64, 24);
@@ -2224,10 +2238,16 @@ async function downloadBiltyReceipt(order, data) {
     const infoCols = [32, 244, 456, 656, W - 32];
     box(ctx, 32, infoY, W - 64, 26, { lw: 1.2 });
     for (let i = 1; i < infoCols.length - 1; i++) line(ctx, infoCols[i], infoY, infoCols[i], infoY + 26);
-    txt(ctx, "Loading Point:  " + order.origin, infoCols[0] + 8, infoY + 17, { size: 10.5 });
-    txt(ctx, "Destination:  " + (container.destination || "—"), infoCols[1] + 8, infoY + 17, { size: 10.5 });
-    txt(ctx, "Shipping Line:  " + (order.shippingLine || "—"), infoCols[2] + 8, infoY + 17, { size: 10.5 });
-    txt(ctx, "Empty Return:  " + (container.emptyReturnLocation || "—"), infoCols[3] + 8, infoY + 17, { size: 10.5 });
+    function labelValue(label, value, x) {
+      txt(ctx, label, x, infoY + 17, { size: 10.5, weight: "bold" });
+      ctx.font = "bold 10.5px Arial";
+      const lw = ctx.measureText(label).width;
+      txt(ctx, value, x + lw, infoY + 17, { size: 10.5 });
+    }
+    labelValue("Loading Point:  ", order.origin, infoCols[0] + 8);
+    labelValue("Destination:  ", container.destination || "—", infoCols[1] + 8);
+    labelValue("Shipping Line:  ", order.shippingLine || "—", infoCols[2] + 8);
+    labelValue("Empty Return:  ", container.emptyReturnLocation || "—", infoCols[3] + 8);
 
     // ---- particulars table ----
     const pCols = [32, 410, 488, 578, 668, 753, W - 32];
