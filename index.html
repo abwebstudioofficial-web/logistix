@@ -1986,15 +1986,18 @@ async function downloadBiltyReceipt(order, data) {
         return;
       }
       const { jsPDF } = window.jspdf;
-      // A4 landscape at 96dpi (297mm x 210mm) - a real, standard page size a printer knows how
-      // to handle, rather than a custom page sized to the canvas's own raw pixel dimensions.
-      const A4_W = 1123, A4_H = 794;
-      const margin = 24;
-      const availW = A4_W - margin * 2, availH = A4_H - margin * 2;
-      const scale = Math.min(availW / W, availH / H, 1); // never upscale past the content's own resolution
-      const drawW = W * scale, drawH = H * scale;
-      const offsetX = (A4_W - drawW) / 2, offsetY = (A4_H - drawH) / 2;
-      const pdf = new jsPDF({ orientation: "landscape", unit: "px", format: [A4_W, A4_H], compress: true });
+      // jsPDF's own built-in "a4" format, in mm - the library guarantees this matches real A4
+      // paper (297mm x 210mm landscape), rather than trusting a custom px-based page size
+      // against my own DPI assumption, which was overflowing the actual printed page.
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+      const A4_W_MM = 297, A4_H_MM = 210;
+      const margin = 8;
+      const availW = A4_W_MM - margin * 2, availH = A4_H_MM - margin * 2;
+      const PX_TO_MM = 25.4 / 96; // canvas content is authored assuming 96dpi
+      const contentWmm = W * PX_TO_MM, contentHmm = H * PX_TO_MM;
+      const scale = Math.min(availW / contentWmm, availH / contentHmm, 1);
+      const drawW = contentWmm * scale, drawH = contentHmm * scale;
+      const offsetX = (A4_W_MM - drawW) / 2, offsetY = (A4_H_MM - drawH) / 2;
       pdf.addImage(imgData, "JPEG", offsetX, offsetY, drawW, drawH, undefined, "FAST");
       pdf.save(`Bilty-${order.orderNumber}.pdf`);
     }
