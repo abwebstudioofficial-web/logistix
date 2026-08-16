@@ -1991,12 +1991,17 @@ async function downloadBiltyReceipt(order, data) {
       // against my own DPI assumption, which was overflowing the actual printed page.
       const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
       const A4_W_MM = 297, A4_H_MM = 210;
-      const margin = 8;
+      const margin = 6;
       const availW = A4_W_MM - margin * 2, availH = A4_H_MM - margin * 2;
       const PX_TO_MM = 25.4 / 96; // canvas content is authored assuming 96dpi
       const contentWmm = W * PX_TO_MM, contentHmm = H * PX_TO_MM;
-      const scale = Math.min(availW / contentWmm, availH / contentHmm, 1);
-      const drawW = contentWmm * scale, drawH = contentHmm * scale;
+      // Scale W and H independently to fill the available space evenly on all sides. Capped at
+      // 35% to guard against an extreme, unexpected aspect-ratio mismatch, but otherwise allows
+      // enough stretch to actually close the gap - this is text/line/table content, not a
+      // photo, so a modest stretch doesn't read as visibly distorted.
+      const scaleW = Math.min(availW / contentWmm, 1.35);
+      const scaleH = Math.min(availH / contentHmm, 1.35);
+      const drawW = contentWmm * scaleW, drawH = contentHmm * scaleH;
       const offsetX = (A4_W_MM - drawW) / 2, offsetY = (A4_H_MM - drawH) / 2;
       pdf.addImage(imgData, "JPEG", offsetX, offsetY, drawW, drawH, undefined, "FAST");
       pdf.save(`Bilty-${order.orderNumber}.pdf`);
