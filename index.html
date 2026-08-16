@@ -7963,7 +7963,9 @@ function LogistixERP() {
   // Live updates: quietly re-fetch in the background so changes made by other people show
   // up without anyone needing to reload the page. Skipped while a modal is open (someone's
   // likely mid-edit right then) and while a previous refresh is still in flight, so it
-  // never piles up requests or clobbers an in-progress form.
+  // never piles up requests or clobbers an in-progress form. 30s rather than 15s - halves
+  // how often the fetch + comparison work happens, which matters more now that the dataset
+  // has grown into the hundreds of orders (the comparison itself has a real cost).
   const modalRef = useRef(null);
   const refreshingRef = useRef(false);
   useEffect(() => { modalRef.current = modal; }, [modal]);
@@ -7973,7 +7975,7 @@ function LogistixERP() {
       if (modalRef.current || refreshingRef.current) return;
       refreshingRef.current = true;
       refreshData().finally(() => { refreshingRef.current = false; });
-    }, 15000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [authSession]);
 
