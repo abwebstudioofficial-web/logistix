@@ -1837,6 +1837,7 @@ async function buildTemplateWorkbook(data, mode) {
     const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
     const rows = [DOMESTIC_HEADERS, ...dataRows];
     const domColWidths = colWidthsFor(DOMESTIC_HEADERS);
+    domColWidths[0] = 6.29; // Sr.# — narrow, matching Import Transportation's Sr. column
     domColWidths[3] = 24; // Sender Name — wider
     domColWidths[4] = 32; // Sender Address — wider
     sheets.push({
@@ -1862,9 +1863,11 @@ async function buildTemplateWorkbook(data, mode) {
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
   const expDataRows = expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data));
   const expRows = [EXPORT_HEADERS, ...expDataRows];
+  const expColWidths = colWidthsFor(EXPORT_HEADERS);
+  expColWidths[0] = 6.29; // Sr. — narrow, matching Import Transportation's Sr. column
   sheets.push({
     name: "Export Transportation", rows: expRows, headerRowIndex: 1,
-    colWidths: colWidthsFor(EXPORT_HEADERS), freezeCols: 6, freezeRows: 1,
+    colWidths: expColWidths, freezeCols: 6, freezeRows: 1,
     headerOverrides: expHeaderOverrides, contentDefaultCols: expContentDefault,
     conditionalCols: { 17: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 15: duplicateStyleFn(expDataRows.map((r) => r[14]), 17) },
   });
@@ -1878,7 +1881,7 @@ async function buildTemplateWorkbook(data, mode) {
     .map((p, i) => [i + 1, p.effectiveDate ? fmtDate(p.effectiveDate) : "", xnum(p.pricePerLiter, "")])];
   sheets.push({
     name: "Fuel Prices", rows: fuelPriceRows, headerRowIndex: 1, freezeRows: 1,
-    colWidths: colWidthsFor(fuelPriceHeaders),
+    colWidths: (() => { const w = colWidthsFor(fuelPriceHeaders); w[0] = 6.29; return w; })(),
     headerOverrides: buildColStyleMap(3, new Set(), 0, 6),
     contentDefaultCols: buildColStyleMap(3, new Set(), 0, 8),
   });
@@ -1901,7 +1904,7 @@ async function buildTemplateWorkbook(data, mode) {
   contractContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
   sheets.push({
     name: "Contract Rates", rows: contractRows, headerRowIndex: 1, freezeRows: 1,
-    colWidths: colWidthsFor(contractHeaders),
+    colWidths: (() => { const w = colWidthsFor(contractHeaders); w[0] = 6.29; return w; })(),
     headerOverrides: buildColStyleMap(contractHeaders.length, new Set(), 0, 6),
     contentDefaultCols: contractContentDefault,
   });
@@ -1939,7 +1942,7 @@ async function buildTemplateWorkbook(data, mode) {
   fuelReportContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
   sheets.push({
     name: "Fuel Report", rows: fuelReportRows, headerRowIndex: 1, freezeRows: 1,
-    colWidths: colWidthsFor(fuelReportHeaders),
+    colWidths: (() => { const w = colWidthsFor(fuelReportHeaders); w[0] = 6.29; return w; })(),
     headerOverrides: buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 6),
     contentDefaultCols: fuelReportContentDefault,
   });
