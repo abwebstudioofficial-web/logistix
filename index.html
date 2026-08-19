@@ -384,16 +384,9 @@ function createLiteClient(url, anonKey) {
     return {
       select(cols) {
         let query = `${REST}/${table}?select=${encodeURIComponent(cols || "*")}`;
-        let rangeHeader = null;
         const builder = {
           eq(col, val) { query += `&${col}=eq.${encodeURIComponent(val)}`; return builder; },
           order(col, opts) { query += `&order=${col}.${opts && opts.ascending === false ? "desc" : "asc"}`; return builder; },
-          // PostgREST's row-count pagination: range(0, 999) asks for rows 0-999 (the first
-          // 1000) via the Range header. Without this, every query is silently capped at the
-          // server's default max-rows limit (commonly 1000) no matter how many rows actually
-          // exist - this resurfaces the rest via count (below), so a caller can loop through
-          // however many pages it actually takes to get everything.
-          range(from, to) { rangeHeader = `${from}-${to}`; return builder; },
           async maybeSingle() {
             const res = await fetch(query, { headers: await headersFor() });
             const json = await res.json().catch(() => []);
@@ -401,17 +394,12 @@ function createLiteClient(url, anonKey) {
             return { data: Array.isArray(json) ? (json[0] || null) : json, error: null };
           },
           then(resolve, reject) {
-            const extraHeaders = rangeHeader ? { Range: rangeHeader, Prefer: "count=exact" } : {};
-            return headersFor(extraHeaders)
+            return headersFor()
               .then((headers) => fetch(query, { headers }))
               .then(async (res) => {
                 const json = await res.json().catch(() => []);
                 if (!res.ok) return resolve({ data: null, error: { message: (json && json.message) || res.statusText } });
-                // Content-Range looks like "0-999/2345" - the total after the slash is how
-                // many rows exist in total, "*" if the count wasn't requested.
-                const contentRange = res.headers.get("content-range") || "";
-                const total = contentRange.includes("/") ? parseInt(contentRange.split("/")[1], 10) : null;
-                resolve({ data: json, error: null, count: Number.isFinite(total) ? total : null });
+                resolve({ data: json, error: null });
               })
               .catch(reject);
           },
@@ -569,40 +557,6 @@ const COLUMN_REGISTRY = {
       { key: "validPeriod", label: "Valid Period" },
     ],
   },
-  invoices: {
-    label: "Invoices",
-    columns: [
-      { key: "invoice", label: "Invoice" },
-      { key: "customer", label: "Customer" },
-      { key: "issued", label: "Issued" },
-      { key: "due", label: "Due" },
-      { key: "total", label: "Total" },
-      { key: "status", label: "Status" },
-    ],
-  },
-  transporterBills: {
-    label: "Transporter Bills",
-    columns: [
-      { key: "jobNo", label: "Job No." },
-      { key: "customer", label: "Customer" },
-      { key: "transporterName", label: "Transporter Name" },
-      { key: "containerNo", label: "Container No." },
-      { key: "vehicleNo", label: "Vehicle No." },
-      { key: "freightAmount", label: "Freight Amount" },
-      { key: "totalBillAmount", label: "Total Bill Amount Approved" },
-    ],
-  },
-  orderHistory: {
-    label: "Order History",
-    columns: [
-      { key: "jobNo", label: "Job No." },
-      { key: "customer", label: "Customer" },
-      { key: "containerNo", label: "Container No." },
-      { key: "vehicleNo", label: "Vehicle No." },
-      { key: "completedOn", label: "Completed On" },
-      { key: "notes", label: "Notes" },
-    ],
-  },
 };
 const COLUMN_VISIBILITY_STORAGE_KEY = "logistix_column_visibility_v1";
 function loadColumnVisibility() {
@@ -639,7 +593,7 @@ const ROLE_ALLOWED_VIEWS = {
   empty_return_receiver: ["tracking_import"],
   data_entry: ["orders_domestic", "orders_import", "orders_export", "customers", "senders", "transporters", "settings"],
   finance_manager: ["invoices", "contracts", "fuel_management", "settings"],
-  bill_checker: ["bill_checker", "settings"],
+  bill_checker: ["bill_checker"],
 };
 const ROLE_LABELS = {
   admin: "Admin", staff: "Staff", customer: "Customer",
@@ -657,9 +611,6 @@ const CONTAINER_TYPES = ["Standard", "High Cube", "Reefer", "Open Top", "Flat Ra
 const CONTAINER_SIZES = ["20'", "40'", "45'"];
 const MOVEMENT_THROUGH_OPTIONS = ["GT Road", "Motorway"];
 const DOMESTIC_CATEGORIES = ["Finished Goods (FG)", "Wrapping Materials", "WM Domestic Karachi"];
-// Clean display name per category, without the "(FG)" suffix - used for sheet names and
-// anywhere else a category needs to read naturally in a sentence/button label.
-const DOMESTIC_SHEET_NAME_FOR_CATEGORY = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
 const WEIGHT_CATEGORIES = ["Under 10 tons", "10-20 tons", "20-30 tons", "30+ tons"];
 const AXLE_LOAD_CATEGORIES = ["1x", "2x", "3x", "4x", "6x"];
 
@@ -1559,7 +1510,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 // 13=Loading Point red 14=Loading Point green   15=Loading Point cyan   16=Loading Point blue/white
 // 17=Bilty duplicate red, centered + wrap (Bilty No. content is itself a "wrap" column)
 // Every style above (except 0/7) now carries a thin border on all 4 sides. 18-21 are freeze-pane-boundary
-// variants used only on Import Transportation's columns G(7)/H(8), dropping the border right at the split:
+// variants used only on Import Transportation-2020's columns G(7)/H(8), dropping the border right at the split:
 // 18=cream header wrap, no-left border  (col H, "Description")
 // 19=cream header wrap, no-right border (col G, "Transporter")
 // 20=data center no-wrap, no-right border (col G content)
@@ -1653,7 +1604,7 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
         // Every row gets an explicit height + customHeight="1" — without that flag, Excel
         // treats defaultRowHeight as a mere suggestion and auto-expands any row containing
         // wrapped text that needs more vertical room, which is exactly what was happening.
-        const height = isHeader ? (s.headerRowHeight ?? 59.25) : (s.dataRowHeight ?? 30.75);
+        const height = isHeader ? 59.25 : 30.75;
         return rowXml.replace(`<row r="${rowNum}">`, `<row r="${rowNum}" ht="${height}" customHeight="1">`);
       })
       .join("\n");
@@ -1663,7 +1614,7 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <dimension ref="A1:${lastCol}${lastRow}"/>
 <sheetViews>${sheetViewXml(s.freezeCols, s.freezeRows)}</sheetViews>
-<sheetFormatPr defaultRowHeight="${s.dataRowHeight ?? 30.75}" customHeight="1"/>
+<sheetFormatPr defaultRowHeight="30.75" customHeight="1"/>
 ${colsXml ? `<cols>${colsXml}</cols>` : ""}
 <sheetData>
 ${rowsXml}
@@ -1729,7 +1680,7 @@ function colWidthsFor(headers) {
   return headers.map((h) => Math.min(Math.max(String(h || "").length + 6, 14), 50));
 }
 
-// Exact widths given for the Import Transportation sheet's first 30 columns.
+// Exact widths given for the Import Transportation-2020 sheet's first 30 columns.
 // "Remarks" and "YEAR" (columns 31-32) weren't included in that list, so those two still
 // fall back to the auto-computed width.
 const IMPORT_EXACT_WIDTHS = [6.29, 12.29, 20.14, 15.57, 20.57, 22.71, 24.14, 38, 21.14, 17.14, 17.14, 7.86, 9.86, 14.43, 20.71, 18.86, 18.86, 15.14, 11.43, 17, 26.71, 20.71, 20.71, 20.71, 20.71, 26.57, 19.86, 19.86, 19.86, 23.86];
@@ -1760,19 +1711,8 @@ const CARGO_TYPE_RULE = (val) => {
 };
 const LOADING_POINT_RULE = textContainsStyle([["PICT", 13], ["QICT", 14], ["KICT", 15], ["SAPT", 16]]);
 
-async function buildTemplateWorkbook(data, mode) {
-  const allOrders = data.orders || [];
-  // "current" = only active/ongoing shipments, filtered out once a container reaches
-  // Completed - Export has no Completed stage at all (it stops at Delivered), so this only
-  // meaningfully filters Import/Domestic. Applied per-container, not per-order, since an
-  // order's other containers might still be active even if one of them is done.
-  const orders = mode === "current"
-    ? allOrders.map((o) => {
-        const st = o.shipmentType || "Import";
-        const containers = orderContainers(o).filter((c) => trackingDisplayStatus(c, st) !== "Completed");
-        return { ...o, containers };
-      }).filter((o) => orderContainers(o).length > 0)
-    : allOrders;
+async function buildTemplateWorkbook(data) {
+  const orders = data.orders || [];
   const today = todayISO();
   const sheets = [];
 
@@ -1791,7 +1731,7 @@ async function buildTemplateWorkbook(data, mode) {
   // Damage Repair/Other Chgs, Total Amount Payable in PKR.
   [40, 42, 43, 44, 45].forEach((col) => { clearedContentDefault[col] = 22; });
 
-  // --- Import Transportation (cream header) ---
+  // --- Import Transportation-2020 (cream header) ---
   // Header wrap: everything except Job#, B/L No., Container No., Bilty No., Truck No., YEAR.
   const importHeaderNoWrap = new Set([2, 9, 10, 18, 19, 32]);
   const importHeaderWrap = new Set(Array.from({ length: 32 }, (_, i) => i + 1).filter((c) => !importHeaderNoWrap.has(c)));
@@ -1815,7 +1755,7 @@ async function buildTemplateWorkbook(data, mode) {
   const importDataRows = importFlat.map(({ o, c }, i) => buildImportRow(i + 1, o, c, data));
   const importRows = [IMPORT_HEADERS, ...importDataRows];
   sheets.push({
-    name: "Import Transportation", rows: importRows, headerRowIndex: 1,
+    name: "Import Transportation-2020", rows: importRows, headerRowIndex: 1,
     colWidths: importColWidths(), freezeCols: 7, freezeRows: 1,
     headerOverrides: importHeaderOverrides, contentDefaultCols: importContentDefault,
     conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 18: duplicateStyleFn(importDataRows.map((r) => r[17]), 17) },
@@ -1837,7 +1777,6 @@ async function buildTemplateWorkbook(data, mode) {
     const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
     const rows = [DOMESTIC_HEADERS, ...dataRows];
     const domColWidths = colWidthsFor(DOMESTIC_HEADERS);
-    domColWidths[0] = 6.29; // Sr.# — narrow, matching Import Transportation's Sr. column
     domColWidths[3] = 24; // Sender Name — wider
     domColWidths[4] = 32; // Sender Address — wider
     sheets.push({
@@ -1863,88 +1802,32 @@ async function buildTemplateWorkbook(data, mode) {
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
   const expDataRows = expFlat.map(({ o, c }, i) => buildExportRow(i + 1, o, c, data));
   const expRows = [EXPORT_HEADERS, ...expDataRows];
-  const expColWidths = colWidthsFor(EXPORT_HEADERS);
-  expColWidths[0] = 6.29; // Sr. — narrow, matching Import Transportation's Sr. column
   sheets.push({
     name: "Export Transportation", rows: expRows, headerRowIndex: 1,
-    colWidths: expColWidths, freezeCols: 6, freezeRows: 1,
+    colWidths: colWidthsFor(EXPORT_HEADERS), freezeCols: 6, freezeRows: 1,
     headerOverrides: expHeaderOverrides, contentDefaultCols: expContentDefault,
     conditionalCols: { 17: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 15: duplicateStyleFn(expDataRows.map((r) => r[14]), 17) },
   });
 
-
-  // --- Fuel Prices (blue header, all effective dates) ---
-  const fuelPriceHeaders = ["Sr#", "Effective Date", "Price per Liter (PKR)"];
-  const fuelPriceRows = [fuelPriceHeaders, ...(data.fuel_prices || [])
-    .slice()
-    .sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || ""))
-    .map((p, i) => [i + 1, p.effectiveDate ? fmtDate(p.effectiveDate) : "", xnum(p.pricePerLiter, "")])];
-  sheets.push({
-    name: "Fuel Prices", rows: fuelPriceRows, headerRowIndex: 1, freezeRows: 1,
-    colWidths: (() => { const w = colWidthsFor(fuelPriceHeaders); w[0] = 6.29; return w; })(),
-    headerOverrides: buildColStyleMap(3, new Set(), 0, 6),
-    contentDefaultCols: buildColStyleMap(3, new Set(), 0, 8),
-  });
-
-  // --- Contract Rates (blue header, every customer's rates combined into one sheet, with
-  // a Customer column added since this isn't scoped to one customer like the per-customer
-  // Contracts page export is) ---
-  const contractHeaders = ["Sr#", "Customer", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General (PKR)", "Fuel (PKR)", "Total Rate (PKR)", "Valid From", "Valid To"];
-  const contractRows = [contractHeaders, ...(data.contracts || []).map((k, i) => {
-    const cust = getCustomer(data, k.customerId);
-    const { general, fuelComponent } = contractRateComponents(k);
-    return [
-      i + 1, cust ? (cust.shortName || cust.name) : "", k.loadingPoint || "", k.destination || "", k.movementThrough || "",
-      k.vehicleSize || "", k.weightCategory || "", k.axleLoadCategory || "",
-      general, fuelComponent, xnum(k.rate),
-      k.validFrom ? fmtDate(k.validFrom) : "", k.validTo ? fmtDate(k.validTo) : "",
-    ];
-  })];
-  const contractContentDefault = buildColStyleMap(contractHeaders.length, new Set(), 0, 8);
-  contractContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
-  sheets.push({
-    name: "Contract Rates", rows: contractRows, headerRowIndex: 1, freezeRows: 1,
-    colWidths: (() => { const w = colWidthsFor(contractHeaders); w[0] = 6.29; return w; })(),
-    headerOverrides: buildColStyleMap(contractHeaders.length, new Set(), 0, 6),
-    contentDefaultCols: contractContentDefault,
-  });
-
-  // --- Fuel Report (blue header, every customer's Import & Domestic dispatched shipments
-  // combined into one sheet, with a Customer column) — same freight/fuel-adjustment formula
-  // as the Fuel Management report and Contract Rates' Adjusted Rate, using the contract rate
-  // that was actually valid on each shipment's own dispatch date.
-  const fuelReportHeaders = ["Sr#", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Adjustment (PKR)", "Total Receivable (PKR)"];
-  const fuelReportFlat = flattenContainers(orders, (o) => {
-    const st = (o.shipmentType || "Import");
-    return (st === "Import" || st === "Domestic") && !!(orderContainers(o).length);
-  });
-  const fuelReportRows = [fuelReportHeaders];
-  fuelReportFlat.forEach(({ o, c }) => {
-    const dispatchDateISO = c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : (c.loadingDate || "");
-    if (!dispatchDateISO) return; // never dispatched - nothing to report
-    const cust = getCustomer(data, o.customerId);
-    const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups, dispatchDateISO);
-    const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
-    const { general, fuelComponent } = matchedRate ? contractRateComponents(matchedRate) : { general: null, fuelComponent: null };
-    const impliedLitres = (fuelComponent !== null && fuelBaseRate) ? fuelComponent / fuelBaseRate : null;
-    const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
-    const fuelAdjustment = (impliedLitres !== null && price) ? impliedLitres * price : null;
-    const fullFreight = (general !== null && fuelAdjustment !== null) ? general + fuelAdjustment : null;
-    const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for this date" : "";
-    fuelReportRows.push([
-      fuelReportRows.length, cust ? (cust.shortName || cust.name) : "", fmtDate(dispatchDateISO), c.vehiclePlate || "",
-      general !== null ? general : noMatchNote,
-      fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
-      fullFreight !== null ? fullFreight : noMatchNote,
-    ]);
-  });
-  const fuelReportContentDefault = buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 8);
-  fuelReportContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
-  sheets.push({
-    name: "Fuel Report", rows: fuelReportRows, headerRowIndex: 1, freezeRows: 1,
-    colWidths: (() => { const w = colWidthsFor(fuelReportHeaders); w[0] = 6.29; return w; })(),
-    headerOverrides: buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 6),
-    contentDefaultCols: fuelReportContentDefault,
+  // --- Customer-specific sheets — same layout/rules as Cleared Cases-01 ---
+  TEMPLATE_COMPANY_SHEETS.forEach((sheetName) => {
+    const key = sheetName.toLowerCase();
+    const filtered = flattenContainers(orders, (o) => {
+      const cust = getCustomer(data, o.customerId);
+      return cust && cust.name && cust.name.toLowerCase().includes(key);
+    });
+    const rows = [Array(48).fill("")];
+    const tRow = Array(48).fill(""); tRow[3] = `${sheetName} - Detention Calculation & Payment Details`; tRow[47] = today;
+    rows.push(tRow);
+    rows.push(Array(48).fill(""));
+    rows.push(CLEARED_CASES_HEADERS);
+    filtered.forEach(({ o, c }, i) => rows.push(buildClearedRow(i + 1, o, c, data)));
+    sheets.push({
+      name: sheetName, rows, headerRowIndex: 4, titleCell: { row: 2, col: 4 },
+      colWidths: colWidthsFor(CLEARED_CASES_HEADERS),
+      headerOverrides: clearedHeaderOverrides, contentDefaultCols: clearedContentDefault,
+      conditionalCols: { 4: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE },
+    });
   });
 
   return buildXlsxBuffer(sheets);
@@ -2143,10 +2026,7 @@ function coerceContractRates(rows) {
         movementThrough: xstr(readField(r, "movementThrough")),
         vehicleSize: xstr(readField(r, "vehicleSize")),
         weightCategory: xstr(readField(r, "weightCategory")),
-        // "Vehicle Type" is this field's current export header (readField's automatic
-      // humanization would only try "Axle Load Category", missing the rename) - both accepted
-      // on import so older exported files still read back in correctly too.
-      axleLoadCategory: xstr(readAnyKey(r, ["axleLoadCategory", "Vehicle Type", "Axle Load Category"])),
+        axleLoadCategory: xstr(readField(r, "axleLoadCategory")),
         // A file re-exported from this app has generalComponent/fuelComponent columns already
         // filled in and rate as their total. An older file, or one where someone only typed a
         // single Rate column by hand, has neither - falls back to the old 50/50 split so it
@@ -2847,7 +2727,7 @@ function TabExcelBar({ label, meta, onAttachFile, onExport, onRevert }) {
         onClick={() => fileInputRef.current && fileInputRef.current.click()}
         className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
       >
-        <Upload size={12} /> {m.busy && !m.attached ? "Loading…" : m.attached ? `Attach another ${label} file` : `Attach file to ${label}`}
+        <Upload size={12} /> {m.busy && !m.attached ? "Loading…" : m.attached ? "Attach another file" : `Attach file to ${label}`}
       </button>
       <button
         disabled={m.busy}
@@ -3653,16 +3533,10 @@ function Dashboard({ data }) {
 
 /* ==================== Orders ==================== */
 
-function OrdersView({ data, openModal, askDelete, shipmentType, role, isColVisible, domesticCategory: domesticCategoryProp, setDomesticCategory: setDomesticCategoryProp }) {
+function OrdersView({ data, openModal, askDelete, shipmentType, role, isColVisible }) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("All Status");
-  // Import/Export don't pass these props at all (they have no Domestic category concept),
-  // so this falls back to a local, unused state pair for them - only the Domestic instance's
-  // props actually matter, and those are lifted to the root so the Export/Attach bar
-  // (rendered outside this component) can see which category is currently open.
-  const [localDomesticCategory, setLocalDomesticCategory] = useState(null);
-  const domesticCategory = domesticCategoryProp !== undefined ? domesticCategoryProp : localDomesticCategory;
-  const setDomesticCategory = setDomesticCategoryProp || setLocalDomesticCategory;
+  const [domesticCategory, setDomesticCategory] = useState(null); // null = show category tiles
   const typeLabel = { Domestic: "Domestic", Import: "Import", Export: "Export" }[shipmentType] || "";
   const isDomestic = shipmentType === "Domestic";
   // Import and (once a category is picked) Domestic both get the full status block row —
@@ -4602,7 +4476,7 @@ function TrackingView({ data, updateContainerStage, updateContainerFields, role,
 
 /* ==================== Invoices ==================== */
 
-function InvoicesView({ data, openModal, askDelete, isColVisible }) {
+function InvoicesView({ data, openModal, askDelete }) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
   const [showPicker, setShowPicker] = useState(false);
@@ -4697,12 +4571,12 @@ function InvoicesView({ data, openModal, askDelete, isColVisible }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                {isColVisible("invoices", "invoice") && <th className={thCls}>Invoice</th>}
-                {isColVisible("invoices", "customer") && <th className={thCls}>Customer</th>}
-                {isColVisible("invoices", "issued") && <th className={thCls}>Issued</th>}
-                {isColVisible("invoices", "due") && <th className={thCls}>Due</th>}
-                {isColVisible("invoices", "total") && <th className={thCls}>Total</th>}
-                {isColVisible("invoices", "status") && <th className={thCls}>Status</th>}
+                <th className={thCls}>Invoice</th>
+                <th className={thCls}>Customer</th>
+                <th className={thCls}>Issued</th>
+                <th className={thCls}>Due</th>
+                <th className={thCls}>Total</th>
+                <th className={thCls}>Status</th>
                 <th className={thCls}></th>
               </tr>
             </thead>
@@ -4712,22 +4586,18 @@ function InvoicesView({ data, openModal, askDelete, isColVisible }) {
                 const ord = getOrder(data, i.orderId);
                 return (
                   <tr key={i.id} className={trCls}>
-                    {isColVisible("invoices", "invoice") && (
-                      <td className={tdCls}>
-                        <div className="text-blue-400 font-mono">{i.invoiceNumber}</div>
-                        {ord && <div className="text-slate-600 text-xs font-mono">{ord.orderNumber}</div>}
-                      </td>
-                    )}
-                    {isColVisible("invoices", "customer") && (
-                      <td className={tdCls}>
-                        <div className="text-white font-medium">{cust ? cust.name : "Unknown"}</div>
-                        <div className="text-slate-600 text-xs">{cust ? cust.email : ""}</div>
-                      </td>
-                    )}
-                    {isColVisible("invoices", "issued") && <td className={tdCls}>{fmtDate(i.issued)}</td>}
-                    {isColVisible("invoices", "due") && <td className={tdCls}>{fmtDate(i.due)}</td>}
-                    {isColVisible("invoices", "total") && <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(i.total)}</td>}
-                    {isColVisible("invoices", "status") && <td className={tdCls}><Badge text={i.computedStatus} className={invoiceStatusColor[i.computedStatus]} /></td>}
+                    <td className={tdCls}>
+                      <div className="text-blue-400 font-mono">{i.invoiceNumber}</div>
+                      {ord && <div className="text-slate-600 text-xs font-mono">{ord.orderNumber}</div>}
+                    </td>
+                    <td className={tdCls}>
+                      <div className="text-white font-medium">{cust ? cust.name : "Unknown"}</div>
+                      <div className="text-slate-600 text-xs">{cust ? cust.email : ""}</div>
+                    </td>
+                    <td className={tdCls}>{fmtDate(i.issued)}</td>
+                    <td className={tdCls}>{fmtDate(i.due)}</td>
+                    <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(i.total)}</td>
+                    <td className={tdCls}><Badge text={i.computedStatus} className={invoiceStatusColor[i.computedStatus]} /></td>
                     <td className={tdCls}>
                       <div className="flex items-center gap-1 justify-end">
                         <button className={iconBtn} title="View" onClick={() => openModal({ type: "invoice", mode: "view", item: i })}><Eye size={15} /></button>
@@ -4934,7 +4804,7 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
-function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
+function TransporterBillsView({ data, updateContainerFields }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container }
   const flat = [];
@@ -4961,13 +4831,13 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                {isColVisible("transporterBills", "jobNo") && <th className={thCls}>Job No.</th>}
-                {isColVisible("transporterBills", "customer") && <th className={thCls}>Customer</th>}
-                {isColVisible("transporterBills", "transporterName") && <th className={thCls}>Transporter Name</th>}
-                {isColVisible("transporterBills", "containerNo") && <th className={thCls}>Container No.</th>}
-                {isColVisible("transporterBills", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
-                {isColVisible("transporterBills", "freightAmount") && <th className={thCls}>Freight Amount</th>}
-                {isColVisible("transporterBills", "totalBillAmount") && <th className={thCls}>Total Bill Amount Approved</th>}
+                <th className={thCls}>Job No.</th>
+                <th className={thCls}>Customer</th>
+                <th className={thCls}>Transporter Name</th>
+                <th className={thCls}>Container No.</th>
+                <th className={thCls}>Vehicle No.</th>
+                <th className={thCls}>Freight Amount</th>
+                <th className={thCls}>Total Bill Amount Approved</th>
               </tr>
             </thead>
             <tbody>
@@ -4975,23 +4845,21 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                 const cust = getCustomer(data, o.customerId);
                 return (
                   <tr key={c.id} className={trCls}>
-                    {isColVisible("transporterBills", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>}
-                    {isColVisible("transporterBills", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>}
-                    {isColVisible("transporterBills", "transporterName") && <td className={tdCls}>{c.transporter || "—"}</td>}
-                    {isColVisible("transporterBills", "containerNo") && <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>}
-                    {isColVisible("transporterBills", "vehicleNo") && <td className={tdCls}>{c.vehiclePlate || "—"}</td>}
-                    {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
-                    {isColVisible("transporterBills", "totalBillAmount") && (
-                      <td className={tdCls}>
-                        <button
-                          type="button"
-                          onClick={() => setEditing({ order: o, container: c })}
-                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
-                        >
-                          {formatPKR(containerTotalBillAmount(c))}
-                        </button>
-                      </td>
-                    )}
+                    <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
+                    <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>
+                    <td className={tdCls}>{c.transporter || "—"}</td>
+                    <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
+                    <td className={tdCls}>{c.vehiclePlate || "—"}</td>
+                    <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>
+                    <td className={tdCls}>
+                      <button
+                        type="button"
+                        onClick={() => setEditing({ order: o, container: c })}
+                        className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
+                      >
+                        {formatPKR(containerTotalBillAmount(c))}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -5508,7 +5376,7 @@ function groupFuelByVehicle(containers, fuelPrices) {
   return Array.from(map.values()).sort((a, b) => b.fuelTotal - a.fuelTotal || b.trips - a.trips);
 }
 
-function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible }) {
+function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, psoRefresh, onRefreshFromPSO, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [q, setQ] = useState("");
 
@@ -5519,6 +5387,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
         <CustomerFuelDetail
           customer={cust} data={data} openModal={openModal} askDelete={askDelete} onBack={() => setSelectedCustomerId(null)}
           fuelPriceExcel={fuelPriceExcel} onFuelPriceAttach={onFuelPriceAttach} onFuelPriceExport={onFuelPriceExport} onFuelPriceRevert={onFuelPriceRevert}
+          psoRefresh={psoRefresh} onRefreshFromPSO={onRefreshFromPSO}
           swapExcel={swapExcel} onSwapAttach={onSwapAttach} onSwapExport={onSwapExport} onSwapRevert={onSwapRevert} onSwapRecalculate={onSwapRecalculate}
           isColVisible={isColVisible}
         />
@@ -5562,7 +5431,7 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
   );
 }
 
-function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible }) {
+function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, psoRefresh, onRefreshFromPSO, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
   const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnightly | monthly
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
@@ -5980,13 +5849,26 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             </select>
             <p className="text-slate-500 text-xs mt-1">Doesn't change this list — controls which price the Import & Domestic and Export Consumption Reports use for their calculations. Fortnightly/Monthly use the price on file as of the 1st (or 16th) of the month for the whole period.</p>
           </Field>
-          <TabExcelBar
-            label="Fuel Prices"
-            meta={fuelPriceExcel}
-            onAttachFile={onFuelPriceAttach}
-            onExport={onFuelPriceExport}
-            onRevert={onFuelPriceRevert}
-          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <TabExcelBar
+              label="Fuel Prices"
+              meta={fuelPriceExcel}
+              onAttachFile={onFuelPriceAttach}
+              onExport={onFuelPriceExport}
+              onRevert={onFuelPriceRevert}
+            />
+            <button
+              disabled={psoRefresh && psoRefresh.busy}
+              onClick={onRefreshFromPSO}
+              title="Pulls today's HI-CETANE DIESEL EURO 5 price straight from PSO's public fuel prices page"
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={psoRefresh && psoRefresh.busy ? "animate-spin" : ""} /> {psoRefresh && psoRefresh.busy ? "Fetching…" : "Refresh from PSO"}
+            </button>
+          </div>
+          {psoRefresh && psoRefresh.message && (
+            <p className={cx("text-xs", psoRefresh.message.ok ? "text-emerald-400" : "text-red-400")}>{psoRefresh.message.text}</p>
+          )}
           <div className="flex items-center justify-between flex-wrap gap-2">
             {selectedFuelPriceIds.size > 0 ? (
               <div className="flex items-center gap-3">
@@ -6428,7 +6310,7 @@ function ActivityLogView({ data }) {
 // Admin-only archive of every Completed order, regardless of age — the permanent record
 // that dispatcher/receiver/Empty Return Receiver/Data Entry lose day-to-day visibility
 // into once a container has been Completed for 2+ days (see isSettledOut).
-function OrderHistoryView({ data, openModal, isColVisible }) {
+function OrderHistoryView({ data, openModal }) {
   const [q, setQ] = useState("");
 
   const rows = [];
@@ -6461,24 +6343,24 @@ function OrderHistoryView({ data, openModal, isColVisible }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                {isColVisible("orderHistory", "jobNo") && <th className={thCls}>Job No.</th>}
-                {isColVisible("orderHistory", "customer") && <th className={thCls}>Customer</th>}
-                {isColVisible("orderHistory", "containerNo") && <th className={thCls}>Container No.</th>}
-                {isColVisible("orderHistory", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
-                {isColVisible("orderHistory", "completedOn") && <th className={thCls}>Completed On</th>}
-                {isColVisible("orderHistory", "notes") && <th className={thCls}>Notes</th>}
+                <th className={thCls}>Job No.</th>
+                <th className={thCls}>Customer</th>
+                <th className={thCls}>Container No.</th>
+                <th className={thCls}>Vehicle No.</th>
+                <th className={thCls}>Completed On</th>
+                <th className={thCls}>Notes</th>
                 <th className={thCls}></th>
               </tr>
             </thead>
             <tbody>
               {filtered.map(({ order: o, container: c, customerName }) => (
                 <tr key={c.id} className={trCls}>
-                  {isColVisible("orderHistory", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || o.orderNumber}</td>}
-                  {isColVisible("orderHistory", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{customerName}</td>}
-                  {isColVisible("orderHistory", "containerNo") && <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>}
-                  {isColVisible("orderHistory", "vehicleNo") && <td className={tdCls}>{c.vehiclePlate || "—"}</td>}
-                  {isColVisible("orderHistory", "completedOn") && <td className={tdCls}>{c.emptyReturnDate ? fmtDate(c.emptyReturnDate) : "—"}</td>}
-                  {isColVisible("orderHistory", "notes") && <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 260 }}>{c.emptyReturnDescription || "—"}</td>}
+                  <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || o.orderNumber}</td>
+                  <td className={cx(tdCls, "text-white font-medium")}>{customerName}</td>
+                  <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
+                  <td className={tdCls}>{c.vehiclePlate || "—"}</td>
+                  <td className={tdCls}>{c.emptyReturnDate ? fmtDate(c.emptyReturnDate) : "—"}</td>
+                  <td className={tdCls} style={{ whiteSpace: "normal", maxWidth: 260 }}>{c.emptyReturnDescription || "—"}</td>
                   <td className={tdCls}>
                     <button className={iconBtn} title="View order" onClick={() => openModal({ type: "order", mode: "view", item: o })}><Eye size={15} /></button>
                   </td>
@@ -8270,10 +8152,6 @@ function LogistixERP() {
   const [data, setDataState] = useState(null);
   const [dataLoading, setDataLoading] = useState(false);
   const [view, setView] = useState("dashboard");
-  // Lifted out of OrdersView so the Export/Attach bar (rendered at this level, above the tab
-  // content) can know which Domestic category is currently open and scope the Excel
-  // export/attach to just that one, instead of always covering all three categories.
-  const [domesticCategory, setDomesticCategory] = useState(null);
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [viewSession, setViewSession] = useState({ role: "admin", customerId: null });
@@ -8293,12 +8171,12 @@ function LogistixERP() {
   }
   const [importMsg, setImportMsg] = useState(null);
   const [excelBusy, setExcelBusy] = useState(false);
-  const [showExportChoice, setShowExportChoice] = useState(false);
   const [tabExcel, setTabExcel] = useState({}); // { [viewKey]: { attached, filename, snapshot, busy, message } }
   const [domesticExportFrom, setDomesticExportFrom] = useState("");
   const [domesticExportTo, setDomesticExportTo] = useState("");
   const [contractExcel, setContractExcel] = useState({}); // { [contractGroupId||"orphan"]: { attached, filename, snapshot, busy, message } } - per-contract, so this can't use the generic viewKey-based system above
   const [swapExcel, setSwapExcel] = useState({}); // { [customerId]: { attached, filename, snapshot, busy, message } } - per-customer, same reason
+  const [psoRefresh, setPsoRefresh] = useState({ busy: false, message: null }); // status of the manual "Refresh from PSO" button on Fuel Prices
   const [fleetUrl, setFleetUrl] = useState(null);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("logistix-theme") || "dark"; } catch (e) { return "dark"; }
@@ -8364,30 +8242,8 @@ function LogistixERP() {
     await supabaseClient.auth.signOut();
   }
 
-  // Loops through a table in pages of 1000 (Supabase/PostgREST's typical default max-rows
-  // limit) until every row has been fetched, rather than silently stopping at whatever that
-  // limit is - a single .select("*") with no range() would otherwise cap out there
-  // regardless of how many rows actually exist, which is exactly what happened once total
-  // orders crossed 1000: newer rows pushed older ones out of the truncated result entirely.
-  async function fetchAllRows(table) {
-    const PAGE_SIZE = 1000;
-    let from = 0;
-    let all = [];
-    while (true) {
-      const { data, error, count } = await supabaseClient.from(table).select("*").order("created_at", { ascending: false }).range(from, from + PAGE_SIZE - 1);
-      if (error) return { data: all.length ? all : null, error };
-      all = all.concat(data || []);
-      const total = count != null ? count : null;
-      const gotFullPage = (data || []).length === PAGE_SIZE;
-      from += PAGE_SIZE;
-      if (!gotFullPage) break; // last page was short (or empty) - nothing more to fetch
-      if (total != null && all.length >= total) break; // reached the known total early
-    }
-    return { data: all, error: null };
-  }
-
   async function refreshData() {
-    const results = await Promise.all(DATA_TABLES.map((t) => fetchAllRows(t)));
+    const results = await Promise.all(DATA_TABLES.map((t) => supabaseClient.from(t).select("*").order("created_at", { ascending: false })));
     setDataState((prev) => {
       // prev is null on the very first load (before any data has ever been set) - refreshData
       // is reused both for that initial load and the 15-second background poll, but only the
@@ -8681,7 +8537,7 @@ function LogistixERP() {
           const newOrderIds = new Set(); // created orders don't need a "prev" snapshot entry - reverting just deletes them
 
           sheetNames.forEach((sheetName) => {
-            const hasSender = true; // Sender now applies to all Domestic categories, including Finished Goods
+            const hasSender = sheetName === "Wrapping Materials" || sheetName === "WM Domestic Karachi";
             const sheetCategory = { "Finished Goods": DOMESTIC_CATEGORIES[0], "Wrapping Materials": DOMESTIC_CATEGORIES[1], "WM Domestic Karachi": DOMESTIC_CATEGORIES[2] }[sheetName];
             const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "", raw: false });
             rows.forEach((row, rowIdx) => {
@@ -8733,12 +8589,7 @@ function LogistixERP() {
               const destination = xstr(readAnyKey(row, ["Destination"])).trim();
               if (!customerName && !loadingPoint && !destination) return;
 
-              const matchedCustomer = (data.customers || []).find((cu) => {
-                const full = (cu.name || "").trim().toLowerCase();
-                const short = (cu.shortName || "").trim().toLowerCase();
-                const target = customerName.toLowerCase();
-                return full === target || (short && short === target);
-              });
+              const matchedCustomer = (data.customers || []).find((cu) => (cu.name || "").trim().toLowerCase() === customerName.toLowerCase());
               if (!matchedCustomer) { createIssues.push(`${rowLabel}: customer "${customerName}" not found — row not created.`); return; }
               if (!loadingPoint || !destination) { createIssues.push(`${rowLabel}: missing Loading Point or Destination — row not created.`); return; }
 
@@ -8787,23 +8638,6 @@ function LogistixERP() {
               createdCount++;
             });
           });
-
-          if (createdCount >= 5 && createdCount > updatedCount) {
-            const proceed = window.confirm(
-              `This file would create ${createdCount} new order${createdCount === 1 ? "" : "s"} and update only ${updatedCount}. ` +
-              `If this file was re-exported from this app, that usually means the hidden "Container ID" column didn't match existing records — ` +
-              `often because it got deleted or the file was re-saved by another program that stripped hidden columns. ` +
-              `Continuing will create ${createdCount} new orders rather than updating your existing ones, which may result in duplicates.\n\n` +
-              `Click OK only if you're sure these are genuinely new shipments. Click Cancel to stop and check the file first.`
-            );
-            if (!proceed) {
-              setTabExcel((prev) => ({
-                ...prev,
-                [viewKey]: { ...(prev[viewKey] || {}), busy: false, message: { ok: false, text: "Attach cancelled — no changes were made." } },
-              }));
-              return;
-            }
-          }
 
           const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id) || newOrderIds.has(o.id));
           const { error } = changedOrders.length ? await supabaseClient.from("orders").upsert(changedOrders.map(toDbRow)) : { error: null };
@@ -8869,6 +8703,18 @@ function LogistixERP() {
           coerced.forEach((row) => { if (row.effectiveDate) seenDates.set(row.effectiveDate, row); });
           coerced = Array.from(seenDates.values());
         }
+
+        // Same class of bug as the fuel_prices case above, but keyed on id instead of date: two
+        // rows sharing an id in the uploaded file would make Postgres reject the whole upsert
+        // (it won't let ON CONFLICT DO UPDATE touch the same row twice in one statement). Rather
+        // than dropping one of them, only the first row to use a given id keeps it as an update;
+        // every later row with that same id gets a fresh id instead, so every row in the file
+        // is still saved as its own record rather than one silently overwriting another.
+        const seenRowIds = new Set();
+        coerced = coerced.map((row) => {
+          if (!seenRowIds.has(row.id)) { seenRowIds.add(row.id); return row; }
+          return { ...row, id: genUUID() };
+        });
 
         const existingById = new Map(existingList.map((r) => [r.id, r]));
         const priorMeta = tabExcel[viewKey] || {};
@@ -8937,6 +8783,35 @@ function LogistixERP() {
     }
   }
 
+  // Calls the fetch-pso-diesel-price Edge Function (the same one the daily cron job
+  // calls) on demand. The function itself does the fetch/parse/upsert against PSO's
+  // site server-side — this just triggers it and then re-reads fuel_prices so the tab
+  // reflects the result immediately instead of waiting for the next background poll.
+  async function handleRefreshFromPSO() {
+    setPsoRefresh({ busy: true, message: null });
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/fetch-pso-diesel-price`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, "Content-Type": "application/json" },
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body || !body.ok) throw new Error((body && body.error) || `Request failed (${res.status})`);
+
+      const { data: rows, error } = await supabaseClient.from("fuel_prices").select("*");
+      if (error) throw error;
+      setDataState((prevData) => ({ ...prevData, fuel_prices: (rows || []).map(fromDbRow) }));
+      setPsoRefresh({
+        busy: false,
+        message: {
+          ok: true,
+          text: `PSO Hi-Cetane Diesel Euro 5: ${formatPKR(body.price)}/Ltr as of ${fmtDate(body.effectiveDate)}${body.updated ? " (updated existing entry)." : " (added new entry)."}`,
+        },
+      });
+    } catch (err) {
+      setPsoRefresh({ busy: false, message: { ok: false, text: "Couldn't fetch from PSO: " + err.message } });
+    }
+  }
+
   const DOMESTIC_EXPORT_HEADERS_BASE = ["Container ID", "Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
   const DOMESTIC_EXPORT_HEADERS_WM = ["Container ID", "Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
 
@@ -8964,7 +8839,7 @@ function LogistixERP() {
     ];
   }
 
-  async function handleTabExport(viewKey, categoryFilter) {
+  async function handleTabExport(viewKey) {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
     if (viewKey === "orders_domestic") {
@@ -8999,13 +8874,9 @@ function LogistixERP() {
       // Wrapping Materials and the new WM Domestic Karachi category both use the WM-style
       // layout (with the Sender column) per the request that the new tab match WM's layout;
       // Finished Goods keeps the original layout without Sender.
-      const sheetNameForCategory = DOMESTIC_SHEET_NAME_FOR_CATEGORY;
-      // categoryFilter is set when exporting from inside a specific category's tab (Finished
-      // Goods, Wrapping Materials, etc.) rather than the category picker itself - scopes the
-      // export to just that one category's orders/sheet instead of all three every time.
-      const categoriesToExport = categoryFilter ? [categoryFilter] : DOMESTIC_CATEGORIES;
-      const sheets = categoriesToExport.map((category) => {
-        const hasSender = true; // Sender now applies to all Domestic categories, including Finished Goods - same layout/styling as Wrapping Materials
+      const sheetNameForCategory = { [DOMESTIC_CATEGORIES[0]]: "Finished Goods", [DOMESTIC_CATEGORIES[1]]: "Wrapping Materials", [DOMESTIC_CATEGORIES[2]]: "WM Domestic Karachi" };
+      const sheets = DOMESTIC_CATEGORIES.map((category) => {
+        const hasSender = category !== DOMESTIC_CATEGORIES[0];
         const catOrders = domesticOrders.filter((o) => (o.domesticCategory || DOMESTIC_CATEGORIES[0]) === category);
         const flat = flattenContainers(catOrders, () => true).filter(({ c }) => inExportRange(c.loadingDate));
         const dataRows = flat.map(({ o, c }, i) => buildDomesticExportRow(i + 1, o, c, hasSender));
@@ -9025,8 +8896,7 @@ function LogistixERP() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         const rangeLabel = hasDateFilter ? `-${domesticExportFrom || "start"}-to-${domesticExportTo || "end"}` : "";
-        const namePrefix = categoryFilter ? `${sheetNameForCategory[categoryFilter].replace(/\s+/g, "-")}-Orders` : "Domestic-Orders";
-        a.href = url; a.download = `${namePrefix}${rangeLabel}-${todayISO()}.xlsx`;
+        a.href = url; a.download = `Domestic-Orders${rangeLabel}-${todayISO()}.xlsx`;
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } catch (err) {
@@ -9072,28 +8942,9 @@ function LogistixERP() {
       };
     });
     const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "generalComponent", "fuelComponent", "rate", "validFrom", "validTo"];
-    const displayHeaders = ["Id", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General Component", "Fuel Component", "Rate", "Valid From", "Valid To"];
-    const dataRows = rows.map((r) => schema.map((k) => (r[k] === null || r[k] === undefined ? "" : r[k])));
-    const sheetRows = [displayHeaders, ...dataRows];
-    // Style 6 = blue header, bold white Tahoma 10, centered, bordered, no wrap (matches the
-    // reference sheet exactly). Style 8 = Tahoma 10, centered/middle, bordered, no wrap - used
-    // uniformly for every data column, so all detail font/alignment stays identical across
-    // the sheet rather than varying by column type.
-    const headerOverrides = buildColStyleMap(schema.length, new Set(), 0, 6);
-    const contentDefault = buildColStyleMap(schema.length, new Set(), 0, 8);
-    const colWidths = colWidthsFor(displayHeaders);
-    buildXlsxBuffer([{
-      name: "ContractRates", rows: sheetRows, headerRowIndex: 1, colWidths, freezeRows: 1,
-      headerOverrides, contentDefaultCols: contentDefault, hiddenCols: [1], // Id — needed for Attach/Revert to match rows back correctly, not meant to be seen
-      headerRowHeight: 30.25,
-    }]).then((buffer) => {
-      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }).catch((err) => window.alert("Couldn't build the contract rates export: " + err.message));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildSheet(rows, schema, null, "ContractRates"), "ContractRates");
+    XLSX.writeFile(wb, `${(contractTitle || "Contract-Rates").replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
   }
 
   function handleContractRatesAttach(customerId, contractGroupId, file) {
@@ -9111,18 +8962,22 @@ function LogistixERP() {
         const rawCoerced = coerceContractRates(rows);
         const skippedCount = rows.length - rawCoerced.length;
         // Always stamped onto every row, never read from the file — see coerceContractRates.
-        // Also de-duplicates ids within this same file: if two rows share an id (e.g. someone
-        // copy-pasted an existing row in Excel as a starting point for a new one and forgot to
-        // clear its ID column), every occurrence after the first gets treated as a genuinely
-        // new row instead - two rows with the same id in one upsert() batch make Postgres
-        // reject the whole batch outright ("ON CONFLICT DO UPDATE command cannot affect row a
-        // second time"), so this has to be caught before it ever reaches the database.
+        const stamped = rawCoerced.map((r) => ({ ...r, customerId, contractGroupId: contractGroupId || "" }));
+
+        // Two rows in the file can end up with the same id (e.g. a row was copy-pasted in
+        // Excel to add a new rate period and the ID cell never got cleared). Sending both to
+        // Supabase as updates to the same id in one upsert makes Postgres reject the whole
+        // batch — it won't let ON CONFLICT DO UPDATE touch the same row twice in one statement
+        // — and simply discarding one of them would throw away real data (e.g. an expired rate
+        // whose own Valid From/Valid To is meant to stay on record). So only the FIRST row to
+        // use a given id keeps it and updates that record; every later row with the same id is
+        // treated as its own new entry and gets a fresh id instead, so nothing gets dropped.
         const seenIds = new Set();
-        const coerced = rawCoerced.map((r) => {
-          let id = r.id;
-          if (seenIds.has(id)) id = genUUID();
-          seenIds.add(id);
-          return { ...r, id, customerId, contractGroupId: contractGroupId || "" };
+        let duplicateCount = 0;
+        const coerced = stamped.map((row) => {
+          if (!seenIds.has(row.id)) { seenIds.add(row.id); return row; }
+          duplicateCount++;
+          return { ...row, id: genUUID() };
         });
 
         const existingList = data.contracts || [];
@@ -9150,7 +9005,7 @@ function LogistixERP() {
             attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
             message: error
               ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
-              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}` },
+              : { ok: true, text: `${file.name}: updated ${updatedCount} and added ${addedCount} record${updatedCount + addedCount === 1 ? "" : "s"}.${skippedCount > 0 ? ` Skipped ${skippedCount} row${skippedCount === 1 ? "" : "s"} missing required data (Loading Point / Destination).` : ""}${duplicateCount > 0 ? ` ${duplicateCount} row${duplicateCount === 1 ? "" : "s"} shared an ID with another row in the file — saved as ${duplicateCount === 1 ? "a separate new record" : "separate new records"} instead of overwriting.` : ""}` },
           },
         }));
       } catch (err) {
@@ -9244,6 +9099,7 @@ function LogistixERP() {
         let updatedCount = 0, addedCount = 0, skippedCount = 0;
         const toWrite = [];
 
+        const usedIdsThisImport = new Set();
         rows.forEach((row) => {
           const swapId = xstr(readAnyKey(row, ["Swap ID", "swap id", "id"])).trim();
           const department = xstr(readAnyKey(row, ["Department"])).trim();
@@ -9255,7 +9111,14 @@ function LogistixERP() {
           if (!cardNumber && !department && !swapDate) return; // blank row
           if (!swapDate || !cardNumber) { skippedCount++; return; } // required fields missing
 
-          const id = swapId && existingById.has(swapId) ? swapId : genUUID();
+          let id = swapId && existingById.has(swapId) ? swapId : genUUID();
+          // If this id was already claimed by an earlier row in this same file (two rows
+          // resolved to the same existing Swap ID, for instance), this row becomes its own new
+          // entry instead of silently overwriting the earlier one — otherwise Postgres would
+          // also reject sending two updates to the same id in a single upsert.
+          if (usedIdsThisImport.has(id)) id = genUUID();
+          usedIdsThisImport.add(id);
+
           const record = { id, customerId, swapDate, department, swappedBy, cardNumber, qtyLtr, amountPkr };
           const prev = existingById.get(id) || null;
           if (prev) updatedCount++; else addedCount++;
@@ -9366,17 +9229,15 @@ function LogistixERP() {
     XLSX.writeFile(wb, name);
   }
 
-  async function handleExportTemplate(mode) {
-    setShowExportChoice(false);
+  async function handleExportTemplate() {
     setExcelBusy(true);
     try {
-      const buffer = await buildTemplateWorkbook(data, mode);
+      const buffer = await buildTemplateWorkbook(data);
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const today = todayISO();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const suffix = mode === "current" ? "-Current" : "-All";
-      a.href = url; a.download = `Transportation${suffix}-${today}.xlsx`;
+      a.href = url; a.download = `Transportation-${today}.xlsx`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -9452,7 +9313,7 @@ function LogistixERP() {
         mobileOpen={mobileNavOpen} onCloseMobileNav={() => setMobileNavOpen(false)}
       />
       <div className="flex-1 min-w-0 flex flex-col">
-        <TopBar title={isAdmin ? VIEW_TITLES[view] : "My Orders"} onExportTemplate={() => setShowExportChoice(true)} onOpenMobileNav={() => setMobileNavOpen(true)} excelBusy={excelBusy} />
+        <TopBar title={isAdmin ? VIEW_TITLES[view] : "My Orders"} onExportTemplate={handleExportTemplate} onOpenMobileNav={() => setMobileNavOpen(true)} excelBusy={excelBusy} />
         <div className="p-4 sm:p-6" key={isAdmin ? view : "portal"}>
           <div className="animate-fade-in-up">
           {!isAdmin ? (
@@ -9462,10 +9323,10 @@ function LogistixERP() {
               {TAB_EXCEL_CONFIG[view] && (
                 <div className="mb-4">
                   <TabExcelBar
-                    label={view === "orders_domestic" && domesticCategory ? `${DOMESTIC_SHEET_NAME_FOR_CATEGORY[domesticCategory] || domesticCategory} Orders` : TAB_EXCEL_CONFIG[view].label}
+                    label={TAB_EXCEL_CONFIG[view].label}
                     meta={tabExcel[view]}
                     onAttachFile={(file) => handleTabAttachFile(view, file)}
-                    onExport={() => handleTabExport(view, view === "orders_domestic" ? domesticCategory : null)}
+                    onExport={() => handleTabExport(view)}
                     onRevert={() => handleTabRevert(view)}
                   />
                   {view === "orders_domestic" && (
@@ -9484,7 +9345,7 @@ function LogistixERP() {
                 </div>
               )}
               {view === "dashboard" && <Dashboard data={data} />}
-              {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} isColVisible={isColVisible} domesticCategory={domesticCategory} setDomesticCategory={setDomesticCategory} />}
+              {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "orders_export" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Export" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "tracking_import" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Import" />}
@@ -9500,7 +9361,7 @@ function LogistixERP() {
                   isColVisible={isColVisible}
                 />
               )}
-              {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} isColVisible={isColVisible} />}
+              {view === "invoices" && <InvoicesView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "fuel_management" && (
                 <FuelManagementView
                   data={data} openModal={setModal} askDelete={setConfirm}
@@ -9508,6 +9369,7 @@ function LogistixERP() {
                   onFuelPriceAttach={(file) => handleTabAttachFile("fuel_prices", file)}
                   onFuelPriceExport={() => handleTabExport("fuel_prices")}
                   onFuelPriceRevert={() => handleTabRevert("fuel_prices")}
+                  psoRefresh={psoRefresh} onRefreshFromPSO={handleRefreshFromPSO}
                   swapExcel={swapExcel} onSwapAttach={handleSwapAttach} onSwapExport={handleSwapExport} onSwapRevert={handleSwapRevert} onSwapRecalculate={handleSwapRecalculate}
                   isColVisible={isColVisible}
                 />
@@ -9516,9 +9378,9 @@ function LogistixERP() {
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "analytics" && <AnalyticsView data={data} />}
-              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} />}
+              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}
-              {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} isColVisible={isColVisible} />}
+              {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} />}
               {view === "settings" && <SettingsView columnVisibility={columnVisibility} setColumnVisibility={setColumnVisibility} isColVisible={isColVisible} />}
               {view === "users" && viewSession.role === "admin" && <ManageUsersView />}
             </>
@@ -9527,27 +9389,6 @@ function LogistixERP() {
         </div>
       </div>
 
-      {showExportChoice && (
-        <Modal title="Export Master Excel File" onClose={() => setShowExportChoice(false)}>
-          <p className="text-slate-400 text-sm mb-4">Choose what this export should include.</p>
-          <div className="space-y-3">
-            <button
-              onClick={() => handleExportTemplate("current")}
-              className="w-full text-left p-4 rounded-lg border border-slate-800 hover:border-blue-600 hover:bg-slate-800/60 transition-colors"
-            >
-              <div className="text-white font-medium">Export Current Data</div>
-              <div className="text-slate-500 text-sm mt-0.5">Only active/ongoing shipments — anything already Completed is left out.</div>
-            </button>
-            <button
-              onClick={() => handleExportTemplate("all")}
-              className="w-full text-left p-4 rounded-lg border border-slate-800 hover:border-blue-600 hover:bg-slate-800/60 transition-colors"
-            >
-              <div className="text-white font-medium">Export All</div>
-              <div className="text-slate-500 text-sm mt-0.5">Every shipment on file, including everything already Completed — useful for a full year-end record.</div>
-            </button>
-          </div>
-        </Modal>
-      )}
       {modal && <EntityModal modal={modal} data={data} onClose={() => setModal(null)} onSave={saveItem} role={viewSession.role} />}
       {confirm && (
         <ConfirmModal
@@ -9567,4 +9408,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
-
