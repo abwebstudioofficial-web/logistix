@@ -780,6 +780,11 @@ const SHIPPING_FIELDS = [
   { key: "igmDate", label: "IGM Date", type: "date" },
   { key: "bondedStatus", label: "Bonded Status", options: ["Non-Bonded", "Bonded"], default: "Non-Bonded" },
 ];
+// Export orders don't carry a Bill of Lading or an IGM date (those are Import-side customs
+// documents), so the Export order form/detail view hides those two fields entirely.
+function shippingFieldsFor(shipmentType) {
+  return shipmentType === "Export" ? SHIPPING_FIELDS.filter((f) => f.key !== "blNumber" && f.key !== "igmDate") : SHIPPING_FIELDS;
+}
 
 const orderStatusColor = {
   Confirmed: "bg-sky-950 text-sky-400 border-sky-800",
@@ -1393,7 +1398,7 @@ const TEMPLATE_COMPANY_SHEETS = ["Tetra Pak","PTC","Dairyland","Haleeb","Fauji",
 const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Bonded Status","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
 const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Bonded Status","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
 const DOMESTIC_HEADERS = ["Sr.#", "Domestic Category", "Customer", "Sender Name", "Sender Address", "Est. Delivery Date", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Freight Amount"];
-const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Booking No.","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
+const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
 function fmtTimePart(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? "" : d.toLocaleTimeString(); }
@@ -1434,7 +1439,7 @@ function buildExportRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
   return [
     sr, o.jobNumber || o.orderNumber || "", cust ? (cust.shortName || cust.name) : "", c.emptyReturnLocation || "", o.origin || "",
-    c.transporter || o.nominatedTransporter || "", o.shippingLine || "", o.blNumber || "", c.containerNumber || "",
+    c.transporter || o.nominatedTransporter || "", o.shippingLine || "", c.containerNumber || "",
     c.containerSize || "", xnum(c.weight, ""), c.vehiclePlate || "", fmtDateISO(c.dispatchAt), fmtDateISO(c.dispatchAt),
     c.biltyNumber || "", xnum(c.freightAmount, ""), o.bondedStatus || "", c.destination || o.destination || "", c.emptyReturnDescription || "",
   ];
@@ -1858,12 +1863,12 @@ async function buildTemplateWorkbook(data, mode) {
   buildDomesticSheet("WM Domestic Karachi", DOMESTIC_CATEGORIES[2]);
 
   // --- Export Transportation (cream header) ---
-  const expHeaderNoWrap = new Set([2, 8, 9, 12, 15]); // Job#, Booking No.(~B/L), Container No., Truck No., Bilty No.
-  const expHeaderWrap = new Set(Array.from({ length: 19 }, (_, i) => i + 1).filter((c) => !expHeaderNoWrap.has(c)));
-  const expHeaderOverrides = buildColStyleMap(19, expHeaderWrap, 3, 4);
-  const expContentWrap = new Set([2, 3, 4, 7, 8, 12, 15, 18]); // Job#, Shipper(~Consignee), Empty Pickup Loc, Shipping Line, Booking No., Truck No., Bilty No., Destination
-  const expContentDefault = buildColStyleMap(19, expContentWrap, 9, 8);
-  expContentDefault[16] = 22; // Freight — bold
+  const expHeaderNoWrap = new Set([2, 8, 11, 14]); // Job#, Container No., Truck No., Bilty No.
+  const expHeaderWrap = new Set(Array.from({ length: 18 }, (_, i) => i + 1).filter((c) => !expHeaderNoWrap.has(c)));
+  const expHeaderOverrides = buildColStyleMap(18, expHeaderWrap, 3, 4);
+  const expContentWrap = new Set([2, 3, 4, 7, 11, 14, 17]); // Job#, Shipper(~Consignee), Empty Pickup Loc, Shipping Line, Truck No., Bilty No., Destination
+  const expContentDefault = buildColStyleMap(18, expContentWrap, 9, 8);
+  expContentDefault[15] = 22; // Freight — bold
   expContentDefault[3] = 22; // Customer (now short form, e.g. "PTC") — bold
 
   const expFlat = flattenContainers(orders, (o) => orderKind(o) === "export");
@@ -1875,7 +1880,7 @@ async function buildTemplateWorkbook(data, mode) {
     name: "Export Transportation", rows: expRows, headerRowIndex: 1,
     colWidths: expColWidths, freezeCols: 6, freezeRows: 1,
     headerOverrides: expHeaderOverrides, contentDefaultCols: expContentDefault,
-    conditionalCols: { 17: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 15: duplicateStyleFn(expDataRows.map((r) => r[14]), 17) },
+    conditionalCols: { 16: CARGO_TYPE_RULE, 5: LOADING_POINT_RULE, 14: duplicateStyleFn(expDataRows.map((r) => r[13]), 16) },
   });
 
 
@@ -7173,7 +7178,7 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
         <p className="text-slate-500 text-xs mt-0.5">Customs &amp; documentation info — shown on the bilty receipt.</p>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        {SHIPPING_FIELDS.map((f) => (
+        {shippingFieldsFor(resolvedShipmentType).map((f) => (
           <Field key={f.key} label={f.label}>
             {f.options ? (
               <select className={inputCls} value={shipping[f.key]} onChange={(e) => setShippingField(f.key, e.target.value)}>
@@ -7828,11 +7833,11 @@ function OrderDetail({ order, data }) {
       {order.description && (
         <div><div className="text-slate-500 text-xs mb-1">Description</div><div className="text-slate-200">{order.description}</div></div>
       )}
-      {SHIPPING_FIELDS.some((f) => order[f.key]) && (
+      {shippingFieldsFor(order.shipmentType).some((f) => order[f.key]) && (
         <div className="pt-3 border-t border-slate-800">
           <div className="text-slate-300 text-sm font-semibold mb-3">Shipment Details</div>
           <div className="grid grid-cols-2 gap-4">
-            {SHIPPING_FIELDS.map((f) => (
+            {shippingFieldsFor(order.shipmentType).map((f) => (
               <div key={f.key}>
                 <div className="text-slate-500 text-xs mb-1">{f.label}</div>
                 <div className="text-slate-200">{f.type === "date" ? fmtDate(order[f.key]) : (order[f.key] || "—")}</div>
@@ -9221,7 +9226,11 @@ function LogistixERP() {
         senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
       }));
     }
-    const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
+    let schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
+    // Export Orders don't carry a B/L Number or IGM Date (Import-only customs fields) —
+    // drop them from this tab's export/attach schema so they don't show up as empty
+    // columns, without touching the shared Orders schema used by Import/Domestic exports.
+    if (viewKey === "orders_export") schema = schema.filter((k) => k !== "blNumber" && k !== "igmDate");
     const wb = XLSX.utils.book_new();
     const ws = buildSheet(rows, schema, cfg.displayHeaders, cfg.sheetName);
     if (cfg.sheetName === "Orders") {
