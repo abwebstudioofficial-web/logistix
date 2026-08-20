@@ -5565,7 +5565,13 @@ function FuelManagementView({ data, openModal, askDelete, fuelPriceExcel, onFuel
 
 function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuelPriceExcel, onFuelPriceAttach, onFuelPriceExport, onFuelPriceRevert, swapExcel, onSwapAttach, onSwapExport, onSwapRevert, onSwapRecalculate, isColVisible, refreshData }) {
   const [tab, setTab] = useState("domestic_import"); // "domestic_import" | "export" | "swap_report" | "fuel_price"
-  const [fuelPriceMode, setFuelPriceMode] = useState("daily"); // daily | fortnightly | monthly
+  const [fuelPriceMode, setFuelPriceModeState] = useState(() => {
+    try { return window.localStorage.getItem("logistix_fuel_price_mode") || "daily"; } catch { return "daily"; }
+  });
+  function setFuelPriceMode(mode) {
+    setFuelPriceModeState(mode);
+    try { window.localStorage.setItem("logistix_fuel_price_mode", mode); } catch {}
+  }
   const [psoRefreshing, setPsoRefreshing] = useState(false);
   const [psoRefreshResult, setPsoRefreshResult] = useState(null); // { ok, text }
 
