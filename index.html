@@ -6014,7 +6014,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             </select>
             <p className="text-slate-500 text-xs mt-1">Doesn't change this list — controls which price the Import & Domestic and Export Consumption Reports use for their calculations. Fortnightly/Monthly use the price on file as of the 1st (or 16th) of the month for the whole period.</p>
           </Field>
-          <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now.</p>
           <TabExcelBar
             label="Fuel Prices"
             meta={fuelPriceExcel}
@@ -6050,6 +6049,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <Plus size={16} /> Add Fuel Price
             </button>
           </div>
+          <p className="text-slate-500 text-xs">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now.</p>
           {fuelPrices.length === 0 ? (
             <EmptyState
               icon={Banknote} text="No fuel prices recorded yet."
