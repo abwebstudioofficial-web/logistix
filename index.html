@@ -6032,6 +6032,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <span className={cx("text-xs", psoRefreshResult.ok ? "text-emerald-400" : "text-red-400")}>{psoRefreshResult.text}</span>
             )}
           </TabExcelBar>
+          <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now.</p>
           <div className="flex items-center justify-between flex-wrap gap-2">
             {selectedFuelPriceIds.size > 0 ? (
               <div className="flex items-center gap-3">
@@ -6049,7 +6050,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <Plus size={16} /> Add Fuel Price
             </button>
           </div>
-          <p className="text-slate-500 text-xs">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now.</p>
           {fuelPrices.length === 0 ? (
             <EmptyState
               icon={Banknote} text="No fuel prices recorded yet."
