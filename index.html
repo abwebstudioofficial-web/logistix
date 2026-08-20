@@ -2824,7 +2824,7 @@ function DropdownWithCustom({ value, onChange, options, selectPlaceholder, custo
 // importable tab (Orders x3, Customers, Senders, Transporters, Invoices). Attaching only
 // ever touches this tab's own table (and for Orders, only its own shipment type); Export
 // downloads just this tab's current data; Revert undoes exactly what that attach changed.
-function TabExcelBar({ label, meta, onAttachFile, onExport, onRevert }) {
+function TabExcelBar({ label, meta, onAttachFile, onExport, onRevert, children }) {
   const fileInputRef = useRef(null);
   const m = meta || {};
   return (
@@ -2866,6 +2866,7 @@ function TabExcelBar({ label, meta, onAttachFile, onExport, onRevert }) {
           {m.busy ? "Reverting…" : "Revert"}
         </button>
       )}
+      {children}
       {m.message && <span className={cx("text-xs", m.message.ok ? "text-emerald-400" : "text-red-400")}>{m.message.text}</span>}
     </div>
   );
@@ -6005,7 +6006,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
         </div>
       ) : tab === "fuel_price" ? (
         <div className="space-y-4">
-          <p className="text-slate-500 text-xs">Fuel price is company-wide — set here, it applies when calculating Fuel Amount for every customer's shipments, not just {customer.name}.</p>
           <Field label="Fuel Price Period">
             <select className={inputCls} style={{ width: 280 }} value={fuelPriceMode} onChange={(e) => setFuelPriceMode(e.target.value)}>
               <option value="daily">Daily</option>
@@ -6014,14 +6014,6 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             </select>
             <p className="text-slate-500 text-xs mt-1">Doesn't change this list — controls which price the Import & Domestic and Export Consumption Reports use for their calculations. Fortnightly/Monthly use the price on file as of the 1st (or 16th) of the month for the whole period.</p>
           </Field>
-          <div className="flex items-center gap-3 flex-wrap">
-            <button className={btnSecondary} onClick={handleRefreshFromPso} disabled={psoRefreshing}>
-              <RefreshCw size={14} className={psoRefreshing ? "animate-spin" : ""} /> {psoRefreshing ? "Checking PSO…" : "Refresh from PSO"}
-            </button>
-            {psoRefreshResult && (
-              <span className={cx("text-xs", psoRefreshResult.ok ? "text-emerald-400" : "text-red-400")}>{psoRefreshResult.text}</span>
-            )}
-          </div>
           <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now.</p>
           <TabExcelBar
             label="Fuel Prices"
@@ -6029,7 +6021,18 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             onAttachFile={onFuelPriceAttach}
             onExport={onFuelPriceExport}
             onRevert={onFuelPriceRevert}
-          />
+          >
+            <button
+              disabled={psoRefreshing}
+              onClick={handleRefreshFromPso}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={psoRefreshing ? "animate-spin" : ""} /> {psoRefreshing ? "Checking PSO…" : "Refresh from PSO"}
+            </button>
+            {psoRefreshResult && (
+              <span className={cx("text-xs", psoRefreshResult.ok ? "text-emerald-400" : "text-red-400")}>{psoRefreshResult.text}</span>
+            )}
+          </TabExcelBar>
           <div className="flex items-center justify-between flex-wrap gap-2">
             {selectedFuelPriceIds.size > 0 ? (
               <div className="flex items-center gap-3">
