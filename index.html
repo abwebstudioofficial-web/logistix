@@ -722,7 +722,7 @@ function ChargesEditor({ charges, onChange }) {
 
 // Sheet schema for the Excel attach/detach/sync feature
 const SHEET_SCHEMAS = {
-  Orders: ["id","orderNumber","customerId","customerName","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderName","senderAddress","deliveryAddress","containers","history"],
+  Orders: ["id","orderNumber","customerId","customerName","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyPickupLocation","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderName","senderAddress","deliveryAddress","containers","history"],
   Customers: ["id","name","shortName","email","phone","contact","location","deliveryAddresses"],
   Senders: ["id","name","email","phone","contact","addresses"],
   Transporters: ["id","name","email","phone","contact","addresses"],
@@ -778,12 +778,15 @@ const SHIPPING_FIELDS = [
   { key: "shippingLine", label: "Shipping Line" },
   { key: "blNumber", label: "B/L Number" },
   { key: "igmDate", label: "IGM Date", type: "date" },
+  { key: "emptyPickupLocation", label: "Empty Pickup Location" },
   { key: "bondedStatus", label: "Bonded Status", options: ["Non-Bonded", "Bonded"], default: "Non-Bonded" },
 ];
 // Export orders don't carry a Bill of Lading or an IGM date (those are Import-side customs
-// documents), so the Export order form/detail view hides those two fields entirely.
+// documents) but do need an Empty Pickup Location (where the empty container is picked up
+// from before loading) - Import/Domestic don't use that field at all.
 function shippingFieldsFor(shipmentType) {
-  return shipmentType === "Export" ? SHIPPING_FIELDS.filter((f) => f.key !== "blNumber" && f.key !== "igmDate") : SHIPPING_FIELDS;
+  if (shipmentType === "Export") return SHIPPING_FIELDS.filter((f) => f.key !== "blNumber" && f.key !== "igmDate");
+  return SHIPPING_FIELDS.filter((f) => f.key !== "emptyPickupLocation");
 }
 
 const orderStatusColor = {
@@ -1438,7 +1441,7 @@ function buildImportRow(sr, o, c, data) {
 function buildExportRow(sr, o, c, data) {
   const cust = getCustomer(data, o.customerId);
   return [
-    sr, o.jobNumber || o.orderNumber || "", cust ? (cust.shortName || cust.name) : "", c.emptyReturnLocation || "", o.origin || "",
+    sr, o.jobNumber || o.orderNumber || "", cust ? (cust.shortName || cust.name) : "", o.emptyPickupLocation || "", o.origin || "",
     c.transporter || o.nominatedTransporter || "", o.shippingLine || "", c.containerNumber || "",
     c.containerSize || "", xnum(c.weight, ""), c.vehiclePlate || "", fmtDateISO(c.dispatchAt), fmtDateISO(c.dispatchAt),
     c.biltyNumber || "", xnum(c.freightAmount, ""), o.bondedStatus || "", c.destination || o.destination || "", c.emptyReturnDescription || "",
@@ -2024,7 +2027,7 @@ function coerceOrders(rows, data) {
       jobNumber: xstr(readField(r, "jobNumber")), poNumber: xstr(readField(r, "poNumber")), cargoType: shipmentTypeNorm,
       shippingLine: xstr(readField(r, "shippingLine")), nominatedTransporter: xstr(readField(r, "nominatedTransporter")),
       blNumber: xstr(readField(r, "blNumber")),
-      igmDate: xstr(readField(r, "igmDate")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
+      igmDate: xstr(readField(r, "igmDate")), emptyPickupLocation: xstr(readField(r, "emptyPickupLocation")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
       bondedStatus: normalizeBondedStatus(readField(r, "bondedStatus")), shipmentType: shipmentTypeNorm,
       senderId: resolveSenderId(r, data), senderAddress: xstr(readField(r, "senderAddress")), deliveryAddress: xstr(readField(r, "deliveryAddress")),
       containers, history,
@@ -2214,6 +2217,7 @@ async function downloadBiltyReceipt(order, data) {
     const cust = getCustomer(data, order.customerId);
     const sender = (data.senders || []).find((s) => s.id === order.senderId) || null;
     const isDomestic = (order.shipmentType || "Import") === "Domestic";
+    const isExport = order.shipmentType === "Export";
     const containers = (Array.isArray(order.containers) && order.containers.length)
       ? order.containers
       : [{ containerNumber: order.containerNumber || "", sealNumber: order.sealNumber || "", qtyLabel: order.qtyLabel || "" }];
@@ -2426,7 +2430,7 @@ async function downloadBiltyReceipt(order, data) {
     // the wrapping simple and guarantees nothing ever overflows the column.
     const descLines = wrapToWidth(measureCtx, order.description, descFirstLineWidth, "normal 10.5px Arial");
     const descExtraLines = Math.max(0, descLines.length - 1);
-    const fixedRows = 4; // Item Description, DN/LC/SAP No., Job No., B/L No.
+    const fixedRows = 4; // Item Description, DN/LC/SAP No., Job No., B/L No. (Import/Domestic) or Empty Pickup Location (Export)
     const pBodyH = 18 + fixedRows * 22 + descExtraLines * 16 + containers.length * 40 + 12;
     const gateBodyH = 150; // Reporting/Gate In/Gate Out section's writable body height
     const srY = 150;
@@ -2556,7 +2560,7 @@ async function downloadBiltyReceipt(order, data) {
     }
     pRow("DN / LC / SAP No.:", order.poNumber);
     pRow("Job No.:", order.jobNumber);
-    pRow("B/L No.:", order.blNumber);
+    pRow(isExport ? "Empty Pickup Location:" : "B/L No.:", isExport ? order.emptyPickupLocation : order.blNumber);
 
     // Container No. and Seal No. on one line per container.
     const qtyRows = [];
@@ -9227,10 +9231,12 @@ function LogistixERP() {
       }));
     }
     let schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
-    // Export Orders don't carry a B/L Number or IGM Date (Import-only customs fields) —
-    // drop them from this tab's export/attach schema so they don't show up as empty
-    // columns, without touching the shared Orders schema used by Import/Domestic exports.
+    // Export Orders don't carry a B/L Number or IGM Date (Import-only customs fields), and
+    // Import/Domestic don't carry an Empty Pickup Location (Export-only) — drop whichever
+    // doesn't apply from this tab's export/attach schema, without touching the shared
+    // Orders schema itself.
     if (viewKey === "orders_export") schema = schema.filter((k) => k !== "blNumber" && k !== "igmDate");
+    else schema = schema.filter((k) => k !== "emptyPickupLocation");
     const wb = XLSX.utils.book_new();
     const ws = buildSheet(rows, schema, cfg.displayHeaders, cfg.sheetName);
     if (cfg.sheetName === "Orders") {
