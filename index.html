@@ -5015,6 +5015,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [selectedTransporter, setSelectedTransporter] = useState(null);
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+  const [frozenOrderIds, setFrozenOrderIds] = useState(null);
   const flat = [];
   data.orders.forEach((o) => {
     orderContainers(o).forEach((c) => flat.push({ order: o, container: c }));
@@ -5034,6 +5035,77 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [data.orders]);
+
+  const CATEGORY_ORDER = { Domestic: 0, Import: 1, Export: 2 };
+
+  function sortValue(row, key) {
+    const { order: o, container: c } = row;
+    switch (key) {
+      case "type": return CATEGORY_ORDER[o.shipmentType] ?? 3;
+      case "jobNo": return (o.jobNumber || "").toLowerCase();
+      case "customer": return ((getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "").toLowerCase();
+      case "loadingPoint": return (o.origin || "").toLowerCase();
+      case "destination": return (c.destination || o.destination || "").toLowerCase();
+      case "containerNo": return (c.containerNumber || "").toLowerCase();
+      case "vehicleNo": return (c.vehiclePlate || "").toLowerCase();
+      case "loadingDate": return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
+      case "freightAmount": return Number(c.freightAmount) || 0;
+      case "totalBillAmount": return containerTotalBillAmount(c);
+      case "paidAmount": return Number(c.billPaidAmount) || 0;
+      default: return 0;
+    }
+  }
+  function toggleSort(key) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+  function SortTh({ colKey, label }) {
+    const active = sortKey === colKey;
+    return (
+      <th className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")} onClick={() => toggleSort(colKey)}>
+        <span className="inline-flex items-center gap-1.5">
+          {label}
+          {active ? (
+            sortDir === "asc"
+              ? <ChevronUp size={16} className="text-blue-400 stroke-[3]" />
+              : <ChevronDown size={16} className="text-blue-400 stroke-[3]" />
+          ) : (
+            <ChevronUp size={16} className="text-slate-600 stroke-[3]" />
+          )}
+        </span>
+      </th>
+    );
+  }
+
+  // selectedTransporter is null on the picker screen, so this naturally resolves to an
+  // empty array then (nothing matches a null transporter name) — safe to compute unconditionally.
+  const rows = flat
+    .filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter)
+    .filter(({ order, container }) => {
+      const cust = getCustomer(data, order.customerId);
+      const text = `${order.orderNumber} ${order.jobNumber || ""} ${cust ? (cust.shortName || cust.name) : ""} ${container.containerNumber || ""}`.toLowerCase();
+      return !q || text.includes(q.toLowerCase());
+    })
+    .sort((a, b) => {
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
+      let cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+      if (sortDir === "desc") cmp = -cmp;
+      return cmp;
+    });
+
+  // While a bill's edit modal is open, freeze the row order as it was the moment you opened
+  // it. Otherwise, editing a bill you're currently sorted by (e.g. Paid Amount, Total Bill
+  // Amount) changes that row's sort value live and yanks it to a new spot mid-edit — the row
+  // you're working on shouldn't jump out from under you. Values inside the row still update
+  // live; only its position is pinned until you close the modal, at which point it re-sorts.
+  useEffect(() => {
+    setFrozenOrderIds(editing ? rows.map(({ container: c }) => c.id) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+  const displayRows = frozenOrderIds
+    ? frozenOrderIds.map((id) => rows.find(({ container: c }) => c.id === id)).filter(Boolean)
+    : rows;
 
   // Picker screen — choose a transporter before seeing any bills.
   if (!selectedTransporter) {
@@ -5066,56 +5138,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
     );
   }
 
-  const CATEGORY_ORDER = { Domestic: 0, Import: 1, Export: 2 };
-
-  function sortValue(row, key) {
-    const { order: o, container: c } = row;
-    switch (key) {
-      case "type": return CATEGORY_ORDER[o.shipmentType] ?? 3;
-      case "jobNo": return (o.jobNumber || "").toLowerCase();
-      case "customer": return ((getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "").toLowerCase();
-      case "loadingPoint": return (o.origin || "").toLowerCase();
-      case "destination": return (c.destination || o.destination || "").toLowerCase();
-      case "containerNo": return (c.containerNumber || "").toLowerCase();
-      case "vehicleNo": return (c.vehiclePlate || "").toLowerCase();
-      case "loadingDate": return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
-      case "freightAmount": return Number(c.freightAmount) || 0;
-      case "totalBillAmount": return containerTotalBillAmount(c);
-      case "paidAmount": return Number(c.billPaidAmount) || 0;
-      default: return 0;
-    }
-  }
-  function toggleSort(key) {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  }
-  function SortTh({ colKey, label }) {
-    const active = sortKey === colKey;
-    return (
-      <th className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")} onClick={() => toggleSort(colKey)}>
-        <span className="inline-flex items-center gap-1">
-          {label}
-          {active ? (sortDir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronUp size={12} className="opacity-20" />}
-        </span>
-      </th>
-    );
-  }
-
-  const rows = flat
-    .filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter)
-    .filter(({ order, container }) => {
-      const cust = getCustomer(data, order.customerId);
-      const text = `${order.orderNumber} ${order.jobNumber || ""} ${cust ? (cust.shortName || cust.name) : ""} ${container.containerNumber || ""}`.toLowerCase();
-      return !q || text.includes(q.toLowerCase());
-    })
-    .sort((a, b) => {
-      const va = sortValue(a, sortKey);
-      const vb = sortValue(b, sortKey);
-      let cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
-      if (sortDir === "desc") cmp = -cmp;
-      return cmp;
-    });
-
   return (
     <div className="space-y-5">
       <div>
@@ -5124,7 +5146,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
       <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
-      {rows.length === 0 ? (
+      {displayRows.length === 0 ? (
         <EmptyState icon={Receipt} text="No containers found." />
       ) : (
         <div className={tableWrap}>
@@ -5145,7 +5167,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ order: o, container: c }) => {
+              {displayRows.map(({ order: o, container: c }) => {
                 const cust = getCustomer(data, o.customerId);
                 const shipType = o.shipmentType || "Import";
                 return (
