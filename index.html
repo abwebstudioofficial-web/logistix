@@ -5008,6 +5008,29 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
+// Sortable table header cell. Defined at module scope (not inside TransporterBillsView) so
+// React treats it as the same component across renders — defining a component inside another
+// component's body creates a brand-new function identity every render, which forces React to
+// unmount/remount the whole subtree each time instead of just updating it, causing layout
+// jank under rapid clicks.
+function SortTh({ colKey, label, sortKey, sortDir, onSort }) {
+  const active = sortKey === colKey;
+  return (
+    <th className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")} onClick={() => onSort(colKey)}>
+      <span className="inline-flex items-center gap-1.5">
+        {label}
+        {active ? (
+          sortDir === "asc"
+            ? <ChevronUp size={16} className="text-blue-400 stroke-[3]" />
+            : <ChevronDown size={16} className="text-blue-400 stroke-[3]" />
+        ) : (
+          <ChevronUp size={16} className="text-slate-600 stroke-[3]" />
+        )}
+      </span>
+    </th>
+  );
+}
+
 function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [pickerQ, setPickerQ] = useState("");
   const [q, setQ] = useState("");
@@ -5058,23 +5081,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   function toggleSort(key) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
-  }
-  function SortTh({ colKey, label }) {
-    const active = sortKey === colKey;
-    return (
-      <th className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")} onClick={() => toggleSort(colKey)}>
-        <span className="inline-flex items-center gap-1.5">
-          {label}
-          {active ? (
-            sortDir === "asc"
-              ? <ChevronUp size={16} className="text-blue-400 stroke-[3]" />
-              : <ChevronDown size={16} className="text-blue-400 stroke-[3]" />
-          ) : (
-            <ChevronUp size={16} className="text-slate-600 stroke-[3]" />
-          )}
-        </span>
-      </th>
-    );
   }
 
   // selectedTransporter is null on the picker screen, so this naturally resolves to an
@@ -5153,17 +5159,17 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                {isColVisible("transporterBills", "type") && <SortTh colKey="type" label="Type" />}
-                {isColVisible("transporterBills", "jobNo") && <SortTh colKey="jobNo" label="Job No." />}
-                {isColVisible("transporterBills", "customer") && <SortTh colKey="customer" label="Customer" />}
-                {isColVisible("transporterBills", "loadingPoint") && <SortTh colKey="loadingPoint" label="Loading Point" />}
-                {isColVisible("transporterBills", "destination") && <SortTh colKey="destination" label="Destination" />}
-                {isColVisible("transporterBills", "containerNo") && <SortTh colKey="containerNo" label="Container No." />}
-                {isColVisible("transporterBills", "vehicleNo") && <SortTh colKey="vehicleNo" label="Vehicle No." />}
-                {isColVisible("transporterBills", "loadingDate") && <SortTh colKey="loadingDate" label="Loading Date" />}
-                {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" />}
-                {isColVisible("transporterBills", "totalBillAmount") && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" />}
-                {isColVisible("transporterBills", "paidAmount") && <SortTh colKey="paidAmount" label="Paid Amount" />}
+                {isColVisible("transporterBills", "type") && <SortTh colKey="type" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "jobNo") && <SortTh colKey="jobNo" label="Job No." sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "customer") && <SortTh colKey="customer" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "loadingPoint") && <SortTh colKey="loadingPoint" label="Loading Point" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "destination") && <SortTh colKey="destination" label="Destination" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "containerNo") && <SortTh colKey="containerNo" label="Container No." sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "vehicleNo") && <SortTh colKey="vehicleNo" label="Vehicle No." sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "loadingDate") && <SortTh colKey="loadingDate" label="Loading Date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "totalBillAmount") && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "paidAmount") && <SortTh colKey="paidAmount" label="Paid Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
               </tr>
             </thead>
             <tbody>
