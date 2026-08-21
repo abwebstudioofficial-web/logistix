@@ -5065,6 +5065,42 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   }
 
   const CATEGORY_ORDER = { Domestic: 0, Import: 1, Export: 2 };
+  const [sortKey, setSortKey] = useState("type");
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+
+  function sortValue(row, key) {
+    const { order: o, container: c } = row;
+    switch (key) {
+      case "type": return CATEGORY_ORDER[o.shipmentType] ?? 3;
+      case "jobNo": return (o.jobNumber || "").toLowerCase();
+      case "customer": return ((getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "").toLowerCase();
+      case "loadingPoint": return (o.origin || "").toLowerCase();
+      case "destination": return (c.destination || o.destination || "").toLowerCase();
+      case "containerNo": return (c.containerNumber || "").toLowerCase();
+      case "vehicleNo": return (c.vehiclePlate || "").toLowerCase();
+      case "loadingDate": return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
+      case "freightAmount": return Number(c.freightAmount) || 0;
+      case "totalBillAmount": return containerTotalBillAmount(c);
+      case "paidAmount": return Number(c.billPaidAmount) || 0;
+      default: return 0;
+    }
+  }
+  function toggleSort(key) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+  function SortTh({ colKey, label }) {
+    const active = sortKey === colKey;
+    return (
+      <th className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")} onClick={() => toggleSort(colKey)}>
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {active ? (sortDir === "asc" ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronUp size={12} className="opacity-20" />}
+        </span>
+      </th>
+    );
+  }
+
   const rows = flat
     .filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter)
     .filter(({ order, container }) => {
@@ -5073,9 +5109,11 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
       return !q || text.includes(q.toLowerCase());
     })
     .sort((a, b) => {
-      const catA = CATEGORY_ORDER[a.order.shipmentType] ?? 3;
-      const catB = CATEGORY_ORDER[b.order.shipmentType] ?? 3;
-      return catA - catB;
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
+      let cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+      if (sortDir === "desc") cmp = -cmp;
+      return cmp;
     });
 
   return (
@@ -5093,17 +5131,17 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
-                {isColVisible("transporterBills", "type") && <th className={thCls}>Type</th>}
-                {isColVisible("transporterBills", "jobNo") && <th className={thCls}>Job No.</th>}
-                {isColVisible("transporterBills", "customer") && <th className={thCls}>Customer</th>}
-                {isColVisible("transporterBills", "loadingPoint") && <th className={thCls}>Loading Point</th>}
-                {isColVisible("transporterBills", "destination") && <th className={thCls}>Destination</th>}
-                {isColVisible("transporterBills", "containerNo") && <th className={thCls}>Container No.</th>}
-                {isColVisible("transporterBills", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
-                {isColVisible("transporterBills", "loadingDate") && <th className={thCls}>Loading Date</th>}
-                {isColVisible("transporterBills", "freightAmount") && <th className={thCls}>Freight Amount</th>}
-                {isColVisible("transporterBills", "totalBillAmount") && <th className={thCls}>Total Bill Amount Approved</th>}
-                {isColVisible("transporterBills", "paidAmount") && <th className={thCls}>Paid Amount</th>}
+                {isColVisible("transporterBills", "type") && <SortTh colKey="type" label="Type" />}
+                {isColVisible("transporterBills", "jobNo") && <SortTh colKey="jobNo" label="Job No." />}
+                {isColVisible("transporterBills", "customer") && <SortTh colKey="customer" label="Customer" />}
+                {isColVisible("transporterBills", "loadingPoint") && <SortTh colKey="loadingPoint" label="Loading Point" />}
+                {isColVisible("transporterBills", "destination") && <SortTh colKey="destination" label="Destination" />}
+                {isColVisible("transporterBills", "containerNo") && <SortTh colKey="containerNo" label="Container No." />}
+                {isColVisible("transporterBills", "vehicleNo") && <SortTh colKey="vehicleNo" label="Vehicle No." />}
+                {isColVisible("transporterBills", "loadingDate") && <SortTh colKey="loadingDate" label="Loading Date" />}
+                {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" />}
+                {isColVisible("transporterBills", "totalBillAmount") && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" />}
+                {isColVisible("transporterBills", "paidAmount") && <SortTh colKey="paidAmount" label="Paid Amount" />}
               </tr>
             </thead>
             <tbody>
