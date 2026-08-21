@@ -8651,11 +8651,13 @@ function LogistixERP() {
   // Live updates: quietly re-fetch in the background so changes made by other people show
   // up without anyone needing to reload the page. Skipped while a modal is open (someone's
   // likely mid-edit right then) and while a previous refresh is still in flight, so it
-  // never piles up requests or clobbers an in-progress form. 30s rather than 15s - halves
-  // how often the fetch + comparison work happens, which matters more now that the dataset
-  // has grown into the hundreds of orders (the comparison itself has a real cost).
+  // never piles up requests or clobbers an in-progress form.
   const modalRef = useRef(null);
   const refreshingRef = useRef(false);
+  // Signature (row count + latest updated_at) per table from the last successful refresh.
+  // Empty on mount, which is how refreshData() below knows to do a real full fetch the first
+  // time rather than trying the lightweight pre-check against nothing.
+  const lastSignatureRef = useRef({});
   useEffect(() => { modalRef.current = modal; }, [modal]);
   useEffect(() => {
     if (!authSession) return;
@@ -8707,16 +8709,48 @@ function LogistixERP() {
     return { data: all, error: null };
   }
 
+  // Cheap "has this table changed?" probe: just the row count plus the single most-recently-
+  // touched row's updated_at, instead of every column of every row. A few hundred bytes
+  // instead of megabytes. Catches inserts, edits, and deletes (all three move the count and/or
+  // the latest updated_at), and is what makes the 30s poll affordable at this dataset size -
+  // previously every poll re-downloaded every table in full regardless of whether anything had
+  // actually changed, which is what was driving egress usage into gigabytes per day.
+  async function fetchTableSignature(table) {
+    const { data, count, error } = await supabaseClient
+      .from(table)
+      .select("updated_at", { count: "exact" })
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (error) return null; // unknown - caller treats this as "assume changed, fetch for real"
+    const latest = (data && data[0] && data[0].updated_at) || "";
+    return `${count}:${latest}`;
+  }
+
   async function refreshData() {
-    const results = await Promise.all(DATA_TABLES.map((t) => fetchAllRows(t)));
+    const isInitialLoad = Object.keys(lastSignatureRef.current).length === 0;
+    let tablesToFetch = DATA_TABLES;
+    if (!isInitialLoad) {
+      const signatures = await Promise.all(DATA_TABLES.map((t) => fetchTableSignature(t)));
+      tablesToFetch = DATA_TABLES.filter((t, i) => signatures[i] === null || signatures[i] !== lastSignatureRef.current[t]);
+      if (tablesToFetch.length === 0) return; // nothing changed anywhere this poll - skip entirely
+    }
+
+    const results = await Promise.all(tablesToFetch.map((t) => fetchAllRows(t)));
+    tablesToFetch.forEach((t, i) => {
+      const { data: rows } = results[i];
+      if (!rows) return; // failed fetch - leave last known signature as-is so it's retried next poll
+      const latest = rows.reduce((max, r) => (r.updated_at && r.updated_at > max ? r.updated_at : max), "");
+      lastSignatureRef.current[t] = `${rows.length}:${latest}`;
+    });
+
     setDataState((prev) => {
       // prev is null on the very first load (before any data has ever been set) - refreshData
-      // is reused both for that initial load and the 15-second background poll, but only the
+      // is reused both for that initial load and the 30-second background poll, but only the
       // poll case can assume prev already has real data to compare against.
       const base = prev || {};
       const next = { ...base };
       let anyTableChanged = !prev;
-      DATA_TABLES.forEach((t, i) => {
+      tablesToFetch.forEach((t, i) => {
         const { data: rows, error } = results[i];
         if (error) {
           // Never let a failed background fetch wipe out data that's already on screen —
@@ -8726,8 +8760,8 @@ function LogistixERP() {
         }
         const fetched = (rows || []).map(fromDbRow);
         // Cheap-ish but reliable: only swap in the new array (a new reference, which is what
-        // actually triggers re-renders) if the data is genuinely different. Every 15s poll
-        // was previously replacing every table's reference unconditionally, forcing the whole
+        // actually triggers re-renders) if the data is genuinely different. Every poll was
+        // previously replacing every table's reference unconditionally, forcing the whole
         // app to re-render even when nothing in the database had actually changed.
         if (!prev || JSON.stringify(fetched) !== JSON.stringify(base[t])) {
           next[t] = fetched;
