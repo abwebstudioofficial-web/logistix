@@ -5019,13 +5019,10 @@ function SortTh({ colKey, label, sortKey, sortDir, onSort }) {
     <th className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")} onClick={() => onSort(colKey)}>
       <span className="inline-flex items-center gap-1.5">
         {label}
-        {active ? (
-          sortDir === "asc"
-            ? <ChevronUp size={16} className="text-blue-400 stroke-[3]" />
-            : <ChevronDown size={16} className="text-blue-400 stroke-[3]" />
-        ) : (
-          <ChevronUp size={16} className="text-slate-600 stroke-[3]" />
-        )}
+        <span className="inline-flex flex-col -space-y-1.5 shrink-0">
+          <ChevronUp size={13} className={cx("stroke-[3]", active && sortDir === "asc" ? "text-blue-400" : "text-slate-600")} />
+          <ChevronDown size={13} className={cx("stroke-[3]", active && sortDir === "desc" ? "text-blue-400" : "text-slate-600")} />
+        </span>
       </span>
     </th>
   );
