@@ -583,13 +583,17 @@ const COLUMN_REGISTRY = {
   transporterBills: {
     label: "Transporter Bills",
     columns: [
+      { key: "type", label: "Type" },
       { key: "jobNo", label: "Job No." },
       { key: "customer", label: "Customer" },
-      { key: "transporterName", label: "Transporter Name" },
+      { key: "loadingPoint", label: "Loading Point" },
+      { key: "destination", label: "Destination" },
       { key: "containerNo", label: "Container No." },
       { key: "vehicleNo", label: "Vehicle No." },
+      { key: "loadingDate", label: "Loading Date" },
       { key: "freightAmount", label: "Freight Amount" },
       { key: "totalBillAmount", label: "Total Bill Amount Approved" },
+      { key: "paidAmount", label: "Paid Amount" },
     ],
   },
   orderHistory: {
@@ -823,6 +827,11 @@ const vehicleStatusColor = {
   maintenance: "bg-amber-950 text-amber-400 border-amber-800",
   idle: "bg-slate-800 text-slate-400 border-slate-700",
 };
+const shipmentTypeColor = {
+  Import: "bg-blue-950 text-blue-400 border-blue-800",
+  Export: "bg-violet-950 text-violet-400 border-violet-800",
+  Domestic: "bg-amber-950 text-amber-400 border-amber-800",
+};
 const driverStatusColor = {
   Available: "bg-emerald-950 text-emerald-400 border-emerald-800",
   "On Duty": "bg-blue-950 text-blue-400 border-blue-800",
@@ -997,7 +1006,7 @@ function AttachmentPreview({ dataUrl, alt, downloadName }) {
 
 const FIELD_LABELS = {
   driverName: "Driver", vehiclePlate: "Vehicle No.", transporter: "Transporter", freightAmount: "Freight Amount", fuelAmount: "Fuel Amount",
-  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved",
+  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount",
   charges: "Charges", containerType: "Container Type", containerSize: "Container Size", qtyLabel: "Qty",
   emptyReturnLocation: "Empty Return Location", emptyReturnDate: "Empty Return Date", emptyReturnTime: "Empty Return Time",
   emptyReturnDescription: "Empty Return Notes", amount: "Amount", weight: "Weight", priority: "Priority", destination: "Destination", shifting: "Shifting",
@@ -1034,7 +1043,7 @@ function emptyContainer() {
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
     podPhoto: "", podNotes: "", podArrivalAt: "", podOffloadingAt: "", podReceivedBy: "",
-    transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", charges: [],
+    transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", charges: [],
     // Domestic Finished Goods / Wrapping Materials fields
     poSapNo: "", movementThrough: "", loadingDate: "", vehicleSize: "", supplier: "",
     history: [{ id: uid("evt"), message: "Container created and pending confirmation", at: new Date().toISOString(), location: "" }],
@@ -4985,6 +4994,14 @@ function TransportersView({ data, openModal, askDelete }) {
 
 /* ==================== Transporter Bills (Transporter Bill Checker role) ==================== */
 
+// Domestic containers track their own "Loading Date"; Import/Export containers don't have that
+// field, so their dispatch date/time doubles as the loading date for this table.
+function containerLoadingDate(c) {
+  if (c.loadingDate) return fmtDate(c.loadingDate);
+  if (c.dispatchAt) return fmtDate(toLocalDateStr(new Date(c.dispatchAt)));
+  return "—";
+}
+
 function containerTotalBillAmount(c) {
   const freight = Number(c.freightAmount) || 0;
   const chargesTotal = (Array.isArray(c.charges) ? c.charges : []).reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0);
@@ -5047,12 +5064,18 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
     );
   }
 
+  const CATEGORY_ORDER = { Domestic: 0, Import: 1, Export: 2 };
   const rows = flat
     .filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter)
     .filter(({ order, container }) => {
       const cust = getCustomer(data, order.customerId);
       const text = `${order.orderNumber} ${order.jobNumber || ""} ${cust ? (cust.shortName || cust.name) : ""} ${container.containerNumber || ""}`.toLowerCase();
       return !q || text.includes(q.toLowerCase());
+    })
+    .sort((a, b) => {
+      const catA = CATEGORY_ORDER[a.order.shipmentType] ?? 3;
+      const catB = CATEGORY_ORDER[b.order.shipmentType] ?? 3;
+      return catA - catB;
     });
 
   return (
@@ -5070,25 +5093,35 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
+                {isColVisible("transporterBills", "type") && <th className={thCls}>Type</th>}
                 {isColVisible("transporterBills", "jobNo") && <th className={thCls}>Job No.</th>}
                 {isColVisible("transporterBills", "customer") && <th className={thCls}>Customer</th>}
-                {isColVisible("transporterBills", "transporterName") && <th className={thCls}>Transporter Name</th>}
+                {isColVisible("transporterBills", "loadingPoint") && <th className={thCls}>Loading Point</th>}
+                {isColVisible("transporterBills", "destination") && <th className={thCls}>Destination</th>}
                 {isColVisible("transporterBills", "containerNo") && <th className={thCls}>Container No.</th>}
                 {isColVisible("transporterBills", "vehicleNo") && <th className={thCls}>Vehicle No.</th>}
+                {isColVisible("transporterBills", "loadingDate") && <th className={thCls}>Loading Date</th>}
                 {isColVisible("transporterBills", "freightAmount") && <th className={thCls}>Freight Amount</th>}
                 {isColVisible("transporterBills", "totalBillAmount") && <th className={thCls}>Total Bill Amount Approved</th>}
+                {isColVisible("transporterBills", "paidAmount") && <th className={thCls}>Paid Amount</th>}
               </tr>
             </thead>
             <tbody>
               {rows.map(({ order: o, container: c }) => {
                 const cust = getCustomer(data, o.customerId);
+                const shipType = o.shipmentType || "Import";
                 return (
                   <tr key={c.id} className={trCls}>
+                    {isColVisible("transporterBills", "type") && (
+                      <td className={tdCls}><Badge text={shipType} className={shipmentTypeColor[shipType] || priorityColor.Normal} /></td>
+                    )}
                     {isColVisible("transporterBills", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>}
                     {isColVisible("transporterBills", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>}
-                    {isColVisible("transporterBills", "transporterName") && <td className={tdCls}>{c.transporter || "—"}</td>}
+                    {isColVisible("transporterBills", "loadingPoint") && <td className={tdCls}>{o.origin || "—"}</td>}
+                    {isColVisible("transporterBills", "destination") && <td className={tdCls}>{c.destination || o.destination || "—"}</td>}
                     {isColVisible("transporterBills", "containerNo") && <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>}
                     {isColVisible("transporterBills", "vehicleNo") && <td className={tdCls}>{c.vehiclePlate || "—"}</td>}
+                    {isColVisible("transporterBills", "loadingDate") && <td className={tdCls}>{containerLoadingDate(c)}</td>}
                     {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
                     {isColVisible("transporterBills", "totalBillAmount") && (
                       <td className={tdCls}>
@@ -5098,6 +5131,17 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                           className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
                         >
                           {formatPKR(containerTotalBillAmount(c))}
+                        </button>
+                      </td>
+                    )}
+                    {isColVisible("transporterBills", "paidAmount") && (
+                      <td className={tdCls}>
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ order: o, container: c })}
+                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
+                        >
+                          {c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}
                         </button>
                       </td>
                     )}
@@ -5123,6 +5167,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
 function TransporterBillModal({ order, container, updateContainerFields, onClose }) {
   const [billDate, setBillDate] = useState(container.transporterBillDate || "");
   const [billNo, setBillNo] = useState(container.transporterBillNo || "");
+  const [paidAmount, setPaidAmount] = useState(container.billPaidAmount || "");
   const [charges, setCharges] = useState(Array.isArray(container.charges) ? container.charges : []);
   const total = containerTotalBillAmount({ ...container, charges });
 
@@ -5132,6 +5177,7 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
       transporterBillDate: billDate,
       transporterBillNo: billNo,
       billAmountApproved: containerTotalBillAmount({ ...container, charges: chargesToUse }),
+      billPaidAmount: paidAmount,
       charges: chargesToUse,
     });
   }
@@ -5166,6 +5212,10 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
         </div>
       </div>
       <ChargesEditor charges={charges} onChange={commitCharges} />
+      <div className="mt-3">
+        <label className="text-slate-500 text-xs block mb-1">Paid Amount</label>
+        <input type="number" min="0" className={inputCls} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} onBlur={() => commitAll()} placeholder="0" />
+      </div>
       <div className="flex justify-end mt-4">
         <button type="button" onClick={onClose} className={btnPrimary}>Done</button>
       </div>
