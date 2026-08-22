@@ -1021,7 +1021,7 @@ function AttachmentPreview({ dataUrl, alt, downloadName }) {
 
 const FIELD_LABELS = {
   driverName: "Driver", vehiclePlate: "Vehicle No.", transporter: "Transporter", freightAmount: "Freight Amount", fuelAmount: "Fuel Amount",
-  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received",
+  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received", billApproved: "Approved",
   charges: "Charges", containerType: "Container Type", containerSize: "Container Size", qtyLabel: "Qty",
   emptyReturnLocation: "Empty Return Location", emptyReturnDate: "Empty Return Date", emptyReturnTime: "Empty Return Time",
   emptyReturnDescription: "Empty Return Notes", amount: "Amount", weight: "Weight", priority: "Priority", destination: "Destination", shifting: "Shifting",
@@ -1058,7 +1058,7 @@ function emptyContainer() {
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
     podPhoto: "", podNotes: "", podArrivalAt: "", podOffloadingAt: "", podReceivedBy: "",
-    billReceived: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", charges: [],
+    billReceived: false, billApproved: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", charges: [],
     // Domestic Finished Goods / Wrapping Materials fields
     poSapNo: "", movementThrough: "", loadingDate: "", vehicleSize: "", supplier: "",
     history: [{ id: uid("evt"), message: "Container created and pending confirmation", at: new Date().toISOString(), location: "" }],
@@ -5110,16 +5110,18 @@ const billStageTextColor = {
   Posted: "text-violet-400",
   Paid: "text-emerald-400",
 };
-// A bill's stage is driven by one manual flag (billReceived, set by a one-click button - no
-// form) plus what's actually been entered through the Post and Paid forms. Approved: charges
-// tallied into a total (via Post), but nothing paid yet. Posted: partially paid. Paid: paid in
-// full (or over - Paid Amount is a manual entry, so it can exceed the approved total).
+// A bill's stage is driven by two manual flags — billReceived and billApproved, each set by a
+// one-click button with no form — plus what's actually been entered through the Post and Paid
+// forms. Bill Received: submitted, not yet cleared to process. Approved: cleared to process,
+// but charges haven't been posted into a total yet. Posted: charges posted (via the Post form),
+// not yet paid in full. Paid: paid in full (or over — Paid Amount is a manual entry, so it can
+// exceed the approved total).
 function billStage(c) {
   if (!c.billReceived) return "Pending";
+  if (!c.billApproved) return "Bill Received";
   const total = containerTotalBillAmount(c);
-  if (total <= 0) return "Bill Received";
+  if (total <= 0) return "Approved";
   const paid = Number(c.billPaidAmount) || 0;
-  if (paid <= 0) return "Approved";
   if (paid < total) return "Posted";
   return "Paid";
 }
@@ -5352,24 +5354,24 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                             );
                           }
                           if (stage === "Bill Received") {
+                            // One click, no form - just clears the bill to move on to posting charges.
+                            return (
+                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
+                                Approve
+                              </button>
+                            );
+                          }
+                          if (stage === "Approved") {
                             return (
                               <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
                                 Post
                               </button>
                             );
                           }
-                          if (stage === "Approved") {
+                          if (stage === "Posted") {
                             return (
                               <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "paid" })} className={btnPrimary}>
                                 Mark Paid
-                              </button>
-                            );
-                          }
-                          if (stage === "Posted") {
-                            // Already partially paid - same form, just framed as updating rather than starting.
-                            return (
-                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "paid" })} className={btnPrimary}>
-                                Update Payment
                               </button>
                             );
                           }
@@ -5418,7 +5420,7 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
   function commitAll(nextCharges) {
     const chargesToUse = nextCharges !== undefined ? nextCharges : charges;
     updateContainerFields(order.id, container.id, {
-      billReceived: true, // opening this form at all means the bill has been received
+      billReceived: true, billApproved: true, // opening this form at all means both prior gates are cleared
       transporterBillDate: billDate,
       transporterBillNo: billNo,
       billAmountApproved: containerTotalBillAmount({ ...container, charges: chargesToUse }),
