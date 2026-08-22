@@ -670,6 +670,26 @@ const AXLE_LOAD_CATEGORIES = ["1x", "2x", "3x", "4x", "6x"];
 
 const CHARGE_TYPES = ["LOLO Charges", "Halting/Stay Charges", "Other Charges"];
 
+// A charge amount's own local draft, so typing feels instant and only commits (triggering an
+// actual save) on blur — matching Bill Date/Bill No. elsewhere in this modal. Previously the
+// amount input called onChange on every keystroke, meaning typing "5000" fired four separate
+// full-container saves to Supabase in rapid succession; those requests can resolve out of
+// order over the network, so whichever one happened to land last silently won - which is
+// exactly how "5000" could end up saved as just "5", and why the bill's stage (computed live
+// from whatever was in the database at that moment) could visibly jump ahead mid-keystroke,
+// before the person had even finished typing or clicked Done.
+function ChargeAmountInput({ amount, onCommit }) {
+  const [draft, setDraft] = useState(amount);
+  useEffect(() => { setDraft(amount); }, [amount]);
+  return (
+    <input
+      type="number" min="0" className={inputCls} style={{ width: 120 }}
+      value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={() => onCommit(draft)}
+      placeholder="Amount (PKR)"
+    />
+  );
+}
+
 function ChargesEditor({ charges, onChange }) {
   const [adding, setAdding] = useState(false);
   const [pickType, setPickType] = useState("");
@@ -688,7 +708,7 @@ function ChargesEditor({ charges, onChange }) {
   function removeCharge(id) {
     onChange(list.filter((c) => c.id !== id));
   }
-  function setChargeAmount(id, amount) {
+  function commitChargeAmount(id, amount) {
     onChange(list.map((c) => (c.id === id ? { ...c, amount } : c)));
   }
 
@@ -715,7 +735,7 @@ function ChargesEditor({ charges, onChange }) {
         {list.map((c) => (
           <div key={c.id} className="flex items-center gap-2 bg-slate-900/50 border border-slate-800 rounded-lg p-2">
             <span className="text-slate-300 text-xs flex-1">{c.type}</span>
-            <input type="number" min="0" className={inputCls} style={{ width: 120 }} value={c.amount} onChange={(e) => setChargeAmount(c.id, e.target.value)} placeholder="Amount (PKR)" />
+            <ChargeAmountInput amount={c.amount} onCommit={(amount) => commitChargeAmount(c.id, amount)} />
             <button type="button" onClick={() => removeCharge(c.id)} className="text-slate-500 hover:text-red-400 p-1 shrink-0"><Trash2 size={14} /></button>
           </div>
         ))}
