@@ -5093,11 +5093,11 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
-const BILL_STAGES = ["Pending", "Bill Received", "Approved", "Posted", "Paid"];
+const BILL_STAGES = ["Pending", "Bill Received", "Pending Approval", "Posted", "Paid"];
 const billStageColor = {
   Pending: "bg-slate-800 text-slate-400 border-slate-700",
   "Bill Received": "bg-blue-950 text-blue-400 border-blue-800",
-  Approved: "bg-amber-950 text-amber-400 border-amber-800",
+  "Pending Approval": "bg-amber-950 text-amber-400 border-amber-800",
   Posted: "bg-violet-950 text-violet-400 border-violet-800",
   Paid: "bg-emerald-950 text-emerald-400 border-emerald-800",
 };
@@ -5106,21 +5106,21 @@ const billStageColor = {
 const billStageTextColor = {
   Pending: "text-slate-400",
   "Bill Received": "text-blue-400",
-  Approved: "text-amber-400",
+  "Pending Approval": "text-amber-400",
   Posted: "text-violet-400",
   Paid: "text-emerald-400",
 };
 // A bill's stage is driven by two manual flags — billReceived and billApproved, each set by a
 // one-click button with no form — plus what's actually been entered through the Post and Paid
-// forms. Bill Received: submitted, not yet cleared to process. Approved: cleared to process,
-// but charges haven't been posted into a total yet. Posted: charges posted (via the Post form),
-// not yet paid in full. Paid: paid in full (or over — Paid Amount is a manual entry, so it can
-// exceed the approved total).
+// forms. Bill Received: submitted, not yet forwarded for approval. Pending Approval: forwarded,
+// cleared to process, but charges haven't been posted into a total yet. Posted: charges posted
+// (via the Post form), not yet paid in full. Paid: paid in full (or over — Paid Amount is a
+// manual entry, so it can exceed the approved total).
 function billStage(c) {
   if (!c.billReceived) return "Pending";
   if (!c.billApproved) return "Bill Received";
   const total = containerTotalBillAmount(c);
-  if (total <= 0) return "Approved";
+  if (total <= 0) return "Pending Approval";
   const paid = Number(c.billPaidAmount) || 0;
   if (paid < total) return "Posted";
   return "Paid";
@@ -5221,6 +5221,10 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   searchedRows.forEach(({ container: c }) => { stageCounts[billStage(c)] += 1; });
 
   const filteredRows = searchedRows.filter(({ container: c }) => stageTab === "All" || billStage(c) === stageTab);
+  // Total Bill Amount is meaningless before charges are posted (always Rs 0 for Pending/Bill
+  // Received/Approved), so it's only worth showing once you're actually looking at Posted or
+  // Paid bills — or the unfiltered "All" view, where some rows will have it and some won't.
+  const showTotalBillAmount = isColVisible("transporterBills", "totalBillAmount") && !["Pending", "Bill Received", "Pending Approval"].includes(stageTab);
   const sortedRows = [...filteredRows].sort(compareRows);
 
   // While a bill's edit modal is open, pin the row order as it was the moment you opened it —
@@ -5306,7 +5310,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                 {isColVisible("transporterBills", "vehicleNo") && <SortTh colKey="vehicleNo" label="Vehicle No." sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "loadingDate") && <SortTh colKey="loadingDate" label="Loading Date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-                {isColVisible("transporterBills", "totalBillAmount") && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {showTotalBillAmount && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "action") && <th className={thCls}>Action</th>}
               </tr>
             </thead>
@@ -5330,7 +5334,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                     {isColVisible("transporterBills", "vehicleNo") && <td className={tdCls}>{c.vehiclePlate || "—"}</td>}
                     {isColVisible("transporterBills", "loadingDate") && <td className={tdCls}>{containerLoadingDate(c)}</td>}
                     {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
-                    {isColVisible("transporterBills", "totalBillAmount") && (
+                    {showTotalBillAmount && (
                       <td className={tdCls}>
                         <button
                           type="button"
@@ -5357,11 +5361,11 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                             // One click, no form - just clears the bill to move on to posting charges.
                             return (
                               <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
-                                Approve
+                                Forward for Approval
                               </button>
                             );
                           }
-                          if (stage === "Approved") {
+                          if (stage === "Pending Approval") {
                             return (
                               <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
                                 Post
