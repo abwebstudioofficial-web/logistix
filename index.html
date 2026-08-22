@@ -594,7 +594,7 @@ const COLUMN_REGISTRY = {
       { key: "loadingDate", label: "Loading Date" },
       { key: "freightAmount", label: "Freight Amount" },
       { key: "totalBillAmount", label: "Total Bill Amount Approved" },
-      { key: "paidAmount", label: "Paid Amount" },
+      { key: "action", label: "Action" },
     ],
   },
   orderHistory: {
@@ -1001,7 +1001,7 @@ function AttachmentPreview({ dataUrl, alt, downloadName }) {
 
 const FIELD_LABELS = {
   driverName: "Driver", vehiclePlate: "Vehicle No.", transporter: "Transporter", freightAmount: "Freight Amount", fuelAmount: "Fuel Amount",
-  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount",
+  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received",
   charges: "Charges", containerType: "Container Type", containerSize: "Container Size", qtyLabel: "Qty",
   emptyReturnLocation: "Empty Return Location", emptyReturnDate: "Empty Return Date", emptyReturnTime: "Empty Return Time",
   emptyReturnDescription: "Empty Return Notes", amount: "Amount", weight: "Weight", priority: "Priority", destination: "Destination", shifting: "Shifting",
@@ -1038,7 +1038,7 @@ function emptyContainer() {
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
     podPhoto: "", podNotes: "", podArrivalAt: "", podOffloadingAt: "", podReceivedBy: "",
-    transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", charges: [],
+    billReceived: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", charges: [],
     // Domestic Finished Goods / Wrapping Materials fields
     poSapNo: "", movementThrough: "", loadingDate: "", vehicleSize: "", supplier: "",
     history: [{ id: uid("evt"), message: "Container created and pending confirmation", at: new Date().toISOString(), location: "" }],
@@ -5073,11 +5073,10 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
-const BILL_STAGES = ["Pending", "Bill Received", "Approved", "Posted", "Paid"];
+const BILL_STAGES = ["Pending", "Bill Received", "Posted", "Paid"];
 const billStageColor = {
   Pending: "bg-slate-800 text-slate-400 border-slate-700",
   "Bill Received": "bg-blue-950 text-blue-400 border-blue-800",
-  Approved: "bg-amber-950 text-amber-400 border-amber-800",
   Posted: "bg-violet-950 text-violet-400 border-violet-800",
   Paid: "bg-emerald-950 text-emerald-400 border-emerald-800",
 };
@@ -5086,22 +5085,19 @@ const billStageColor = {
 const billStageTextColor = {
   Pending: "text-slate-400",
   "Bill Received": "text-blue-400",
-  Approved: "text-amber-400",
   Posted: "text-violet-400",
   Paid: "text-emerald-400",
 };
-// A bill's stage is derived entirely from data already on the container — no separate status
-// field to keep in sync. Pending: transporter hasn't submitted a bill yet. Bill Received: bill
-// number/date recorded but nobody's tallied freight+charges into an approved total yet.
-// Approved: total is set but nothing's been paid. Posted: partially paid. Paid: paid in full
-// (or over — Paid Amount is a manual entry, so it can exceed the approved total).
+// A bill's stage is driven by one manual flag (billReceived, set by a one-click button - no
+// form) plus two things that only get set through their own dedicated forms: Posted needs the
+// charges/total tallied (the Post form), Paid needs an actual paid amount logged (its own short
+// form). Nothing here infers a stage from data alone anymore - every step forward is an
+// explicit action, which is what actually opens the relevant form for that step.
 function billStage(c) {
-  const hasBillInfo = !!(c.transporterBillNo || c.transporterBillDate);
-  if (!hasBillInfo) return "Pending";
+  if (!c.billReceived) return "Pending";
   const total = containerTotalBillAmount(c);
   if (total <= 0) return "Bill Received";
   const paid = Number(c.billPaidAmount) || 0;
-  if (paid <= 0) return "Approved";
   if (paid < total) return "Posted";
   return "Paid";
 }
@@ -5129,7 +5125,7 @@ function SortTh({ colKey, label, sortKey, sortDir, onSort }) {
 function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [pickerQ, setPickerQ] = useState("");
   const [q, setQ] = useState("");
-  const [editing, setEditing] = useState(null); // { order, container }
+  const [editing, setEditing] = useState(null); // { order, container, modal: "post" | "paid" }
   const [selectedTransporter, setSelectedTransporter] = useState(null);
   const [stageTab, setStageTab] = useState("All");
   const [sortKey, setSortKey] = useState("type");
@@ -5170,7 +5166,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
       case "loadingDate": return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
       case "freightAmount": return Number(c.freightAmount) || 0;
       case "totalBillAmount": return containerTotalBillAmount(c);
-      case "paidAmount": return Number(c.billPaidAmount) || 0;
       default: return 0;
     }
   }
@@ -5254,7 +5249,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {BILL_STAGES.map((s) => (
           <MiniStat
             key={s}
@@ -5288,7 +5283,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                 {isColVisible("transporterBills", "loadingDate") && <SortTh colKey="loadingDate" label="Loading Date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "totalBillAmount") && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-                {isColVisible("transporterBills", "paidAmount") && <SortTh colKey="paidAmount" label="Paid Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "action") && <th className={thCls}>Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -5315,22 +5310,46 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                       <td className={tdCls}>
                         <button
                           type="button"
-                          onClick={() => setEditing({ order: o, container: c })}
+                          onClick={() => setEditing({ order: o, container: c, modal: "post" })}
                           className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
                         >
                           {formatPKR(containerTotalBillAmount(c))}
                         </button>
                       </td>
                     )}
-                    {isColVisible("transporterBills", "paidAmount") && (
+                    {isColVisible("transporterBills", "action") && (
                       <td className={tdCls}>
-                        <button
-                          type="button"
-                          onClick={() => setEditing({ order: o, container: c })}
-                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
-                        >
-                          {c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}
-                        </button>
+                        {(() => {
+                          const stage = billStage(c);
+                          if (stage === "Pending") {
+                            // One click, no form - just flags the bill as received.
+                            return (
+                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billReceived: true })} className={btnSecondary}>
+                                Mark Bill Received
+                              </button>
+                            );
+                          }
+                          if (stage === "Bill Received") {
+                            return (
+                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
+                                Post
+                              </button>
+                            );
+                          }
+                          if (stage === "Posted") {
+                            return (
+                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "paid" })} className={btnPrimary}>
+                                Mark Paid
+                              </button>
+                            );
+                          }
+                          // Paid - nothing left to advance, but still editable in case a correction is needed.
+                          return (
+                            <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "paid" })} className="text-slate-500 hover:text-slate-300 text-xs underline decoration-dotted underline-offset-4">
+                              Edit paid amount
+                            </button>
+                          );
+                        })()}
                       </td>
                     )}
                   </tr>
@@ -5340,8 +5359,16 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
           </table>
         </div>
       )}
-      {editing && (
+      {editing && editing.modal === "post" && (
         <TransporterBillModal
+          order={editing.order}
+          container={editing.container}
+          updateContainerFields={updateContainerFields}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {editing && editing.modal === "paid" && (
+        <PaidAmountModal
           order={editing.order}
           container={editing.container}
           updateContainerFields={updateContainerFields}
@@ -5355,17 +5382,16 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
 function TransporterBillModal({ order, container, updateContainerFields, onClose }) {
   const [billDate, setBillDate] = useState(container.transporterBillDate || "");
   const [billNo, setBillNo] = useState(container.transporterBillNo || "");
-  const [paidAmount, setPaidAmount] = useState(container.billPaidAmount || "");
   const [charges, setCharges] = useState(Array.isArray(container.charges) ? container.charges : []);
   const total = containerTotalBillAmount({ ...container, charges });
 
   function commitAll(nextCharges) {
     const chargesToUse = nextCharges !== undefined ? nextCharges : charges;
     updateContainerFields(order.id, container.id, {
+      billReceived: true, // opening this form at all means the bill has been received
       transporterBillDate: billDate,
       transporterBillNo: billNo,
       billAmountApproved: containerTotalBillAmount({ ...container, charges: chargesToUse }),
-      billPaidAmount: paidAmount,
       charges: chargesToUse,
     });
   }
@@ -5375,7 +5401,7 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
   }
 
   return (
-    <Modal title={`Transporter Bill — Container ${container.containerNumber || "—"}`} onClose={onClose}>
+    <Modal title={`Post Bill — Container ${container.containerNumber || "—"}`} onClose={onClose}>
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div>
           <label className="text-slate-500 text-xs block mb-1">Transporter Bill Date</label>
@@ -5400,12 +5426,39 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
         </div>
       </div>
       <ChargesEditor charges={charges} onChange={commitCharges} />
-      <div className="mt-3">
-        <label className="text-slate-500 text-xs block mb-1">Paid Amount</label>
-        <input type="number" min="0" className={inputCls} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} onBlur={() => commitAll()} placeholder="0" />
-      </div>
       <div className="flex justify-end mt-4">
         <button type="button" onClick={onClose} className={btnPrimary}>Done</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Dedicated Paid Amount form, separate from the charges/Post form above — kept as its own
+// short, single-purpose step so marking a bill paid doesn't require reopening the whole
+// charges breakdown just to log a payment.
+function PaidAmountModal({ order, container, updateContainerFields, onClose }) {
+  const total = containerTotalBillAmount(container);
+  const [paidAmount, setPaidAmount] = useState(container.billPaidAmount || total || "");
+
+  function save() {
+    updateContainerFields(order.id, container.id, { billPaidAmount: paidAmount });
+    onClose();
+  }
+
+  return (
+    <Modal title={`Mark Paid — Container ${container.containerNumber || "—"}`} onClose={onClose}>
+      <div className="mb-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3 flex items-center justify-between text-sm">
+        <span className="text-slate-400">Total Bill Amount Approved</span>
+        <span className="text-white font-semibold">{formatPKR(total)}</span>
+      </div>
+      <label className="text-slate-500 text-xs block mb-1">Paid Amount</label>
+      <input
+        type="number" min="0" autoFocus className={inputCls} value={paidAmount}
+        onChange={(e) => setPaidAmount(e.target.value)} placeholder="0"
+      />
+      <div className="flex justify-end gap-2 mt-4">
+        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
+        <button type="button" onClick={save} className={btnPrimary}>Save</button>
       </div>
     </Modal>
   );
