@@ -1021,7 +1021,7 @@ function AttachmentPreview({ dataUrl, alt, downloadName }) {
 
 const FIELD_LABELS = {
   driverName: "Driver", vehiclePlate: "Vehicle No.", transporter: "Transporter", freightAmount: "Freight Amount", fuelAmount: "Fuel Amount",
-  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received", billApproved: "Approved",
+  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received", billApproved: "Approved", billAttachment: "Bill Attachment",
   charges: "Charges", containerType: "Container Type", containerSize: "Container Size", qtyLabel: "Qty",
   emptyReturnLocation: "Empty Return Location", emptyReturnDate: "Empty Return Date", emptyReturnTime: "Empty Return Time",
   emptyReturnDescription: "Empty Return Notes", amount: "Amount", weight: "Weight", priority: "Priority", destination: "Destination", shifting: "Shifting",
@@ -1058,7 +1058,7 @@ function emptyContainer() {
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
     podPhoto: "", podNotes: "", podArrivalAt: "", podOffloadingAt: "", podReceivedBy: "",
-    billReceived: false, billApproved: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", charges: [],
+    billReceived: false, billApproved: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", billAttachment: "", charges: [],
     // Domestic Finished Goods / Wrapping Materials fields
     poSapNo: "", movementThrough: "", loadingDate: "", vehicleSize: "", supplier: "",
     history: [{ id: uid("evt"), message: "Container created and pending confirmation", at: new Date().toISOString(), location: "" }],
@@ -5110,17 +5110,17 @@ const billStageTextColor = {
   Posted: "text-violet-400",
   Paid: "text-emerald-400",
 };
-// A bill's stage is driven by two manual flags — billReceived and billApproved, each set by a
-// one-click button with no form — plus what's actually been entered through the Post and Paid
-// forms. Bill Received: submitted, not yet forwarded for approval. Pending Approval: forwarded,
-// cleared to process, but charges haven't been posted into a total yet. Posted: charges posted
-// (via the Post form), not yet paid in full. Paid: paid in full (or over — Paid Amount is a
-// manual entry, so it can exceed the approved total).
+// A bill's stage is driven by what's actually been entered/attached, plus one manual "Post"
+// flag (billApproved) set by a one-click button with no form. Bill Received: submitted, no
+// charges tallied yet. Pending Approval: charges have been posted into a total via the
+// Forward-for-Approval form, awaiting the explicit Post click. Posted: Post clicked, not yet
+// paid in full. Paid: paid in full (or over — Paid Amount is a manual entry, so it can exceed
+// the approved total).
 function billStage(c) {
   if (!c.billReceived) return "Pending";
-  if (!c.billApproved) return "Bill Received";
   const total = containerTotalBillAmount(c);
-  if (total <= 0) return "Pending Approval";
+  if (total <= 0) return "Bill Received";
+  if (!c.billApproved) return "Pending Approval";
   const paid = Number(c.billPaidAmount) || 0;
   if (paid < total) return "Posted";
   return "Paid";
@@ -5224,7 +5224,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   // Total Bill Amount is meaningless before charges are posted (always Rs 0 for Pending/Bill
   // Received/Approved), so it's only worth showing once you're actually looking at Posted or
   // Paid bills — or the unfiltered "All" view, where some rows will have it and some won't.
-  const showTotalBillAmount = isColVisible("transporterBills", "totalBillAmount") && !["Pending", "Bill Received", "Pending Approval"].includes(stageTab);
+  const showTotalBillAmount = isColVisible("transporterBills", "totalBillAmount") && stageTab !== "Pending";
   const sortedRows = [...filteredRows].sort(compareRows);
 
   // While a bill's edit modal is open, pin the row order as it was the moment you opened it —
@@ -5358,16 +5358,16 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                             );
                           }
                           if (stage === "Bill Received") {
-                            // One click, no form - just clears the bill to move on to posting charges.
                             return (
-                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
+                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
                                 Forward for Approval
                               </button>
                             );
                           }
                           if (stage === "Pending Approval") {
+                            // One click, no form - charges are already tallied; this just confirms/posts the bill.
                             return (
-                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
+                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
                                 Post
                               </button>
                             );
@@ -5419,25 +5419,41 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
   const [billDate, setBillDate] = useState(container.transporterBillDate || "");
   const [billNo, setBillNo] = useState(container.transporterBillNo || "");
   const [charges, setCharges] = useState(Array.isArray(container.charges) ? container.charges : []);
+  const [attachment, setAttachment] = useState(container.billAttachment || "");
+  const [attachmentError, setAttachmentError] = useState(null);
   const total = containerTotalBillAmount({ ...container, charges });
 
-  function commitAll(nextCharges) {
+  function commitAll(nextCharges, nextAttachment) {
     const chargesToUse = nextCharges !== undefined ? nextCharges : charges;
+    const attachmentToUse = nextAttachment !== undefined ? nextAttachment : attachment;
     updateContainerFields(order.id, container.id, {
-      billReceived: true, billApproved: true, // opening this form at all means both prior gates are cleared
+      billReceived: true, // opening this form at all means the bill has been received - Post (Pending Approval -> Posted) is a separate, later, explicit click
       transporterBillDate: billDate,
       transporterBillNo: billNo,
       billAmountApproved: containerTotalBillAmount({ ...container, charges: chargesToUse }),
       charges: chargesToUse,
+      billAttachment: attachmentToUse,
     });
   }
   function commitCharges(next) {
     setCharges(next);
     commitAll(next);
   }
+  async function handleFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setAttachmentError(null);
+    try {
+      const dataUrl = await fileToAttachmentDataUrl(file, 900, 0.6);
+      setAttachment(dataUrl);
+      commitAll(undefined, dataUrl);
+    } catch (err) {
+      setAttachmentError("Couldn't read that file — try a different image or PDF.");
+    }
+  }
 
   return (
-    <Modal title={`Post Bill — Container ${container.containerNumber || "—"}`} onClose={onClose}>
+    <Modal title={`Transporter Bill — Container ${container.containerNumber || "—"}`} onClose={onClose}>
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div>
           <label className="text-slate-500 text-xs block mb-1">Transporter Bill Date</label>
@@ -5447,6 +5463,17 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
           <label className="text-slate-500 text-xs block mb-1">Transporter Bill No.</label>
           <input className={inputCls} value={billNo} onChange={(e) => setBillNo(e.target.value)} onBlur={() => commitAll()} />
         </div>
+      </div>
+      <div className="mb-3">
+        <label className="text-slate-500 text-xs block mb-1">Bill Attachment (image or PDF)</label>
+        <input type="file" accept="image/*,application/pdf" onChange={handleFile} className={inputCls} />
+        {attachmentError && <p className="text-red-400 text-xs mt-1">{attachmentError}</p>}
+        {attachment && !isPdfDataUrl(attachment) && <img src={attachment} alt="Transporter bill" className="mt-2 rounded-lg border border-slate-800 max-h-40" />}
+        {attachment && isPdfDataUrl(attachment) && (
+          <a href={attachment} download="transporter-bill.pdf" className="mt-2 flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2">
+            <FileText size={16} /> PDF attached — click to view
+          </a>
+        )}
       </div>
       <div className="mb-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
         <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
