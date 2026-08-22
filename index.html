@@ -5122,7 +5122,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container }
   const [selectedTransporter, setSelectedTransporter] = useState(null);
-  const [sortKey, setSortKey] = useState("type");
+  const [sortKey, setSortKey] = useState("loadingDate"); // TEMP DEBUG
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
   const [stageTab, setStageTab] = useState("All");
