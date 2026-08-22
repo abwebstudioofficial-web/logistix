@@ -727,9 +727,6 @@ function ChargesEditor({ charges, onChange }) {
 // Sheet schema for the Excel attach/detach/sync feature
 const SHEET_SCHEMAS = {
   Orders: ["id","orderNumber","customerId","customerName","origin","destination","driverId","vehicleId","priority","amount","weight","description","createdDate","eta","stageIndex","cancelled","deliveredDate","jobNumber","poNumber","cargoType","shippingLine","nominatedTransporter","blNumber","igmDate","emptyReturnLocation","biltyNumber","bondedStatus","shipmentType","senderId","senderName","senderAddress","deliveryAddress","containers","history"],
-  Customers: ["id","name","shortName","email","phone","contact","location","deliveryAddresses"],
-  Senders: ["id","name","email","phone","contact","addresses"],
-  Transporters: ["id","name","email","phone","contact","addresses"],
   Drivers: ["id","name","email","role","phone","status"],
   Vehicles: ["id","plate","type","make","model","year","capacityKg","mileageKm","lastService","driverId","status"],
   Invoices: ["id","invoiceNumber","orderId","containerId","customerId","issued","due","total","status"],
@@ -746,9 +743,6 @@ const TAB_EXCEL_CONFIG = {
   orders_domestic: { table: "orders", sheetName: "Orders", label: "Domestic Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Domestic", cargoType: "Domestic" }, filterFn: (o) => (o.shipmentType || "Import") === "Domestic" },
   orders_import: { table: "orders", sheetName: "Orders", label: "Import Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Import", cargoType: "Import" }, filterFn: (o) => (o.shipmentType || "Import") === "Import" },
   orders_export: { table: "orders", sheetName: "Orders", label: "Export Orders", coerceKey: "coerceOrders", forceFields: { shipmentType: "Export", cargoType: "Export" }, filterFn: (o) => (o.shipmentType || "Import") === "Export" },
-  customers: { table: "customers", sheetName: "Customers", label: "Customers", coerceKey: "coerceCustomers" },
-  senders: { table: "senders", sheetName: "Senders", label: "Senders", coerceKey: "coerceSenders" },
-  transporters: { table: "transporters", sheetName: "Transporters", label: "Transporters", coerceKey: "coerceTransporters" },
   invoices: { table: "invoices", sheetName: "Invoices", label: "Invoices", coerceKey: "coerceInvoices" },
   // Not tied to a nav view — rendered inside the Fuel Price sub-tab instead (see CustomerFuelDetail).
   fuel_prices: { table: "fuel_prices", sheetName: "FuelPrices", label: "Fuel Prices", coerceKey: "coerceFuelPrices", displayHeaders: ["Effective Date", "Price per Liter (PKR)", "ID"] },
@@ -1337,6 +1331,17 @@ const NUMERIC_SCHEMA_FIELDS = {
   Invoices: new Set(["total"]),
   FuelPrices: new Set(["pricePerLiter"]),
 };
+// Fields that are stored as raw ISO (yyyy-mm-dd) but must always render as a real date in
+// Excel, formatted the same dd/mm/yyyy way every other date in the app is (Import/Export/
+// Domestic Transportation sheets, Bilty receipts, the on-screen tables) — not left as the raw
+// ISO string, which is what was happening here and is what caused Fuel Prices' export to show
+// "2026-08-22" instead of a properly formatted date.
+const DATE_SCHEMA_FIELDS = {
+  Orders: new Set(["createdDate", "eta", "deliveredDate", "igmDate"]),
+  Vehicles: new Set(["lastService"]),
+  Invoices: new Set(["issued", "due"]),
+  FuelPrices: new Set(["effectiveDate"]),
+};
 // Same data-cleaning rules the plain unstyled builder used to have (hidden ID columns stay
 // truly blank so re-import falls back to a fresh id correctly, JSON.stringify for object/array
 // values, numeric coercion per NUMERIC_SCHEMA_FIELDS) but returns a buildXlsxBuffer-ready sheet
@@ -1344,15 +1349,17 @@ const NUMERIC_SCHEMA_FIELDS = {
 // app) instead of a plain unstyled XLSX.utils worksheet.
 function styledSheetFromSchema(sheetName, records, schema, displayHeaders) {
   const headers = displayHeaders || schema.map(humanizeFieldName);
-  const hideKeys = new Set(["id", "customerid", "containers", "history", "stageindex", "cancelled", "senderid"]);
+  const hideKeys = new Set(["id", "customerid", "containers", "history", "stageindex", "cancelled", "senderid", "orderid", "containerid"]);
   const hiddenColIdxs = schema.map((k, i) => (hideKeys.has(String(k).toLowerCase()) ? i + 1 : -1)).filter((i) => i > 0);
   const numericFields = NUMERIC_SCHEMA_FIELDS[sheetName] || new Set();
+  const dateFields = DATE_SCHEMA_FIELDS[sheetName] || new Set();
   const dataRows = (records || []).map((r) =>
     schema.map((k) => {
       const val = r[k];
       const isEmpty = val === null || val === undefined || val === "";
       if (isEmpty) return hideKeys.has(String(k).toLowerCase()) ? "" : "-";
       if (typeof val === "object") return JSON.stringify(val);
+      if (dateFields.has(k)) return fmtDate(val);
       return numericFields.has(k) ? xnum(val) : val;
     })
   );
@@ -1375,7 +1382,7 @@ async function buildStyledFullBackupWorkbook(data) {
     customerName: (getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "",
     senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
   }));
-  const map = { Orders: ordersWithNames, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
+  const map = { Orders: ordersWithNames, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
   const displayHeadersBySheet = { FuelPrices: ["Effective Date", "Price per Liter (PKR)", "ID"] };
   const sheets = Object.entries(SHEET_SCHEMAS).map(([sheetName, schema]) =>
     styledSheetFromSchema(sheetName, map[sheetName] || [], schema, displayHeadersBySheet[sheetName])
@@ -1387,7 +1394,7 @@ async function buildStyledFullBackupWorkbook(data) {
 const TEMPLATE_COMPANY_SHEETS = ["Tetra Pak","PTC","Dairyland","Haleeb","Fauji","Nestle","Engro","Pakola","Shezan","Others","Coca Cola","Ecolean","Pepsi"];
 const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Bonded Status","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
 const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Bonded Status","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
-const DOMESTIC_HEADERS = ["Sr.#", "Domestic Category", "Customer", "Sender Name", "Sender Address", "Est. Delivery Date", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Freight Amount"];
+const DOMESTIC_HEADERS = ["Sr.", "Domestic Category", "Customer", "Sender Name", "Sender Address", "Est. Delivery Date", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Freight Amount"];
 const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
@@ -1739,6 +1746,55 @@ function importColWidths() {
   return IMPORT_HEADERS.map((h, i) => (i < IMPORT_EXACT_WIDTHS.length ? IMPORT_EXACT_WIDTHS[i] : auto[i]));
 }
 
+// Standalone Import Orders tab export — same columns, same computation, same visual styling
+// as the master template's "Import Transportation" sheet (see buildTemplateWorkbook below),
+// with one addition: a hidden Container ID column at the front, needed so Attach can match a
+// row back to the exact container it came from (the master template sheet has no such need,
+// since it isn't meant to be re-imported). Every style/width/freeze index below is the master
+// template's own values shifted by +1 to account for that extra leading column.
+const IMPORT_EXPORT_HEADERS = ["Container ID", ...IMPORT_HEADERS];
+function buildImportExportRow(sr, o, c, data) {
+  return [c.id, ...buildImportRow(sr, o, c, data)];
+}
+function importExportColWidths() {
+  return [20, ...importColWidths()]; // Container ID width matches the convention used for Domestic's own hidden ID column
+}
+function importExportStyling() {
+  const noWrap = new Set([3, 10, 11, 19, 20, 33]); // master template's {2,9,10,18,19,32} + 1
+  const wrap = new Set(Array.from({ length: 33 }, (_, i) => i + 1).filter((c) => !noWrap.has(c)));
+  const headerOverrides = buildColStyleMap(33, wrap, 3, 4);
+  const contentWrap = new Set([3, 4, 7, 9, 10, 12, 15, 16, 17, 18, 19, 20]); // master template's set + 1
+  const contentDefault = buildColStyleMap(33, contentWrap, 9, 8);
+  // Freeze-boundary columns (master template's G(7)/H(8) -> H(8)/I(9) here)
+  headerOverrides[8] = 19; headerOverrides[9] = 18;
+  contentDefault[8] = 20; contentDefault[9] = 21;
+  [17, 22, 23, 27, 28, 29, 30, 31].forEach((col) => { contentDefault[col] = 22; }); // bold charge/amount columns, +1 shifted
+  return { headerOverrides, contentDefault };
+}
+
+// Standalone Export Orders tab export — same columns, same computation, same visual styling
+// as the master template's "Export Transportation" sheet, with the same hidden-Container-ID-
+// for-Attach-matching addition described above for Import.
+const EXPORT_EXPORT_HEADERS = ["Container ID", ...EXPORT_HEADERS];
+function buildExportExportRow(sr, o, c, data) {
+  return [c.id, ...buildExportRow(sr, o, c, data)];
+}
+function exportExportColWidths() {
+  const w = colWidthsFor(EXPORT_HEADERS);
+  w[0] = 6.29; // Sr.
+  return [20, ...w]; // Container ID width matches the convention used elsewhere for hidden ID columns
+}
+function exportExportStyling() {
+  const noWrap = new Set([3, 9, 12, 15]); // master template's {2,8,11,14} + 1
+  const wrap = new Set(Array.from({ length: 19 }, (_, i) => i + 1).filter((c) => !noWrap.has(c)));
+  const headerOverrides = buildColStyleMap(19, wrap, 3, 4);
+  const contentWrap = new Set([3, 4, 5, 8, 12, 15, 18]); // master template's {2,3,4,7,11,14,17} + 1
+  const contentDefault = buildColStyleMap(19, contentWrap, 9, 8);
+  contentDefault[16] = 22; // Freight — bold (master template's 15, +1)
+  contentDefault[4] = 22; // Customer/Shipper — bold (master template's 3, +1)
+  return { headerOverrides, contentDefault };
+}
+
 // Builds a {col: styleId} map for every column 1..colCount — wrapCols get wrapStyle,
 // everything else gets noWrapStyle. Used for both header rows (per-color wrap/no-wrap) and
 // data rows (content wrap/no-wrap), since the same wrap-or-not decision now varies per
@@ -1825,7 +1881,7 @@ async function buildTemplateWorkbook(data, mode) {
   // --- Domestic (blue header, white text) — split into Finished Goods and Wrapping
   // Materials sheets, matching how the app itself separates them into two pages. Columns
   // cover everything from the domestic order form plus everything the dispatcher adds.
-  const domHeaderNoWrap = new Set([1, 6, 9, 10, 11, 15]); // Sr.#, Est. Delivery Date, Loading Date, Vehicle No., Vehicle Size, Freight Amount
+  const domHeaderNoWrap = new Set([1, 6, 9, 10, 11, 15]); // Sr., Est. Delivery Date, Loading Date, Vehicle No., Vehicle Size, Freight Amount
   const domHeaderWrap = new Set(Array.from({ length: 15 }, (_, i) => i + 1).filter((c) => !domHeaderNoWrap.has(c)));
   const domHeaderOverrides = buildColStyleMap(15, domHeaderWrap, 5, 6);
   const domContentWrap = new Set([4, 5, 7, 12, 13, 14]); // Sender Name, Sender Address, PO/SAP No., Loading Point, Destination, Transporter Name
@@ -1838,7 +1894,7 @@ async function buildTemplateWorkbook(data, mode) {
     const dataRows = flat.map(({ o, c }, i) => buildDomesticRow(i + 1, o, c, data));
     const rows = [DOMESTIC_HEADERS, ...dataRows];
     const domColWidths = colWidthsFor(DOMESTIC_HEADERS);
-    domColWidths[0] = 6.29; // Sr.# — narrow, matching Import Transportation's Sr. column
+    domColWidths[0] = 6.29; // Sr. — narrow, matching Import Transportation's Sr. column
     domColWidths[3] = 24; // Sender Name — wider
     domColWidths[4] = 32; // Sender Address — wider
     sheets.push({
@@ -1875,7 +1931,7 @@ async function buildTemplateWorkbook(data, mode) {
 
 
   // --- Fuel Prices (blue header, all effective dates) ---
-  const fuelPriceHeaders = ["Sr#", "Effective Date", "Price per Liter (PKR)"];
+  const fuelPriceHeaders = ["Sr.", "Effective Date", "Price per Liter (PKR)"];
   const fuelPriceRows = [fuelPriceHeaders, ...(data.fuel_prices || [])
     .slice()
     .sort((a, b) => (b.effectiveDate || "").localeCompare(a.effectiveDate || ""))
@@ -1890,7 +1946,7 @@ async function buildTemplateWorkbook(data, mode) {
   // --- Contract Rates (blue header, every customer's rates combined into one sheet, with
   // a Customer column added since this isn't scoped to one customer like the per-customer
   // Contracts page export is) ---
-  const contractHeaders = ["Sr#", "Customer", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General (PKR)", "Fuel (PKR)", "Total Rate (PKR)", "Valid From", "Valid To"];
+  const contractHeaders = ["Sr.", "Customer", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General (PKR)", "Fuel (PKR)", "Total Rate (PKR)", "Valid From", "Valid To"];
   const contractRows = [contractHeaders, ...(data.contracts || []).map((k, i) => {
     const cust = getCustomer(data, k.customerId);
     const { general, fuelComponent } = contractRateComponents(k);
@@ -1920,7 +1976,7 @@ async function buildTemplateWorkbook(data, mode) {
   // General + Fuel Adjustment (that would be the full freight, a different figure entirely).
   let fuelReportPriceMode = "daily";
   try { fuelReportPriceMode = window.localStorage.getItem("logistix_fuel_price_mode") || "daily"; } catch (e) { /* ignore */ }
-  const fuelReportHeaders = ["Sr#", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Swapped (PKR)", "Fuel Swapped (Litre)", "Receivable (PKR)", "Receivable (Litre)"];
+  const fuelReportHeaders = ["Sr.", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Swapped (PKR)", "Fuel Swapped (Litre)", "Receivable (PKR)", "Receivable (Litre)"];
   const fuelReportFlat = flattenContainers(orders, (o) => {
     const st = (o.shipmentType || "Import");
     return (st === "Import" || st === "Domestic") && !!(orderContainers(o).length);
@@ -2065,47 +2121,17 @@ function coerceOrders(rows, data) {
       id: xstr(readField(r, "id")) || uid("ord"), orderNumber: xstr(readField(r, "orderNumber")) || genOrderNumber(),
       customerId: resolveCustomerId(r, data), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")),
       driverId: xstr(readField(r, "driverId")), vehicleId: xstr(readField(r, "vehicleId")), priority: xstr(readField(r, "priority"), "Normal"),
-      amount: xnum(readField(r, "amount")), weight: xnum(readField(r, "weight")), description: xstr(readField(r, "description")), createdDate: xstr(readField(r, "createdDate")) || todayISO(),
-      eta: xstr(readField(r, "eta")), stageIndex: xnum(readField(r, "stageIndex"), 0), cancelled: xbool(readField(r, "cancelled")),
-      deliveredDate: xstr(readField(r, "deliveredDate")) || null,
+      amount: xnum(readField(r, "amount")), weight: xnum(readField(r, "weight")), description: xstr(readField(r, "description")), createdDate: normalizeDateStr(readField(r, "createdDate")) || todayISO(),
+      eta: normalizeDateStr(readField(r, "eta")), stageIndex: xnum(readField(r, "stageIndex"), 0), cancelled: xbool(readField(r, "cancelled")),
+      deliveredDate: normalizeDateStr(readField(r, "deliveredDate")) || null,
       jobNumber: xstr(readField(r, "jobNumber")), poNumber: xstr(readField(r, "poNumber")), cargoType: shipmentTypeNorm,
       shippingLine: xstr(readField(r, "shippingLine")), nominatedTransporter: xstr(readField(r, "nominatedTransporter")),
       blNumber: xstr(readField(r, "blNumber")),
-      igmDate: xstr(readField(r, "igmDate")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
+      igmDate: normalizeDateStr(readField(r, "igmDate")), emptyReturnLocation: xstr(readField(r, "emptyReturnLocation")), biltyNumber: xstr(readField(r, "biltyNumber")),
       bondedStatus: normalizeBondedStatus(readField(r, "bondedStatus")), shipmentType: shipmentTypeNorm,
       senderId: resolveSenderId(r, data), senderAddress: xstr(readField(r, "senderAddress")), deliveryAddress: xstr(readField(r, "deliveryAddress")),
       containers, history,
     };
-  });
-}
-function coerceCustomers(rows) {
-  return rows.map((r) => {
-    let deliveryAddresses = [];
-    try {
-      const parsed = JSON.parse(readField(r, "deliveryAddresses") || "[]");
-      if (Array.isArray(parsed)) deliveryAddresses = parsed;
-    } catch (e) { deliveryAddresses = []; }
-    return { id: xstr(readField(r, "id")) || uid("cust"), name: xstr(readField(r, "name")), shortName: xstr(readField(r, "shortName")), email: xstr(readField(r, "email")), phone: xstr(readField(r, "phone")), contact: xstr(readField(r, "contact")), location: xstr(readField(r, "location")), deliveryAddresses };
-  });
-}
-function coerceSenders(rows) {
-  return rows.map((r) => {
-    let addresses = [];
-    try {
-      const parsed = JSON.parse(readField(r, "addresses") || "[]");
-      if (Array.isArray(parsed)) addresses = parsed;
-    } catch (e) { addresses = []; }
-    return { id: xstr(readField(r, "id")) || uid("sender"), name: xstr(readField(r, "name")), email: xstr(readField(r, "email")), phone: xstr(readField(r, "phone")), contact: xstr(readField(r, "contact")), addresses };
-  });
-}
-function coerceTransporters(rows) {
-  return rows.map((r) => {
-    let addresses = [];
-    try {
-      const parsed = JSON.parse(readField(r, "addresses") || "[]");
-      if (Array.isArray(parsed)) addresses = parsed;
-    } catch (e) { addresses = []; }
-    return { id: xstr(readField(r, "id")) || uid("transporter"), name: xstr(readField(r, "name")), email: xstr(readField(r, "email")), phone: xstr(readField(r, "phone")), contact: xstr(readField(r, "contact")), addresses };
   });
 }
 function coerceDrivers(rows) {
@@ -2115,11 +2141,11 @@ function coerceVehicles(rows) {
   return rows.map((r) => ({
     id: xstr(readField(r, "id")) || uid("veh"), plate: xstr(readField(r, "plate")), type: xstr(readField(r, "type"), "Truck"), make: xstr(readField(r, "make")), model: xstr(readField(r, "model")),
     year: xnum(readField(r, "year"), new Date().getFullYear()), capacityKg: xnum(readField(r, "capacityKg")), mileageKm: xnum(readField(r, "mileageKm")),
-    lastService: xstr(readField(r, "lastService")) || todayISO(), driverId: xstr(readField(r, "driverId")), status: xstr(readField(r, "status"), "active"),
+    lastService: normalizeDateStr(readField(r, "lastService")) || todayISO(), driverId: xstr(readField(r, "driverId")), status: xstr(readField(r, "status"), "active"),
   }));
 }
 function coerceInvoices(rows) {
-  return rows.map((r) => ({ id: xstr(readField(r, "id")) || uid("inv"), invoiceNumber: xstr(readField(r, "invoiceNumber")) || genInvoiceNumber(), orderId: xstr(readField(r, "orderId")), containerId: xstr(readField(r, "containerId")), customerId: xstr(readField(r, "customerId")), issued: xstr(readField(r, "issued")) || todayISO(), due: xstr(readField(r, "due")), total: xnum(readField(r, "total")), status: xstr(readField(r, "status"), "Draft") }));
+  return rows.map((r) => ({ id: xstr(readField(r, "id")) || uid("inv"), invoiceNumber: xstr(readField(r, "invoiceNumber")) || genInvoiceNumber(), orderId: xstr(readField(r, "orderId")), containerId: xstr(readField(r, "containerId")), customerId: xstr(readField(r, "customerId")), issued: normalizeDateStr(readField(r, "issued")) || todayISO(), due: normalizeDateStr(readField(r, "due")), total: xnum(readField(r, "total")), status: xstr(readField(r, "status"), "Draft") }));
 }
 function coerceRoutes(rows) {
   return rows.map((r) => ({ id: xstr(readField(r, "id")) || uid("rte"), name: xstr(readField(r, "name")), origin: xstr(readField(r, "origin")), destination: xstr(readField(r, "destination")), driverId: xstr(readField(r, "driverId")), vehicleId: xstr(readField(r, "vehicleId")), orderId: xstr(readField(r, "orderId")), status: xstr(readField(r, "status"), "planned") }));
@@ -2218,7 +2244,7 @@ function coerceContractRates(rows) {
     })
     .filter((row) => row.loadingPoint && row.destination);
 }
-const COERCE_FUNCTIONS = { coerceOrders, coerceCustomers, coerceSenders, coerceTransporters, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices, coerceContractRates };
+const COERCE_FUNCTIONS = { coerceOrders, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices, coerceContractRates };
 
 /* ---- Bilty receipt generator (downloads a PDF, styled like a real bilty form) ---- */
 
@@ -8936,7 +8962,7 @@ function LogistixERP() {
         // always restores all the way back to the true pre-import state, even across
         // multiple files attached one after another without detaching in between.
         const snapshot = { ...(excelMeta.snapshot || {}) };
-        const SHEET_TABLE_NAME = { Orders: "orders", Customers: "customers", Senders: "senders", Transporters: "transporters", Drivers: "drivers", Vehicles: "vehicles", Invoices: "invoices", Routes: "routes", FuelPrices: "fuel_prices" };
+        const SHEET_TABLE_NAME = { Orders: "orders", Drivers: "drivers", Vehicles: "vehicles", Invoices: "invoices", Routes: "routes", FuelPrices: "fuel_prices" };
         Object.keys(SHEET_SCHEMAS).forEach((sheetName) => {
           const ws = wb.Sheets[sheetName];
           if (!ws) return;
@@ -8945,9 +8971,6 @@ function LogistixERP() {
           found.push(sheetName);
           let coerced;
           if (sheetName === "Orders") coerced = coerceOrders(rows, data);
-          if (sheetName === "Customers") coerced = coerceCustomers(rows);
-          if (sheetName === "Senders") coerced = coerceSenders(rows);
-          if (sheetName === "Transporters") coerced = coerceTransporters(rows);
           if (sheetName === "Drivers") coerced = coerceDrivers(rows);
           if (sheetName === "Vehicles") coerced = coerceVehicles(rows);
           if (sheetName === "Invoices") coerced = coerceInvoices(rows);
@@ -9222,6 +9245,193 @@ function LogistixERP() {
       reader.readAsArrayBuffer(file);
       return;
     }
+    if (viewKey === "orders_import") {
+      // Same field set as the Import Transportation sheet. Matches an existing shipment by
+      // the hidden Container ID column — a row with no Container ID (or one that doesn't
+      // match anything) is skipped rather than creating a new shipment, since Import orders
+      // need more upfront fields (Bonded Status, Shipping Line, B/L Number, etc.) than can be
+      // safely defaulted the way Domestic's simpler create-path does.
+      reader.onload = async (evt) => {
+        try {
+          const arr = new Uint8Array(evt.target.result);
+          const wb = XLSX.read(arr, { type: "array" });
+          const wsName = wb.Sheets["Import Transportation"] ? "Import Transportation" : wb.SheetNames[0];
+          const ws = wb.Sheets[wsName];
+          if (!ws) throw new Error("That file doesn't have a readable sheet.");
+          const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+
+          // Exported as dd/mm/yyyy (matching the rest of the app) — parse explicitly rather
+          // than relying on Date()'s ambiguous mm/dd/yyyy-by-default assumption.
+          function parseDDMMYYYY(v) {
+            if (!v) return "";
+            const s = String(v).trim();
+            const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+            return normalizeDateStr(v);
+          }
+
+          let updatedCount = 0, skippedCount = 0;
+          let updatedOrders = [...data.orders];
+          const tableSnapshot = [];
+          const touchedOrderIds = new Set();
+
+          rows.forEach((row) => {
+            const containerId = xstr(readAnyKey(row, ["Container ID", "container id"])).trim();
+            if (!containerId) { skippedCount++; return; }
+            const orderIdx = updatedOrders.findIndex((o) => orderContainers(o).some((c) => c.id === containerId));
+            if (orderIdx === -1) { skippedCount++; return; }
+            const order = updatedOrders[orderIdx];
+            const containers = orderContainers(order);
+            const cIdx = containers.findIndex((c) => c.id === containerId);
+            if (cIdx === -1) { skippedCount++; return; }
+
+            if (!touchedOrderIds.has(order.id)) { touchedOrderIds.add(order.id); tableSnapshot.push({ id: order.id, prev: order }); }
+
+            const loadedOn = parseDDMMYYYY(readAnyKey(row, ["Loaded On"]));
+            const newContainers = containers.map((c, i) => {
+              if (i !== cIdx) return c;
+              return {
+                ...c,
+                transporter: xstr(readAnyKey(row, ["Transporter"])),
+                containerNumber: xstr(readAnyKey(row, ["Container No."])),
+                sealNumber: xstr(readAnyKey(row, ["Seal Number"])),
+                containerSize: xstr(readAnyKey(row, ["Contr Size"])),
+                weight: xnum(readAnyKey(row, ["Cargo Weight (Kgs)"]), ""),
+                destination: xstr(readAnyKey(row, ["Destination"])),
+                emptyReturnLocation: xstr(readAnyKey(row, ["Empty Return Location"])),
+                biltyNumber: xstr(readAnyKey(row, ["Bilty No."])),
+                vehiclePlate: xstr(readAnyKey(row, ["Truck No."])),
+                dispatchAt: loadedOn ? new Date(loadedOn + "T00:00:00").toISOString() : c.dispatchAt,
+                freightAmount: xnum(readAnyKey(row, ["Freight"]), ""),
+                transporterBillDate: normalizeDateStr(readAnyKey(row, ["Transporter Bill Date"])),
+                transporterBillNo: xstr(readAnyKey(row, ["Transporter Bill No."])),
+                billAmountApproved: xnum(readAnyKey(row, ["Bill Amount Approved"]), ""),
+                emptyReturnDescription: xstr(readAnyKey(row, ["Remarks"])),
+              };
+            });
+            updatedOrders[orderIdx] = {
+              ...order,
+              poNumber: xstr(readAnyKey(row, ["PO NO. / LC NO."])),
+              bondedStatus: xstr(readAnyKey(row, ["Bonded Status"])) || order.bondedStatus,
+              origin: xstr(readAnyKey(row, ["Loading Point"])) || order.origin,
+              shippingLine: xstr(readAnyKey(row, ["Shipping Line"])),
+              description: xstr(readAnyKey(row, ["Description"])),
+              blNumber: xstr(readAnyKey(row, ["B/L No."])),
+              igmDate: normalizeDateStr(readAnyKey(row, ["I.G.M Date"])),
+              containers: newContainers,
+            };
+            updatedCount++;
+          });
+
+          const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id));
+          const { error } = changedOrders.length ? await supabaseClient.from("orders").upsert(changedOrders.map(toDbRow)) : { error: null };
+          setDataState((prevData) => ({ ...prevData, orders: updatedOrders }));
+          setTabExcel((prev) => ({
+            ...prev,
+            [viewKey]: {
+              attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
+              message: error
+                ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
+                : { ok: true, text: `${file.name}: updated ${updatedCount} shipment${updatedCount === 1 ? "" : "s"}.` + (skippedCount > 0 ? ` ${skippedCount} row${skippedCount === 1 ? "" : "s"} had no matching Container ID and were skipped.` : "") },
+            },
+          }));
+        } catch (err) {
+          setTabExcel((prev) => ({
+            ...prev,
+            [viewKey]: { ...(prev[viewKey] || {}), busy: false, message: { ok: false, text: "Couldn't read that file: " + err.message } },
+          }));
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+    if (viewKey === "orders_export") {
+      // Same field set as the Export Transportation sheet, same Container-ID-match approach
+      // as Import above.
+      reader.onload = async (evt) => {
+        try {
+          const arr = new Uint8Array(evt.target.result);
+          const wb = XLSX.read(arr, { type: "array" });
+          const wsName = wb.Sheets["Export Transportation"] ? "Export Transportation" : wb.SheetNames[0];
+          const ws = wb.Sheets[wsName];
+          if (!ws) throw new Error("That file doesn't have a readable sheet.");
+          const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+
+          function parseDDMMYYYY(v) {
+            if (!v) return "";
+            const s = String(v).trim();
+            const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+            return normalizeDateStr(v);
+          }
+
+          let updatedCount = 0, skippedCount = 0;
+          let updatedOrders = [...data.orders];
+          const tableSnapshot = [];
+          const touchedOrderIds = new Set();
+
+          rows.forEach((row) => {
+            const containerId = xstr(readAnyKey(row, ["Container ID", "container id"])).trim();
+            if (!containerId) { skippedCount++; return; }
+            const orderIdx = updatedOrders.findIndex((o) => orderContainers(o).some((c) => c.id === containerId));
+            if (orderIdx === -1) { skippedCount++; return; }
+            const order = updatedOrders[orderIdx];
+            const containers = orderContainers(order);
+            const cIdx = containers.findIndex((c) => c.id === containerId);
+            if (cIdx === -1) { skippedCount++; return; }
+
+            if (!touchedOrderIds.has(order.id)) { touchedOrderIds.add(order.id); tableSnapshot.push({ id: order.id, prev: order }); }
+
+            const dispatchDate = parseDDMMYYYY(readAnyKey(row, ["Dispatch Date"]));
+            const newContainers = containers.map((c, i) => {
+              if (i !== cIdx) return c;
+              return {
+                ...c,
+                emptyPickupLocation: xstr(readAnyKey(row, ["Empty Pickup Location"])),
+                transporter: xstr(readAnyKey(row, ["Transporter"])),
+                containerNumber: xstr(readAnyKey(row, ["Container No."])),
+                containerSize: xstr(readAnyKey(row, ["Contr Size"])),
+                weight: xnum(readAnyKey(row, ["Weight"]), ""),
+                vehiclePlate: xstr(readAnyKey(row, ["Truck No."])),
+                dispatchAt: dispatchDate ? new Date(dispatchDate + "T00:00:00").toISOString() : c.dispatchAt,
+                biltyNumber: xstr(readAnyKey(row, ["Bilty No."])),
+                freightAmount: xnum(readAnyKey(row, ["Freight"]), ""),
+                destination: xstr(readAnyKey(row, ["Destination"])),
+                emptyReturnDescription: xstr(readAnyKey(row, ["Remarks for Any Extra Activity or Any Extra Cost", "Remarks"])),
+              };
+            });
+            updatedOrders[orderIdx] = {
+              ...order,
+              origin: xstr(readAnyKey(row, ["Loading Point"])) || order.origin,
+              shippingLine: xstr(readAnyKey(row, ["Shipping Line"])),
+              bondedStatus: xstr(readAnyKey(row, ["Bonded Status"])) || order.bondedStatus,
+              containers: newContainers,
+            };
+            updatedCount++;
+          });
+
+          const changedOrders = updatedOrders.filter((o) => touchedOrderIds.has(o.id));
+          const { error } = changedOrders.length ? await supabaseClient.from("orders").upsert(changedOrders.map(toDbRow)) : { error: null };
+          setDataState((prevData) => ({ ...prevData, orders: updatedOrders }));
+          setTabExcel((prev) => ({
+            ...prev,
+            [viewKey]: {
+              attached: true, filename: file.name, snapshot: tableSnapshot, busy: false,
+              message: error
+                ? { ok: false, text: `Saved locally, but the database update failed: ${error.message}` }
+                : { ok: true, text: `${file.name}: updated ${updatedCount} shipment${updatedCount === 1 ? "" : "s"}.` + (skippedCount > 0 ? ` ${skippedCount} row${skippedCount === 1 ? "" : "s"} had no matching Container ID and were skipped.` : "") },
+            },
+          }));
+        } catch (err) {
+          setTabExcel((prev) => ({
+            ...prev,
+            [viewKey]: { ...(prev[viewKey] || {}), busy: false, message: { ok: false, text: "Couldn't read that file: " + err.message } },
+          }));
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
     reader.onload = async (evt) => {
       try {
         const arr = new Uint8Array(evt.target.result);
@@ -9325,8 +9535,8 @@ function LogistixERP() {
     }
   }
 
-  const DOMESTIC_EXPORT_HEADERS_BASE = ["Container ID", "Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
-  const DOMESTIC_EXPORT_HEADERS_WM = ["Container ID", "Sr.#", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+  const DOMESTIC_EXPORT_HEADERS_BASE = ["Container ID", "Sr.", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
+  const DOMESTIC_EXPORT_HEADERS_WM = ["Container ID", "Sr.", "Customer", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Sender", "Loading Point", "Destination", "General Component (PKR)", "Fuel Adjustment (PKR)", "Full Freight (PKR)", "Transporter Name", "Invoice Number"];
 
   function buildDomesticExportRow(sr, o, c, includeSender) {
     const cust = getCustomer(data, o.customerId);
@@ -9355,6 +9565,64 @@ function LogistixERP() {
   async function handleTabExport(viewKey, categoryFilter) {
     const cfg = TAB_EXCEL_CONFIG[viewKey];
     if (!cfg) return;
+    if (viewKey === "orders_import") {
+      // Same columns, same computation, same visual styling as the master template's Import
+      // Transportation sheet (see buildTemplateWorkbook) — the generic round-trip schema
+      // export doesn't match what's actually shown/printed for Import orders elsewhere in
+      // the app, so this tab gets its own dedicated export + attach, same pattern as Domestic.
+      const importOrders = (data.orders || []).filter((o) => (o.shipmentType || "Import") === "Import");
+      const flat = flattenContainers(importOrders, () => true);
+      const dataRows = flat.map(({ o, c }, i) => buildImportExportRow(i + 1, o, c, data));
+      const rows = [IMPORT_EXPORT_HEADERS, ...dataRows];
+      const { headerOverrides, contentDefault } = importExportStyling();
+      const sheet = {
+        name: "Import Transportation", rows, headerRowIndex: 1,
+        colWidths: importExportColWidths(), freezeCols: 8, freezeRows: 1,
+        headerOverrides, contentDefaultCols: contentDefault,
+        hiddenCols: [1], // Container ID — needed for Attach to match rows back correctly, not meant to be seen
+        conditionalCols: { 5: CARGO_TYPE_RULE, 6: LOADING_POINT_RULE, 19: duplicateStyleFn(dataRows.map((r) => r[18]), 17) },
+      };
+      try {
+        const buffer = await buildXlsxBuffer([sheet]);
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `Import-Orders-${todayISO()}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        window.alert("Couldn't build the import orders export: " + err.message);
+      }
+      return;
+    }
+    if (viewKey === "orders_export") {
+      // Same columns, same computation, same visual styling as the master template's Export
+      // Transportation sheet — same reasoning and pattern as Import above.
+      const exportOrders = (data.orders || []).filter((o) => (o.shipmentType || "Import") === "Export");
+      const flat = flattenContainers(exportOrders, () => true);
+      const dataRows = flat.map(({ o, c }, i) => buildExportExportRow(i + 1, o, c, data));
+      const rows = [EXPORT_EXPORT_HEADERS, ...dataRows];
+      const { headerOverrides, contentDefault } = exportExportStyling();
+      const sheet = {
+        name: "Export Transportation", rows, headerRowIndex: 1,
+        colWidths: exportExportColWidths(), freezeCols: 7, freezeRows: 1,
+        headerOverrides, contentDefaultCols: contentDefault,
+        hiddenCols: [1], // Container ID — needed for Attach to match rows back correctly, not meant to be seen
+        conditionalCols: { 17: CARGO_TYPE_RULE, 6: LOADING_POINT_RULE, 15: duplicateStyleFn(dataRows.map((r) => r[14]), 16) },
+      };
+      try {
+        const buffer = await buildXlsxBuffer([sheet]);
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `Export-Orders-${todayISO()}.xlsx`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        window.alert("Couldn't build the export orders export: " + err.message);
+      }
+      return;
+    }
     if (viewKey === "orders_domestic") {
       // Domestic exports as two sheets (Finished Goods / Wrapping Materials, matching the
       // app's own page split) with the automatic contract-rate lookup and fuel-adjustment
@@ -9372,7 +9640,7 @@ function LogistixERP() {
         return true;
       }
       function domesticSheetStyling(colCount, contentWrapCols, boldCols) {
-        const headerNoWrap = new Set([1, 2, 6, 7, 8]); // Container ID, Sr.#, Loading Date, Vehicle No., Vehicle Size
+        const headerNoWrap = new Set([1, 2, 6, 7, 8]); // Container ID, Sr., Loading Date, Vehicle No., Vehicle Size
         const headerWrap = new Set(Array.from({ length: colCount }, (_, i) => i + 1).filter((c) => !headerNoWrap.has(c)));
         const headerOverrides = buildColStyleMap(colCount, headerWrap, 5, 6);
         const contentDefault = buildColStyleMap(colCount, new Set(contentWrapCols), 9, 8);
@@ -9431,11 +9699,7 @@ function LogistixERP() {
         senderName: ((data.senders || []).find((s) => s.id === o.senderId) || {}).name || "",
       }));
     }
-    let schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
-    // Export Orders don't carry a B/L Number or IGM Date (Import-only customs fields) —
-    // drop them from this tab's export/attach schema so they don't show up as empty
-    // columns, without touching the shared Orders schema used by Import/Domestic exports.
-    if (viewKey === "orders_export") schema = schema.filter((k) => k !== "blNumber" && k !== "igmDate");
+    const schema = SHEET_SCHEMAS[cfg.sheetName] || (rows[0] ? Object.keys(rows[0]) : []);
     const sheet = styledSheetFromSchema(cfg.sheetName, rows, schema, cfg.displayHeaders);
     if (cfg.sheetName === "Orders") {
       const descIdx = schema.indexOf("description");
@@ -9485,7 +9749,7 @@ function LogistixERP() {
     buildXlsxBuffer([{
       name: "ContractRates", rows: sheetRows, headerRowIndex: 1, colWidths, freezeRows: 1,
       headerOverrides, contentDefaultCols: contentDefault, hiddenCols: [1], // Id — needed for Attach/Revert to match rows back correctly, not meant to be seen
-      headerRowHeight: 30.25,
+      headerRowHeight: 59.25,
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
