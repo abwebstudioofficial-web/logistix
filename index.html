@@ -5073,10 +5073,11 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
-const BILL_STAGES = ["Pending", "Bill Received", "Posted", "Paid"];
+const BILL_STAGES = ["Pending", "Bill Received", "Approved", "Posted", "Paid"];
 const billStageColor = {
   Pending: "bg-slate-800 text-slate-400 border-slate-700",
   "Bill Received": "bg-blue-950 text-blue-400 border-blue-800",
+  Approved: "bg-amber-950 text-amber-400 border-amber-800",
   Posted: "bg-violet-950 text-violet-400 border-violet-800",
   Paid: "bg-emerald-950 text-emerald-400 border-emerald-800",
 };
@@ -5085,19 +5086,20 @@ const billStageColor = {
 const billStageTextColor = {
   Pending: "text-slate-400",
   "Bill Received": "text-blue-400",
+  Approved: "text-amber-400",
   Posted: "text-violet-400",
   Paid: "text-emerald-400",
 };
 // A bill's stage is driven by one manual flag (billReceived, set by a one-click button - no
-// form) plus two things that only get set through their own dedicated forms: Posted needs the
-// charges/total tallied (the Post form), Paid needs an actual paid amount logged (its own short
-// form). Nothing here infers a stage from data alone anymore - every step forward is an
-// explicit action, which is what actually opens the relevant form for that step.
+// form) plus what's actually been entered through the Post and Paid forms. Approved: charges
+// tallied into a total (via Post), but nothing paid yet. Posted: partially paid. Paid: paid in
+// full (or over - Paid Amount is a manual entry, so it can exceed the approved total).
 function billStage(c) {
   if (!c.billReceived) return "Pending";
   const total = containerTotalBillAmount(c);
   if (total <= 0) return "Bill Received";
   const paid = Number(c.billPaidAmount) || 0;
+  if (paid <= 0) return "Approved";
   if (paid < total) return "Posted";
   return "Paid";
 }
@@ -5249,7 +5251,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {BILL_STAGES.map((s) => (
           <MiniStat
             key={s}
@@ -5336,10 +5338,18 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                               </button>
                             );
                           }
-                          if (stage === "Posted") {
+                          if (stage === "Approved") {
                             return (
                               <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "paid" })} className={btnPrimary}>
                                 Mark Paid
+                              </button>
+                            );
+                          }
+                          if (stage === "Posted") {
+                            // Already partially paid - same form, just framed as updating rather than starting.
+                            return (
+                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "paid" })} className={btnPrimary}>
+                                Update Payment
                               </button>
                             );
                           }
