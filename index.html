@@ -5081,6 +5081,15 @@ const billStageColor = {
   Posted: "bg-violet-950 text-violet-400 border-violet-800",
   Paid: "bg-emerald-950 text-emerald-400 border-emerald-800",
 };
+// Same hues as billStageColor above, just the plain text-color class MiniStat expects
+// (matching the color prop format used by the Orders page's own status blocks).
+const billStageTextColor = {
+  Pending: "text-slate-400",
+  "Bill Received": "text-blue-400",
+  Approved: "text-amber-400",
+  Posted: "text-violet-400",
+  Paid: "text-emerald-400",
+};
 // A bill's stage is derived entirely from data already on the container — no separate status
 // field to keep in sync. Pending: transporter hasn't submitted a bill yet. Bill Received: bill
 // number/date recorded but nobody's tallied freight+charges into an approved total yet.
@@ -5122,10 +5131,11 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container }
   const [selectedTransporter, setSelectedTransporter] = useState(null);
+  const [stageTab, setStageTab] = useState("All");
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
-  const [stageTab, setStageTab] = useState("All");
+
   const flat = [];
   data.orders.forEach((o) => {
     orderContainers(o).forEach((c) => flat.push({ order: o, container: c }));
@@ -5146,12 +5156,10 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [data.orders]);
 
-  const CATEGORY_ORDER = { Domestic: 0, Import: 1, Export: 2 };
-
   function sortValue(row, key) {
     const { order: o, container: c } = row;
     switch (key) {
-      case "type": return CATEGORY_ORDER[o.shipmentType] ?? 3;
+      case "type": return ({ Domestic: 0, Import: 1, Export: 2 })[o.shipmentType] ?? 3;
       case "stage": return BILL_STAGES.indexOf(billStage(c));
       case "jobNo": return (o.jobNumber || "").toLowerCase();
       case "customer": return ((getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "").toLowerCase();
@@ -5166,6 +5174,14 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
       default: return 0;
     }
   }
+  function compareRows(a, b) {
+    const va = sortValue(a, sortKey);
+    const vb = sortValue(b, sortKey);
+    const cmp = typeof va === "number" && typeof vb === "number"
+      ? va - vb
+      : (va < vb ? -1 : va > vb ? 1 : 0); // plain ordinal comparison for text/date strings
+    return sortDir === "desc" ? -cmp : cmp;
+  }
   function toggleSort(key) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
@@ -5173,47 +5189,32 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
 
   // selectedTransporter is null on the picker screen, so this naturally resolves to an
   // empty array then (nothing matches a null transporter name) — safe to compute unconditionally.
-  const searchFilteredRows = flat
-    .filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter)
-    .filter(({ order, container }) => {
-      const cust = getCustomer(data, order.customerId);
-      const text = `${order.orderNumber} ${order.jobNumber || ""} ${cust ? (cust.shortName || cust.name) : ""} ${container.containerNumber || ""}`.toLowerCase();
-      return !q || text.includes(q.toLowerCase());
-    });
-  // Counts reflect the current search, so narrowing the search also narrows what each tab shows.
-  const stageCounts = { All: searchFilteredRows.length };
+  const transporterRows = flat.filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter);
+  const searchedRows = transporterRows.filter(({ order, container }) => {
+    const cust = getCustomer(data, order.customerId);
+    const text = `${order.orderNumber} ${order.jobNumber || ""} ${cust ? (cust.shortName || cust.name) : ""} ${container.containerNumber || ""}`.toLowerCase();
+    return !q || text.includes(q.toLowerCase());
+  });
+
+  // Block counts reflect the current search, so narrowing the search also narrows what each block shows.
+  const stageCounts = {};
   BILL_STAGES.forEach((s) => { stageCounts[s] = 0; });
-  searchFilteredRows.forEach(({ container: c }) => { stageCounts[billStage(c)] += 1; });
+  searchedRows.forEach(({ container: c }) => { stageCounts[billStage(c)] += 1; });
 
-  const rows = searchFilteredRows
-    .filter(({ container: c }) => stageTab === "All" || billStage(c) === stageTab)
-    .sort((a, b) => {
-      const va = sortValue(a, sortKey);
-      const vb = sortValue(b, sortKey);
-      // Plain ordinal comparison, not localeCompare — these values are structured data (ISO
-      // dates, IDs) rather than user-facing text, and localeCompare's locale-aware collation
-      // isn't guaranteed to produce a consistent total order for them. An inconsistent
-      // comparator breaks Array.sort's correctness guarantee and can visibly scramble the
-      // result on larger arrays (this table can have 90+ rows for a busy transporter).
-      let cmp;
-      if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
-      else { const sa = String(va), sb = String(vb); cmp = sa < sb ? -1 : sa > sb ? 1 : 0; }
-      if (sortDir === "desc") cmp = -cmp;
-      return cmp;
-    });
+  const filteredRows = searchedRows.filter(({ container: c }) => stageTab === "All" || billStage(c) === stageTab);
+  const sortedRows = [...filteredRows].sort(compareRows);
 
-  // While a bill's edit modal is open, freeze the row order as it was the moment you opened
-  // it. Otherwise, editing a bill you're currently sorted by (e.g. Paid Amount, Total Bill
-  // Amount) changes that row's sort value live and yanks it to a new spot mid-edit — the row
-  // you're working on shouldn't jump out from under you. Values inside the row still update
-  // live; only its position is pinned until you close the modal, at which point it re-sorts.
+  // While a bill's edit modal is open, pin the row order as it was the moment you opened it —
+  // editing a bill you're currently sorted by (e.g. Paid Amount) would otherwise change its
+  // sort value live and yank it to a new spot mid-edit. Values inside the row still update
+  // live; only its position holds until you close the modal, at which point it re-sorts.
   useEffect(() => {
-    setFrozenOrderIds(editing ? rows.map(({ container: c }) => c.id) : null);
+    setFrozenOrderIds(editing ? sortedRows.map(({ container: c }) => c.id) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
   const displayRows = frozenOrderIds
-    ? frozenOrderIds.map((id) => rows.find(({ container: c }) => c.id === id)).filter(Boolean)
-    : rows;
+    ? frozenOrderIds.map((id) => sortedRows.find(({ container: c }) => c.id === id)).filter(Boolean)
+    : sortedRows;
 
   // Picker screen — choose a transporter before seeing any bills.
   if (!selectedTransporter) {
@@ -5253,18 +5254,14 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
-      <div className="border-b border-slate-800 flex items-center gap-1 overflow-x-auto">
-        {["All", ...BILL_STAGES].map((s) => (
-          <button
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        {BILL_STAGES.map((s) => (
+          <MiniStat
             key={s}
-            onClick={() => setStageTab(s)}
-            className={cx(
-              "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
-              stageTab === s ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
-            )}
-          >
-            {s} <span className="text-slate-600">({stageCounts[s] || 0})</span>
-          </button>
+            label={s} value={stageCounts[s] || 0} color={billStageTextColor[s]}
+            onClick={() => setStageTab(stageTab === s ? "All" : s)}
+            active={stageTab === s}
+          />
         ))}
       </div>
       <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
