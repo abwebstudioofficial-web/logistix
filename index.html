@@ -5190,7 +5190,14 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
     .sort((a, b) => {
       const va = sortValue(a, sortKey);
       const vb = sortValue(b, sortKey);
-      let cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+      // Plain ordinal comparison, not localeCompare — these values are structured data (ISO
+      // dates, IDs) rather than user-facing text, and localeCompare's locale-aware collation
+      // isn't guaranteed to produce a consistent total order for them. An inconsistent
+      // comparator breaks Array.sort's correctness guarantee and can visibly scramble the
+      // result on larger arrays (this table can have 90+ rows for a busy transporter).
+      let cmp;
+      if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+      else { const sa = String(va), sb = String(vb); cmp = sa < sb ? -1 : sa > sb ? 1 : 0; }
       if (sortDir === "desc") cmp = -cmp;
       return cmp;
     });
