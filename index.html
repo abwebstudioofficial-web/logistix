@@ -8835,61 +8835,78 @@ function LogistixERP() {
   // the latest updated_at), and is what makes the 30s poll affordable at this dataset size -
   // previously every poll re-downloaded every table in full regardless of whether anything had
   // actually changed, which is what was driving egress usage into gigabytes per day.
+  // Uses .range(0, 0) rather than .limit() - this app's lite Supabase client (createLiteClient)
+  // is a hand-rolled REST wrapper, not the real supabase-js library, and its query builder only
+  // implements .eq/.order/.range/.maybeSingle - no .limit(). Calling .limit() threw a TypeError
+  // on every single poll, which silently broke live data sync entirely (the error happened
+  // before setDataState was ever reached) until this was caught. .range(0, 0) asks for just the
+  // first row and, per that client's own implementation, automatically requests an exact count
+  // via the response's Content-Range header - giving both pieces of the signature in one call.
   async function fetchTableSignature(table) {
-    const { data, count, error } = await supabaseClient
-      .from(table)
-      .select("updated_at", { count: "exact" })
-      .order("updated_at", { ascending: false })
-      .limit(1);
-    if (error) return null; // unknown - caller treats this as "assume changed, fetch for real"
-    const latest = (data && data[0] && data[0].updated_at) || "";
-    return `${count}:${latest}`;
+    try {
+      const { data, count, error } = await supabaseClient
+        .from(table)
+        .select("updated_at")
+        .order("updated_at", { ascending: false })
+        .range(0, 0);
+      if (error) return null; // unknown - caller treats this as "assume changed, fetch for real"
+      const latest = (data && data[0] && data[0].updated_at) || "";
+      return `${count}:${latest}`;
+    } catch (e) {
+      return null; // network hiccup etc - never let this take down the whole poll cycle
+    }
   }
 
   async function refreshData() {
-    const isInitialLoad = Object.keys(lastSignatureRef.current).length === 0;
-    let tablesToFetch = DATA_TABLES;
-    if (!isInitialLoad) {
-      const signatures = await Promise.all(DATA_TABLES.map((t) => fetchTableSignature(t)));
-      tablesToFetch = DATA_TABLES.filter((t, i) => signatures[i] === null || signatures[i] !== lastSignatureRef.current[t]);
-      if (tablesToFetch.length === 0) return; // nothing changed anywhere this poll - skip entirely
-    }
+    try {
+      const isInitialLoad = Object.keys(lastSignatureRef.current).length === 0;
+      let tablesToFetch = DATA_TABLES;
+      if (!isInitialLoad) {
+        const signatures = await Promise.all(DATA_TABLES.map((t) => fetchTableSignature(t)));
+        tablesToFetch = DATA_TABLES.filter((t, i) => signatures[i] === null || signatures[i] !== lastSignatureRef.current[t]);
+        if (tablesToFetch.length === 0) return; // nothing changed anywhere this poll - skip entirely
+      }
 
-    const results = await Promise.all(tablesToFetch.map((t) => fetchAllRows(t)));
-    tablesToFetch.forEach((t, i) => {
-      const { data: rows } = results[i];
-      if (!rows) return; // failed fetch - leave last known signature as-is so it's retried next poll
-      const latest = rows.reduce((max, r) => (r.updated_at && r.updated_at > max ? r.updated_at : max), "");
-      lastSignatureRef.current[t] = `${rows.length}:${latest}`;
-    });
-
-    setDataState((prev) => {
-      // prev is null on the very first load (before any data has ever been set) - refreshData
-      // is reused both for that initial load and the 30-second background poll, but only the
-      // poll case can assume prev already has real data to compare against.
-      const base = prev || {};
-      const next = { ...base };
-      let anyTableChanged = !prev;
+      const results = await Promise.all(tablesToFetch.map((t) => fetchAllRows(t)));
       tablesToFetch.forEach((t, i) => {
-        const { data: rows, error } = results[i];
-        if (error) {
-          // Never let a failed background fetch wipe out data that's already on screen —
-          // keep whatever was there before and just skip updating this one table.
-          console.error(`Failed refreshing ${t}:`, error.message);
-          return;
-        }
-        const fetched = (rows || []).map(fromDbRow);
-        // Cheap-ish but reliable: only swap in the new array (a new reference, which is what
-        // actually triggers re-renders) if the data is genuinely different. Every poll was
-        // previously replacing every table's reference unconditionally, forcing the whole
-        // app to re-render even when nothing in the database had actually changed.
-        if (!prev || JSON.stringify(fetched) !== JSON.stringify(base[t])) {
-          next[t] = fetched;
-          anyTableChanged = true;
-        }
+        const { data: rows } = results[i];
+        if (!rows) return; // failed fetch - leave last known signature as-is so it's retried next poll
+        const latest = rows.reduce((max, r) => (r.updated_at && r.updated_at > max ? r.updated_at : max), "");
+        lastSignatureRef.current[t] = `${rows.length}:${latest}`;
       });
-      return anyTableChanged ? next : prev; // no change anywhere -> keep the exact same state object
-    });
+
+      setDataState((prev) => {
+        // prev is null on the very first load (before any data has ever been set) - refreshData
+        // is reused both for that initial load and the 30-second background poll, but only the
+        // poll case can assume prev already has real data to compare against.
+        const base = prev || {};
+        const next = { ...base };
+        let anyTableChanged = !prev;
+        tablesToFetch.forEach((t, i) => {
+          const { data: rows, error } = results[i];
+          if (error) {
+            // Never let a failed background fetch wipe out data that's already on screen —
+            // keep whatever was there before and just skip updating this one table.
+            console.error(`Failed refreshing ${t}:`, error.message);
+            return;
+          }
+          const fetched = (rows || []).map(fromDbRow);
+          // Cheap-ish but reliable: only swap in the new array (a new reference, which is what
+          // actually triggers re-renders) if the data is genuinely different. Every poll was
+          // previously replacing every table's reference unconditionally, forcing the whole
+          // app to re-render even when nothing in the database had actually changed.
+          if (!prev || JSON.stringify(fetched) !== JSON.stringify(base[t])) {
+            next[t] = fetched;
+            anyTableChanged = true;
+          }
+        });
+        return anyTableChanged ? next : prev; // no change anywhere -> keep the exact same state object
+      });
+    } catch (e) {
+      // Whatever else goes wrong here, it must never propagate as an uncaught rejection that
+      // silently kills every future poll — log it and let the next 30s cycle try again.
+      console.error("refreshData failed:", e);
+    }
   }
 
   async function loadProfileAndData() {
