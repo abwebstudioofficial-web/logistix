@@ -594,6 +594,7 @@ const COLUMN_REGISTRY = {
       { key: "loadingDate", label: "Loading Date" },
       { key: "freightAmount", label: "Freight Amount" },
       { key: "totalBillAmount", label: "Total Bill Amount Approved" },
+      { key: "paidAmount", label: "Paid Amount" },
       { key: "action", label: "Action" },
     ],
   },
@@ -5190,6 +5191,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
       case "loadingDate": return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
       case "freightAmount": return Number(c.freightAmount) || 0;
       case "totalBillAmount": return containerTotalBillAmount(c);
+      case "paidAmount": return Number(c.billPaidAmount) || 0;
       default: return 0;
     }
   }
@@ -5225,6 +5227,9 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   // Received/Approved), so it's only worth showing once you're actually looking at Posted or
   // Paid bills — or the unfiltered "All" view, where some rows will have it and some won't.
   const showTotalBillAmount = isColVisible("transporterBills", "totalBillAmount") && stageTab !== "Pending";
+  // Paid Amount is only meaningful once a bill has actually been posted — Pending, Bill
+  // Received, and Pending Approval are all still Rs 0 by definition.
+  const showPaidAmount = isColVisible("transporterBills", "paidAmount") && !["Pending", "Bill Received", "Pending Approval"].includes(stageTab);
   const sortedRows = [...filteredRows].sort(compareRows);
 
   // While a bill's edit modal is open, pin the row order as it was the moment you opened it —
@@ -5311,6 +5316,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                 {isColVisible("transporterBills", "loadingDate") && <SortTh colKey="loadingDate" label="Loading Date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {showTotalBillAmount && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {showPaidAmount && <SortTh colKey="paidAmount" label="Paid Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "action") && <th className={thCls}>Action</th>}
               </tr>
             </thead>
@@ -5342,6 +5348,17 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                           className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
                         >
                           {formatPKR(containerTotalBillAmount(c))}
+                        </button>
+                      </td>
+                    )}
+                    {showPaidAmount && (
+                      <td className={tdCls}>
+                        <button
+                          type="button"
+                          onClick={() => setEditing({ order: o, container: c, modal: "paid" })}
+                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
+                        >
+                          {c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}
                         </button>
                       </td>
                     )}
@@ -5502,9 +5519,17 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
 function PaidAmountModal({ order, container, updateContainerFields, onClose }) {
   const total = containerTotalBillAmount(container);
   const [paidAmount, setPaidAmount] = useState(container.billPaidAmount || total || "");
+  const [busy, setBusy] = useState(false);
 
-  function save() {
-    updateContainerFields(order.id, container.id, { billPaidAmount: paidAmount });
+  // Was previously fire-and-forget: the modal closed immediately while the save was still in
+  // flight, so a slow connection (or a save that failed outright — updateContainerFields alerts
+  // on error but the modal had already closed by then) could make an edit look like it silently
+  // did nothing. Now the modal stays open and the button shows "Saving..." until the save has
+  // actually finished, so it always either closes on a genuine success or stays open on failure.
+  async function save() {
+    setBusy(true);
+    await updateContainerFields(order.id, container.id, { billPaidAmount: paidAmount });
+    setBusy(false);
     onClose();
   }
 
@@ -5520,8 +5545,8 @@ function PaidAmountModal({ order, container, updateContainerFields, onClose }) {
         onChange={(e) => setPaidAmount(e.target.value)} placeholder="0"
       />
       <div className="flex justify-end gap-2 mt-4">
-        <button type="button" onClick={onClose} className={btnSecondary}>Cancel</button>
-        <button type="button" onClick={save} className={btnPrimary}>Save</button>
+        <button type="button" onClick={onClose} disabled={busy} className={btnSecondary}>Cancel</button>
+        <button type="button" onClick={save} disabled={busy} className={btnPrimary}>{busy ? "Saving…" : "Save"}</button>
       </div>
     </Modal>
   );
