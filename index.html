@@ -584,6 +584,7 @@ const COLUMN_REGISTRY = {
     label: "Transporter Bills",
     columns: [
       { key: "type", label: "Type" },
+      { key: "stage", label: "Stage" },
       { key: "jobNo", label: "Job No." },
       { key: "customer", label: "Customer" },
       { key: "loadingPoint", label: "Loading Point" },
@@ -1971,12 +1972,14 @@ async function buildTemplateWorkbook(data, mode) {
   // > Import & Domestic Consumption Report EXACTLY: same contract-rate match, same fuel price
   // mode (Daily/Fortnightly/Monthly, read from the same localStorage key the page uses), same
   // per-customer per-date swap dedup (a swap belongs to a date, not a specific shipment - if
-  // several shipments dispatch the same day, the swap only offsets the first one), and the
-  // same Receivable definition: Fuel Adjustment minus actual Fuel Swapped that date, NOT
-  // General + Fuel Adjustment (that would be the full freight, a different figure entirely).
+  // several shipments dispatch the same day, the swap only offsets the first one), same
+  // Receivable definition (Fuel Adjustment minus actual Fuel Swapped that date), and the same
+  // Freight figure the page uses: the matched contract rate's full total (General + Fuel
+  // combined, matchedRate.rate) — NOT just the General component. An earlier version of this
+  // sheet used General-only here, which didn't actually match what the page shows.
   let fuelReportPriceMode = "daily";
   try { fuelReportPriceMode = window.localStorage.getItem("logistix_fuel_price_mode") || "daily"; } catch (e) { /* ignore */ }
-  const fuelReportHeaders = ["Sr.", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Swapped (PKR)", "Fuel Swapped (Litre)", "Receivable (PKR)", "Receivable (Litre)"];
+  const fuelReportHeaders = ["Sr.", "Customer", "Dispatch Date", "Vehicle No.", "Freight (PKR)", "Fuel Swapped (PKR)", "Fuel Swapped (Litre)", "Receivable (PKR)", "Receivable (Litre)"];
   const fuelReportFlat = flattenContainers(orders, (o) => {
     const st = (o.shipmentType || "Import");
     return (st === "Import" || st === "Domestic") && !!(orderContainers(o).length);
@@ -1989,7 +1992,7 @@ async function buildTemplateWorkbook(data, mode) {
     const dispatchDateISO = toLocalDateStr(new Date(c.dispatchAt));
     const cust = getCustomer(data, o.customerId);
     const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups, dispatchDateISO);
-    const generalAmount = matchedRate ? contractRateComponents(matchedRate).general : (xnum(c.freightAmount, null));
+    const freightAmount = matchedRate ? xnum(matchedRate.rate) : xnum(c.freightAmount, null);
     const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
     const fuelComponentAmount = matchedRate ? contractRateComponents(matchedRate).fuelComponent : null;
     const impliedLitres = (fuelComponentAmount !== null && fuelBaseRate) ? fuelComponentAmount / fuelBaseRate : null;
@@ -2014,7 +2017,7 @@ async function buildTemplateWorkbook(data, mode) {
     const naNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for this date" : "";
     fuelReportRows.push([
       fuelReportRows.length, cust ? (cust.shortName || cust.name) : "", fmtDate(dispatchDateISO), c.vehiclePlate || "",
-      generalAmount !== null ? generalAmount : naNote,
+      freightAmount !== null ? freightAmount : naNote,
       swappedPKR || "", swappedLitres || "",
       receivablePKR !== null ? receivablePKR : naNote,
       receivableLitres !== null ? receivableLitres : naNote,
@@ -5070,6 +5073,30 @@ function containerTotalBillAmount(c) {
   return freight + chargesTotal;
 }
 
+const BILL_STAGES = ["Pending", "Bill Received", "Approved", "Posted", "Paid"];
+const billStageColor = {
+  Pending: "bg-slate-800 text-slate-400 border-slate-700",
+  "Bill Received": "bg-blue-950 text-blue-400 border-blue-800",
+  Approved: "bg-amber-950 text-amber-400 border-amber-800",
+  Posted: "bg-violet-950 text-violet-400 border-violet-800",
+  Paid: "bg-emerald-950 text-emerald-400 border-emerald-800",
+};
+// A bill's stage is derived entirely from data already on the container — no separate status
+// field to keep in sync. Pending: transporter hasn't submitted a bill yet. Bill Received: bill
+// number/date recorded but nobody's tallied freight+charges into an approved total yet.
+// Approved: total is set but nothing's been paid. Posted: partially paid. Paid: paid in full
+// (or over — Paid Amount is a manual entry, so it can exceed the approved total).
+function billStage(c) {
+  const hasBillInfo = !!(c.transporterBillNo || c.transporterBillDate);
+  if (!hasBillInfo) return "Pending";
+  const total = containerTotalBillAmount(c);
+  if (total <= 0) return "Bill Received";
+  const paid = Number(c.billPaidAmount) || 0;
+  if (paid <= 0) return "Approved";
+  if (paid < total) return "Posted";
+  return "Paid";
+}
+
 // Sortable table header cell. Defined at module scope (not inside TransporterBillsView) so
 // React treats it as the same component across renders — defining a component inside another
 // component's body creates a brand-new function identity every render, which forces React to
@@ -5098,6 +5125,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
+  const [stageTab, setStageTab] = useState("All");
   const flat = [];
   data.orders.forEach((o) => {
     orderContainers(o).forEach((c) => flat.push({ order: o, container: c }));
@@ -5124,6 +5152,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
     const { order: o, container: c } = row;
     switch (key) {
       case "type": return CATEGORY_ORDER[o.shipmentType] ?? 3;
+      case "stage": return BILL_STAGES.indexOf(billStage(c));
       case "jobNo": return (o.jobNumber || "").toLowerCase();
       case "customer": return ((getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "").toLowerCase();
       case "loadingPoint": return (o.origin || "").toLowerCase();
@@ -5144,13 +5173,20 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
 
   // selectedTransporter is null on the picker screen, so this naturally resolves to an
   // empty array then (nothing matches a null transporter name) — safe to compute unconditionally.
-  const rows = flat
+  const searchFilteredRows = flat
     .filter(({ container: c }) => ((c.transporter || "").trim() || "Unassigned") === selectedTransporter)
     .filter(({ order, container }) => {
       const cust = getCustomer(data, order.customerId);
       const text = `${order.orderNumber} ${order.jobNumber || ""} ${cust ? (cust.shortName || cust.name) : ""} ${container.containerNumber || ""}`.toLowerCase();
       return !q || text.includes(q.toLowerCase());
-    })
+    });
+  // Counts reflect the current search, so narrowing the search also narrows what each tab shows.
+  const stageCounts = { All: searchFilteredRows.length };
+  BILL_STAGES.forEach((s) => { stageCounts[s] = 0; });
+  searchFilteredRows.forEach(({ container: c }) => { stageCounts[billStage(c)] += 1; });
+
+  const rows = searchFilteredRows
+    .filter(({ container: c }) => stageTab === "All" || billStage(c) === stageTab)
     .sort((a, b) => {
       const va = sortValue(a, sortKey);
       const vb = sortValue(b, sortKey);
@@ -5210,6 +5246,20 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
+      <div className="border-b border-slate-800 flex items-center gap-1 overflow-x-auto">
+        {["All", ...BILL_STAGES].map((s) => (
+          <button
+            key={s}
+            onClick={() => setStageTab(s)}
+            className={cx(
+              "px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+              stageTab === s ? "border-blue-600 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
+            )}
+          >
+            {s} <span className="text-slate-600">({stageCounts[s] || 0})</span>
+          </button>
+        ))}
+      </div>
       <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
       {displayRows.length === 0 ? (
         <EmptyState icon={Receipt} text="No containers found." />
@@ -5219,6 +5269,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
             <thead className={theadCls}>
               <tr>
                 {isColVisible("transporterBills", "type") && <SortTh colKey="type" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "stage") && <SortTh colKey="stage" label="Stage" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "jobNo") && <SortTh colKey="jobNo" label="Job No." sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "customer") && <SortTh colKey="customer" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "loadingPoint") && <SortTh colKey="loadingPoint" label="Loading Point" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
@@ -5239,6 +5290,9 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                   <tr key={c.id} className={trCls}>
                     {isColVisible("transporterBills", "type") && (
                       <td className={tdCls}><Badge text={shipType} className={shipmentTypeColor[shipType] || priorityColor.Normal} /></td>
+                    )}
+                    {isColVisible("transporterBills", "stage") && (
+                      <td className={tdCls}><Badge text={billStage(c)} className={billStageColor[billStage(c)]} /></td>
                     )}
                     {isColVisible("transporterBills", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>}
                     {isColVisible("transporterBills", "customer") && <td className={cx(tdCls, "text-white font-medium")}>{cust ? (cust.shortName || cust.name) : "Unknown"}</td>}
