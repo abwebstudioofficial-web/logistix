@@ -1319,19 +1319,6 @@ const xnum = (v, fb = 0) => {
 const xstr = (v, fb = "") => (v === null || v === undefined || v === "" ? fb : String(v));
 const xbool = (v) => v === true || v === "true" || v === 1 || v === "1" || v === "TRUE";
 
-// Sizes each column to comfortably fit its header and content — previously no width was
-// set at all, so every column fell back to Excel's cramped ~8-character default regardless
-// of what was actually in it.
-function computeColWidths(schema, cleanedRows) {
-  return schema.map((key) => {
-    let maxLen = String(key).length;
-    (cleanedRows || []).slice(0, 300).forEach((r) => {
-      const v = r[key];
-      if (v !== null && v !== undefined && v !== "") maxLen = Math.max(maxLen, String(v).length);
-    });
-    return { wch: Math.min(Math.max(maxLen + 6, 14), 60) }; // generous padding, floor of 14, capped at 60 so one huge cell can't blow out the sheet
-  });
-}
 // Converts an internal camelCase field name into a readable column header, e.g.
 // "orderNumber" -> "Order Number", "customerId" -> "Customer ID". Used both to generate
 // export headers and (via readField) to read them back correctly on re-import.
@@ -1350,47 +1337,39 @@ const NUMERIC_SCHEMA_FIELDS = {
   Invoices: new Set(["total"]),
   FuelPrices: new Set(["pricePerLiter"]),
 };
-function buildSheet(rows, schema, displayHeaders, sheetName) {
+// Same data-cleaning rules the plain unstyled builder used to have (hidden ID columns stay
+// truly blank so re-import falls back to a fresh id correctly, JSON.stringify for object/array
+// values, numeric coercion per NUMERIC_SCHEMA_FIELDS) but returns a buildXlsxBuffer-ready sheet
+// descriptor (styled: blue header, Tahoma data, bordered, matching every other export in the
+// app) instead of a plain unstyled XLSX.utils worksheet.
+function styledSheetFromSchema(sheetName, records, schema, displayHeaders) {
   const headers = displayHeaders || schema.map(humanizeFieldName);
-  // Hidden rather than deleted: id/customerId/senderId are needed for Attach/Revert to match
-  // existing records; containers/history hold raw JSON (including base64 photos); stageIndex/
-  // cancelled are internal status bookkeeping. None of these are useful for a human reading
-  // the sheet, but the data staying present (just not shown) keeps re-import correct.
   const hideKeys = new Set(["id", "customerid", "containers", "history", "stageindex", "cancelled", "senderid"]);
-  const hiddenColIdxs = schema.map((k, i) => (hideKeys.has(String(k).toLowerCase()) ? i : -1)).filter((i) => i >= 0);
+  const hiddenColIdxs = schema.map((k, i) => (hideKeys.has(String(k).toLowerCase()) ? i + 1 : -1)).filter((i) => i > 0);
   const numericFields = NUMERIC_SCHEMA_FIELDS[sheetName] || new Set();
-  if (!rows || rows.length === 0) {
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
-    ws["!cols"] = headers.map((h) => ({ wch: Math.max(String(h).length + 6, 14) }));
-    hiddenColIdxs.forEach((i) => { ws["!cols"][i].hidden = true; });
-    return ws;
-  }
-  const cleaned = rows.map((r) => {
-    const out = {};
-    schema.forEach((k, i) => {
+  const dataRows = (records || []).map((r) =>
+    schema.map((k) => {
       const val = r[k];
       const isEmpty = val === null || val === undefined || val === "";
-      if (isEmpty) {
-        // Hidden ID columns must stay truly empty — a literal "-" there would be read back
-        // as a real ID on re-import instead of correctly falling back to a freshly generated one.
-        out[headers[i]] = hideKeys.has(String(k).toLowerCase()) ? "" : "-";
-        return;
-      }
-      if (typeof val === "object") { out[headers[i]] = JSON.stringify(val); return; }
-      out[headers[i]] = numericFields.has(k) ? xnum(val) : val;
-    });
-    return out;
-  });
-  const ws = XLSX.utils.json_to_sheet(cleaned, { header: headers });
-  ws["!cols"] = computeColWidths(headers, cleaned);
-  // Hide technical ID columns rather than deleting them — they're what lets Attach/Revert
-  // correctly match a row to its existing database record instead of creating a duplicate
-  // on re-import, but there's no reason for them to visually clutter the sheet.
-  hiddenColIdxs.forEach((i) => { if (ws["!cols"][i]) ws["!cols"][i].hidden = true; });
-  return ws;
+      if (isEmpty) return hideKeys.has(String(k).toLowerCase()) ? "" : "-";
+      if (typeof val === "object") return JSON.stringify(val);
+      return numericFields.has(k) ? xnum(val) : val;
+    })
+  );
+  const rows = [headers, ...dataRows];
+  const wrapCols = new Set(); // simple data-backup sheets stay single-line, matching Contract Rates/Swaps style
+  return {
+    name: sheetName, rows, headerRowIndex: 1, freezeRows: 1,
+    colWidths: colWidthsFor(headers), hiddenCols: hiddenColIdxs,
+    headerOverrides: buildColStyleMap(headers.length, wrapCols, 5, 6),
+    contentDefaultCols: buildColStyleMap(headers.length, wrapCols, 9, 8),
+  };
 }
-function buildWorkbook(data) {
-  const wb = XLSX.utils.book_new();
+
+// Styled equivalent of the app's old plain full-database-backup export — same sheets, same data,
+// column rules, but run through buildXlsxBuffer so it gets the same blue-header/Tahoma-data
+// look as every other export in the app instead of a plain unstyled worksheet.
+async function buildStyledFullBackupWorkbook(data) {
   const ordersWithNames = (data.orders || []).map((o) => ({
     ...o,
     customerName: (getCustomer(data, o.customerId) || {}).shortName || (getCustomer(data, o.customerId) || {}).name || "",
@@ -1398,10 +1377,10 @@ function buildWorkbook(data) {
   }));
   const map = { Orders: ordersWithNames, Customers: data.customers, Senders: data.senders, Transporters: data.transporters, Drivers: data.drivers, Vehicles: data.vehicles, Invoices: data.invoices, Routes: data.routes, FuelPrices: data.fuel_prices };
   const displayHeadersBySheet = { FuelPrices: ["Effective Date", "Price per Liter (PKR)", "ID"] };
-  Object.entries(SHEET_SCHEMAS).forEach(([sheetName, schema]) => {
-    XLSX.utils.book_append_sheet(wb, buildSheet(map[sheetName] || [], schema, displayHeadersBySheet[sheetName], sheetName), sheetName);
-  });
-  return wb;
+  const sheets = Object.entries(SHEET_SCHEMAS).map(([sheetName, schema]) =>
+    styledSheetFromSchema(sheetName, map[sheetName] || [], schema, displayHeadersBySheet[sheetName])
+  );
+  return buildXlsxBuffer(sheets);
 }
 
 /* ---- Transportation-2026 template export ---- */
@@ -1932,34 +1911,91 @@ async function buildTemplateWorkbook(data, mode) {
   });
 
   // --- Fuel Report (blue header, every customer's Import & Domestic dispatched shipments
-  // combined into one sheet, with a Customer column) — same freight/fuel-adjustment formula
-  // as the Fuel Management report and Contract Rates' Adjusted Rate, using the contract rate
-  // that was actually valid on each shipment's own dispatch date.
-  const fuelReportHeaders = ["Sr#", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Adjustment (PKR)", "Total Receivable (PKR)"];
+  // combined into one sheet, with a Customer column) — mirrors the on-screen Fuel Management
+  // > Import & Domestic Consumption Report EXACTLY: same contract-rate match, same fuel price
+  // mode (Daily/Fortnightly/Monthly, read from the same localStorage key the page uses), same
+  // per-customer per-date swap dedup (a swap belongs to a date, not a specific shipment - if
+  // several shipments dispatch the same day, the swap only offsets the first one), and the
+  // same Receivable definition: Fuel Adjustment minus actual Fuel Swapped that date, NOT
+  // General + Fuel Adjustment (that would be the full freight, a different figure entirely).
+  let fuelReportPriceMode = "daily";
+  try { fuelReportPriceMode = window.localStorage.getItem("logistix_fuel_price_mode") || "daily"; } catch (e) { /* ignore */ }
+  const fuelReportHeaders = ["Sr#", "Customer", "Dispatch Date", "Vehicle No.", "General (PKR)", "Fuel Swapped (PKR)", "Fuel Swapped (Litre)", "Receivable (PKR)", "Receivable (Litre)"];
   const fuelReportFlat = flattenContainers(orders, (o) => {
     const st = (o.shipmentType || "Import");
     return (st === "Import" || st === "Domestic") && !!(orderContainers(o).length);
-  });
+  }).filter(({ c }) => !!c.dispatchAt)
+    .sort((a, b) => new Date(a.c.dispatchAt) - new Date(b.c.dispatchAt)); // chronological, so per-date swap dedup below credits the earliest shipment first - same rule as the page
+
+  const claimedSwapDatesByCustomer = new Map(); // customerId -> Set of dates already credited a swap
   const fuelReportRows = [fuelReportHeaders];
   fuelReportFlat.forEach(({ o, c }) => {
-    const dispatchDateISO = c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : (c.loadingDate || "");
-    if (!dispatchDateISO) return; // never dispatched - nothing to report
+    const dispatchDateISO = toLocalDateStr(new Date(c.dispatchAt));
     const cust = getCustomer(data, o.customerId);
     const matchedRate = matchContractRateAnyCustomer(o.customerId, o.origin, c, data.contracts, data.contract_groups, dispatchDateISO);
+    const generalAmount = matchedRate ? contractRateComponents(matchedRate).general : (xnum(c.freightAmount, null));
     const fuelBaseRate = matchedRate && matchedRate.group ? xnum(matchedRate.group.fuelBaseRate, null) : null;
-    const { general, fuelComponent } = matchedRate ? contractRateComponents(matchedRate) : { general: null, fuelComponent: null };
-    const impliedLitres = (fuelComponent !== null && fuelBaseRate) ? fuelComponent / fuelBaseRate : null;
-    const price = fuelPriceOnDate(data.fuel_prices, dispatchDateISO);
+    const fuelComponentAmount = matchedRate ? contractRateComponents(matchedRate).fuelComponent : null;
+    const impliedLitres = (fuelComponentAmount !== null && fuelBaseRate) ? fuelComponentAmount / fuelBaseRate : null;
+    const price = resolveEffectiveFuelPrice(data.fuel_prices, dispatchDateISO, fuelReportPriceMode);
     const fuelAdjustment = (impliedLitres !== null && price) ? impliedLitres * price : null;
-    const fullFreight = (general !== null && fuelAdjustment !== null) ? general + fuelAdjustment : null;
-    const noMatchNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for this date" : "";
+
+    let swappedLitres = 0, swappedPKR = 0;
+    const claimedDates = claimedSwapDatesByCustomer.get(o.customerId) || new Set();
+    if (!claimedDates.has(dispatchDateISO)) {
+      const swapsOnDate = (data.fuel_card_swaps || []).filter((s) => s.customerId === o.customerId && s.swapDate === dispatchDateISO);
+      if (swapsOnDate.length > 0) {
+        swappedLitres = swapsOnDate.reduce((sum, s) => sum + (xnum(s.qtyLtr) || 0), 0);
+        swappedPKR = swapsOnDate.reduce((sum, s) => sum + (xnum(s.amountPkr) || 0), 0);
+        claimedDates.add(dispatchDateISO);
+        claimedSwapDatesByCustomer.set(o.customerId, claimedDates);
+      }
+    }
+    // A swap must never be silently lost, even with no fuel-adjustment to net it against -
+    // it becomes a negative Receivable (money owed back) instead of vanishing. Same rule as page.
+    const receivablePKR = fuelAdjustment !== null ? fuelAdjustment - swappedPKR : (swappedPKR > 0 ? -swappedPKR : null);
+    const receivableLitres = impliedLitres !== null ? impliedLitres - swappedLitres : (swappedLitres > 0 ? -swappedLitres : null);
+    const naNote = !matchedRate ? "No matching contract rate" : !fuelBaseRate ? "Contract has no Fuel Base Rate" : !price ? "No fuel price for this date" : "";
     fuelReportRows.push([
       fuelReportRows.length, cust ? (cust.shortName || cust.name) : "", fmtDate(dispatchDateISO), c.vehiclePlate || "",
-      general !== null ? general : noMatchNote,
-      fuelAdjustment !== null ? fuelAdjustment : noMatchNote,
-      fullFreight !== null ? fullFreight : noMatchNote,
+      generalAmount !== null ? generalAmount : naNote,
+      swappedPKR || "", swappedLitres || "",
+      receivablePKR !== null ? receivablePKR : naNote,
+      receivableLitres !== null ? receivableLitres : naNote,
     ]);
   });
+
+  // Swap entries on a date with no dispatched shipment for that customer would otherwise never
+  // appear anywhere in this sheet - add a synthetic row per such date/customer so the swapped
+  // quantity is never silently dropped, same as the page's orphan-row handling.
+  const coveredByCustomer = new Map(); // customerId -> Set of covered dispatch dates
+  fuelReportFlat.forEach(({ o, c }) => {
+    const set = coveredByCustomer.get(o.customerId) || new Set();
+    set.add(toLocalDateStr(new Date(c.dispatchAt)));
+    coveredByCustomer.set(o.customerId, set);
+  });
+  const swapsByCustomerDate = new Map(); // "customerId|date" -> swaps
+  (data.fuel_card_swaps || []).forEach((s) => {
+    if (!s.swapDate) return;
+    const key = `${s.customerId}|${s.swapDate}`;
+    const list = swapsByCustomerDate.get(key) || [];
+    list.push(s);
+    swapsByCustomerDate.set(key, list);
+  });
+  swapsByCustomerDate.forEach((swapsOnDate, key) => {
+    const [customerId, sd] = key.split("|");
+    const covered = coveredByCustomer.get(customerId) || new Set();
+    if (covered.has(sd)) return; // already represented by a real shipment row above
+    const cust = getCustomer(data, customerId);
+    const swappedLitres = swapsOnDate.reduce((sum, s) => sum + (xnum(s.qtyLtr) || 0), 0);
+    const swappedPKR = swapsOnDate.reduce((sum, s) => sum + (xnum(s.amountPkr) || 0), 0);
+    fuelReportRows.push([
+      fuelReportRows.length, cust ? (cust.shortName || cust.name) : "", fmtDate(sd), "—",
+      "No dispatch", swappedPKR || "", swappedLitres || "",
+      swappedPKR > 0 ? -swappedPKR : "No dispatch", swappedLitres > 0 ? -swappedLitres : "No dispatch",
+    ]);
+  });
+
   const fuelReportContentDefault = buildColStyleMap(fuelReportHeaders.length, new Set(), 0, 8);
   fuelReportContentDefault[2] = 22; // Customer — bold, matching the Domestic/Import sheets' convention
   sheets.push({
@@ -9345,8 +9381,8 @@ function LogistixERP() {
       }
       const fgStyling = domesticSheetStyling(15, [4, 9, 10, 14], [3, 11, 12, 13]);
       const wmStyling = domesticSheetStyling(16, [4, 9, 10, 11, 15], [3, 12, 13, 14]);
-      const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 20; fgColWidths[1] = 6;
-      const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 20; wmColWidths[1] = 6;
+      const fgColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_BASE); fgColWidths[0] = 20; fgColWidths[1] = 6.29;
+      const wmColWidths = colWidthsFor(DOMESTIC_EXPORT_HEADERS_WM); wmColWidths[0] = 20; wmColWidths[1] = 6.29;
 
       // Wrapping Materials and the new WM Domestic Karachi category both use the WM-style
       // layout (with the Sender column) per the request that the new tab match WM's layout;
@@ -9400,14 +9436,22 @@ function LogistixERP() {
     // drop them from this tab's export/attach schema so they don't show up as empty
     // columns, without touching the shared Orders schema used by Import/Domestic exports.
     if (viewKey === "orders_export") schema = schema.filter((k) => k !== "blNumber" && k !== "igmDate");
-    const wb = XLSX.utils.book_new();
-    const ws = buildSheet(rows, schema, cfg.displayHeaders, cfg.sheetName);
+    const sheet = styledSheetFromSchema(cfg.sheetName, rows, schema, cfg.displayHeaders);
     if (cfg.sheetName === "Orders") {
       const descIdx = schema.indexOf("description");
-      if (descIdx >= 0 && ws["!cols"] && ws["!cols"][descIdx] && ws["!cols"][descIdx].wch < 40) ws["!cols"][descIdx].wch = 40;
+      if (descIdx >= 0 && sheet.colWidths[descIdx] < 40) sheet.colWidths[descIdx] = 40;
     }
-    XLSX.utils.book_append_sheet(wb, ws, cfg.sheetName);
-    XLSX.writeFile(wb, `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`);
+    try {
+      const buffer = await buildXlsxBuffer([sheet]);
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${cfg.label.replace(/\s+/g, "-")}-${todayISO()}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      window.alert(`Couldn't build the ${cfg.label} export: ` + err.message);
+    }
   }
 
   // Rate rows for one specific contract (or the "Unassigned Rates" bucket when
@@ -9428,7 +9472,7 @@ function LogistixERP() {
       };
     });
     const schema = ["id", "loadingPoint", "destination", "movementThrough", "vehicleSize", "weightCategory", "axleLoadCategory", "generalComponent", "fuelComponent", "rate", "validFrom", "validTo"];
-    const displayHeaders = ["Id", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General Component", "Fuel Component", "Rate", "Valid From", "Valid To"];
+    const displayHeaders = ["Id", "Loading Point", "Destination", "Movement Through", "Vehicle Size", "Weight Category", "Vehicle Type", "General Component", "Fuel Component", "Total Rate (PKR)", "Valid From", "Valid To"];
     const dataRows = rows.map((r) => schema.map((k) => (r[k] === null || r[k] === undefined ? "" : r[k])));
     const sheetRows = [displayHeaders, ...dataRows];
     // Style 6 = blue header, bold white Tahoma 10, centered, bordered, no wrap (matches the
@@ -9716,10 +9760,20 @@ function LogistixERP() {
     }
   }
 
-  function handleDownloadExcel() {
-    const wb = buildWorkbook(data);
-    const name = excelMeta.filename ? excelMeta.filename.replace(/\.xlsx?$/i, "") + "-updated.xlsx" : "logistix-data.xlsx";
-    XLSX.writeFile(wb, name);
+  async function handleDownloadExcel() {
+    setExcelBusy(true);
+    try {
+      const buffer = await buildStyledFullBackupWorkbook(data);
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const name = excelMeta.filename ? excelMeta.filename.replace(/\.xlsx?$/i, "") + "-updated.xlsx" : "logistix-data.xlsx";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExcelBusy(false);
+    }
   }
 
   async function handleExportTemplate(mode) {
