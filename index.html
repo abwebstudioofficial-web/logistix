@@ -5122,7 +5122,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container }
   const [selectedTransporter, setSelectedTransporter] = useState(null);
-  const [sortKey, setSortKey] = useState("loadingDate"); // TEMP DEBUG
+  const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
   const [stageTab, setStageTab] = useState("All");
@@ -5268,13 +5268,15 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         ))}
       </div>
       <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
-      <div className="bg-red-950 border border-red-700 text-red-200 text-xs font-mono p-2 rounded">
-        DEBUG — sortKey: {String(sortKey)} | sortDir: {String(sortDir)} | editing: {editing ? "OPEN" : "null"} | frozenOrderIds: {frozenOrderIds ? `[${frozenOrderIds.length} ids]` : "null"} | rows.length: {rows.length} | displayRows.length: {displayRows.length} | first 5 displayRows loadingDate: {displayRows.slice(0, 5).map(({ container: c }) => c.loadingDate || "?").join(", ")}
-      </div>
       {displayRows.length === 0 ? (
         <EmptyState icon={Receipt} text="No containers found." />
       ) : (
-        <div className={tableWrap}>
+        // key forces React to fully rebuild this table (rather than reconcile/reorder the
+        // existing <tr> elements in place) whenever the sort or filter changes. A fresh mount
+        // with a given sort was always confirmed correct in testing; only in-place reordering
+        // of the existing rows was producing a stale/wrong visual order despite the underlying
+        // data being provably correct - forcing a clean rebuild sidesteps that entirely.
+        <div className={tableWrap} key={`${sortKey}-${sortDir}-${stageTab}-${q}`}>
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
