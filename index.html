@@ -595,6 +595,7 @@ const COLUMN_REGISTRY = {
       { key: "freightAmount", label: "Freight Amount" },
       { key: "totalBillAmount", label: "Total Bill Amount Approved" },
       { key: "paidAmount", label: "Paid Amount" },
+      { key: "attachment", label: "Bill Attachment" },
       { key: "action", label: "Action" },
     ],
   },
@@ -5319,6 +5320,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                 {isColVisible("transporterBills", "freightAmount") && <SortTh colKey="freightAmount" label="Freight Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {showTotalBillAmount && <SortTh colKey="totalBillAmount" label="Total Bill Amount Approved" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {showPaidAmount && <SortTh colKey="paidAmount" label="Paid Amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {isColVisible("transporterBills", "attachment") && stageTab !== "Pending" && <th className={thCls}>Bill Attachment</th>}
                 {isColVisible("transporterBills", "action") && <th className={thCls}>Action</th>}
               </tr>
             </thead>
@@ -5362,6 +5364,23 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                         >
                           {c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}
                         </button>
+                      </td>
+                    )}
+                    {isColVisible("transporterBills", "attachment") && stageTab !== "Pending" && (
+                      <td className={tdCls}>
+                        {c.billAttachment ? (
+                          <a
+                            href={c.billAttachment}
+                            target={isPdfDataUrl(c.billAttachment) ? undefined : "_blank"}
+                            rel={isPdfDataUrl(c.billAttachment) ? undefined : "noreferrer"}
+                            download={isPdfDataUrl(c.billAttachment) ? "transporter-bill.pdf" : undefined}
+                            className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
+                          >
+                            <FileText size={14} /> {isPdfDataUrl(c.billAttachment) ? "PDF" : "View"}
+                          </a>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
                       </td>
                     )}
                     {isColVisible("transporterBills", "action") && (
@@ -5440,15 +5459,23 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
   const [charges, setCharges] = useState(Array.isArray(container.charges) ? container.charges : []);
   const [attachment, setAttachment] = useState(container.billAttachment || "");
   const [attachmentError, setAttachmentError] = useState(null);
+  const fileInputRef = useRef(null);
   const total = containerTotalBillAmount({ ...container, charges });
 
-  function commitAll(nextCharges, nextAttachment) {
+  // Required: Bill Date, Bill No., and the attachment — Charges are optional (some bills
+  // genuinely have none beyond freight). billReceived only flips to true once all three are
+  // actually present, so an incomplete entry correctly stays in Pending (with whatever was
+  // typed so far preserved) rather than being able to advance with missing information.
+  function commitAll(nextCharges, nextAttachment, nextBillDate, nextBillNo) {
     const chargesToUse = nextCharges !== undefined ? nextCharges : charges;
     const attachmentToUse = nextAttachment !== undefined ? nextAttachment : attachment;
+    const billDateToUse = nextBillDate !== undefined ? nextBillDate : billDate;
+    const billNoToUse = nextBillNo !== undefined ? nextBillNo : billNo;
+    const complete = !!(billDateToUse && billNoToUse.trim() && attachmentToUse);
     updateContainerFields(order.id, container.id, {
-      billReceived: true, // opening this form at all means the bill has been received - Post (Pending Approval -> Posted) is a separate, later, explicit click
-      transporterBillDate: billDate,
-      transporterBillNo: billNo,
+      billReceived: complete,
+      transporterBillDate: billDateToUse,
+      transporterBillNo: billNoToUse,
       billAmountApproved: containerTotalBillAmount({ ...container, charges: chargesToUse }),
       charges: chargesToUse,
       billAttachment: attachmentToUse,
@@ -5470,27 +5497,38 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
       setAttachmentError("Couldn't read that file — try a different image or PDF.");
     }
   }
+  const missing = [];
+  if (!billDate) missing.push("Transporter Bill Date");
+  if (!billNo.trim()) missing.push("Transporter Bill No.");
+  if (!attachment) missing.push("Bill Attachment");
 
   return (
     <Modal title={`Transporter Bill — Container ${container.containerNumber || "—"}`} onClose={onClose}>
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div>
-          <label className="text-slate-500 text-xs block mb-1">Transporter Bill Date</label>
-          <input type="date" className={inputCls} value={billDate} onChange={(e) => setBillDate(e.target.value)} onBlur={() => commitAll()} />
+          <label className="text-slate-500 text-xs block mb-1">Transporter Bill Date <span className="text-red-400">*</span></label>
+          <input type="date" className={inputCls} value={billDate} onChange={(e) => setBillDate(e.target.value)} onBlur={() => commitAll()} required />
         </div>
         <div>
-          <label className="text-slate-500 text-xs block mb-1">Transporter Bill No.</label>
-          <input className={inputCls} value={billNo} onChange={(e) => setBillNo(e.target.value)} onBlur={() => commitAll()} />
+          <label className="text-slate-500 text-xs block mb-1">Transporter Bill No. <span className="text-red-400">*</span></label>
+          <input className={inputCls} value={billNo} onChange={(e) => setBillNo(e.target.value)} onBlur={() => commitAll()} required />
         </div>
       </div>
       <div className="mb-3">
-        <label className="text-slate-500 text-xs block mb-1">Bill Attachment (image or PDF)</label>
-        <input type="file" accept="image/*,application/pdf" onChange={handleFile} className={inputCls} />
+        <label className="text-slate-500 text-xs block mb-1">Bill Attachment (image or PDF) <span className="text-red-400">*</span></label>
+        <input ref={fileInputRef} type="file" accept="image/*,application/pdf" onChange={handleFile} style={{ display: "none" }} />
+        <button type="button" onClick={() => fileInputRef.current && fileInputRef.current.click()} className={btnSecondary}>
+          {attachment ? "Replace File" : "Choose File"}
+        </button>
         {attachmentError && <p className="text-red-400 text-xs mt-1">{attachmentError}</p>}
-        {attachment && !isPdfDataUrl(attachment) && <img src={attachment} alt="Transporter bill" className="mt-2 rounded-lg border border-slate-800 max-h-40" />}
+        {attachment && !isPdfDataUrl(attachment) && (
+          <a href={attachment} target="_blank" rel="noreferrer" className="block mt-2">
+            <img src={attachment} alt="Transporter bill" className="rounded-lg border border-slate-800 max-h-40" />
+          </a>
+        )}
         {attachment && isPdfDataUrl(attachment) && (
           <a href={attachment} download="transporter-bill.pdf" className="mt-2 flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2">
-            <FileText size={16} /> PDF attached — click to view
+            <FileText size={16} /> PDF attached — click to view or download
           </a>
         )}
       </div>
@@ -5508,6 +5546,9 @@ function TransporterBillModal({ order, container, updateContainerFields, onClose
         </div>
       </div>
       <ChargesEditor charges={charges} onChange={commitCharges} />
+      {missing.length > 0 && (
+        <p className="text-amber-400 text-xs mt-3">Still needed before this can move forward: {missing.join(", ")}.</p>
+      )}
       <div className="flex justify-end mt-4">
         <button type="button" onClick={onClose} className={btnPrimary}>Done</button>
       </div>
