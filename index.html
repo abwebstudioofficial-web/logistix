@@ -5229,6 +5229,9 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   // Total Bill Amount is meaningless before charges are posted (always Rs 0 for Pending/Bill
   // Received/Approved), so it's only worth showing once you're actually looking at Posted or
   // Paid bills — or the unfiltered "All" view, where some rows will have it and some won't.
+  // The Stage blocks above already show/select the current stage once you've filtered to one,
+  // so the Stage column itself is only useful in the unfiltered "All" view where rows are a mix.
+  const showStage = isColVisible("transporterBills", "stage") && stageTab === "All";
   const showTotalBillAmount = isColVisible("transporterBills", "totalBillAmount") && stageTab !== "Pending";
   // Paid Amount is only meaningful once a bill has actually been posted — Pending, Bill
   // Received, and Pending Approval are all still Rs 0 by definition.
@@ -5304,12 +5307,12 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         // with a given sort was always confirmed correct in testing; only in-place reordering
         // of the existing rows was producing a stale/wrong visual order despite the underlying
         // data being provably correct - forcing a clean rebuild sidesteps that entirely.
-        <div className={tableWrap} key={`${sortKey}-${sortDir}-${stageTab}-${q}-${showTotalBillAmount}-${showPaidAmount}`}>
+        <div className={tableWrap} key={`${sortKey}-${sortDir}-${stageTab}-${q}-${showStage}-${showTotalBillAmount}-${showPaidAmount}`}>
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
                 {isColVisible("transporterBills", "type") && <SortTh colKey="type" label="Type" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-                {isColVisible("transporterBills", "stage") && <SortTh colKey="stage" label="Stage" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                {showStage && <SortTh colKey="stage" label="Stage" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "jobNo") && <SortTh colKey="jobNo" label="Job No." sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "customer") && <SortTh colKey="customer" label="Customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                 {isColVisible("transporterBills", "loadingPoint") && <SortTh colKey="loadingPoint" label="Loading Point" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
@@ -5333,7 +5336,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                     {isColVisible("transporterBills", "type") && (
                       <td className={tdCls}><Badge text={shipType} className={shipmentTypeColor[shipType] || priorityColor.Normal} /></td>
                     )}
-                    {isColVisible("transporterBills", "stage") && (
+                    {showStage && (
                       <td className={tdCls}><Badge text={billStage(c)} className={billStageColor[billStage(c)]} /></td>
                     )}
                     {isColVisible("transporterBills", "jobNo") && <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>}
@@ -10506,4 +10509,3 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
-  
