@@ -5279,13 +5279,13 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" key={`${selectedTransporter}-${stageTab}`}>
       <div>
         <button onClick={() => { setSelectedTransporter(null); setQ(""); }} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1 mb-2"><ArrowLeft size={14} /> Back to transporters</button>
         <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4" key={`blocks-${stageTab}`}>
         {BILL_STAGES.map((s) => (
           <MiniStat
             key={s}
@@ -5304,7 +5304,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
         // with a given sort was always confirmed correct in testing; only in-place reordering
         // of the existing rows was producing a stale/wrong visual order despite the underlying
         // data being provably correct - forcing a clean rebuild sidesteps that entirely.
-        <div className={tableWrap} key={`${sortKey}-${sortDir}-${stageTab}-${q}`}>
+        <div className={tableWrap} key={`${sortKey}-${sortDir}-${stageTab}-${q}-${showTotalBillAmount}-${showPaidAmount}`}>
           <table className="w-full text-sm">
             <thead className={theadCls}>
               <tr>
@@ -10506,3 +10506,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<LogistixERP />);
 </script>
 </body>
 </html>
+  
