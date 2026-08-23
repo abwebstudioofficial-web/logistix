@@ -1022,7 +1022,7 @@ function AttachmentPreview({ dataUrl, alt, downloadName }) {
 
 const FIELD_LABELS = {
   driverName: "Driver", vehiclePlate: "Vehicle No.", transporter: "Transporter", freightAmount: "Freight Amount", fuelAmount: "Fuel Amount",
-  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received", billApproved: "Approved", billAttachment: "Bill Attachment",
+  transporterBillDate: "Transporter Bill Date", transporterBillNo: "Transporter Bill No.", billAmountApproved: "Bill Amount Approved", billPaidAmount: "Paid Amount", billReceived: "Bill Received", billApproved: "Approved", billPosted: "Posted", billAttachment: "Bill Attachment",
   charges: "Charges", containerType: "Container Type", containerSize: "Container Size", qtyLabel: "Qty",
   emptyReturnLocation: "Empty Return Location", emptyReturnDate: "Empty Return Date", emptyReturnTime: "Empty Return Time",
   emptyReturnDescription: "Empty Return Notes", amount: "Amount", weight: "Weight", priority: "Priority", destination: "Destination", shifting: "Shifting",
@@ -1059,7 +1059,7 @@ function emptyContainer() {
     destination: "", receiverAddressId: "", receiverAddressCustom: "", weight: "",
     dispatchPhoto: "", dispatchNotes: "", dispatchAt: "", dispatchedBy: "",
     podPhoto: "", podNotes: "", podArrivalAt: "", podOffloadingAt: "", podReceivedBy: "",
-    billReceived: false, billApproved: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", billAttachment: "", charges: [],
+    billReceived: false, billApproved: false, billPosted: false, transporterBillDate: "", transporterBillNo: "", billAmountApproved: "", billPaidAmount: "", billAttachment: "", charges: [],
     // Domestic Finished Goods / Wrapping Materials fields
     poSapNo: "", movementThrough: "", loadingDate: "", vehicleSize: "", supplier: "",
     history: [{ id: uid("evt"), message: "Container created and pending confirmation", at: new Date().toISOString(), location: "" }],
@@ -5111,17 +5111,19 @@ const billStageTextColor = {
   Posted: "text-violet-400",
   Paid: "text-emerald-400",
 };
-// A bill's stage is driven by what's actually been entered/attached, plus one manual "Post"
-// flag (billApproved) set by a one-click button with no form. Bill Received: submitted, no
-// charges tallied yet. Pending Approval: charges have been posted into a total via the
-// Forward-for-Approval form, awaiting the explicit Post click. Posted: Post clicked, not yet
-// paid in full. Paid: paid in full (or over — Paid Amount is a manual entry, so it can exceed
-// the approved total).
+// A bill's stage is driven by three manual flags, each set by its own click. billReceived is
+// set by the Mark-Bill-Received form (which is also where the transporter bill date/no,
+// charges, and attachment get entered - see TransporterBillModal). billApproved and billPosted
+// are each a single click with no form, advancing one stage at a time. Since charges are
+// already entered by the time billReceived is set, Posted/Paid can't be inferred from the
+// total being > 0 anymore (it already would be) - every step past Bill Received is purely an
+// explicit click, and only the final Posted -> Paid split still comes from actual data (the
+// paid amount).
 function billStage(c) {
   if (!c.billReceived) return "Pending";
+  if (!c.billApproved) return "Bill Received";
+  if (!c.billPosted) return "Pending Approval";
   const total = containerTotalBillAmount(c);
-  if (total <= 0) return "Bill Received";
-  if (!c.billApproved) return "Pending Approval";
   const paid = Number(c.billPaidAmount) || 0;
   if (paid < total) return "Posted";
   return "Paid";
@@ -5367,24 +5369,24 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
                         {(() => {
                           const stage = billStage(c);
                           if (stage === "Pending") {
-                            // One click, no form - just flags the bill as received.
                             return (
-                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billReceived: true })} className={btnSecondary}>
+                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
                                 Mark Bill Received
                               </button>
                             );
                           }
                           if (stage === "Bill Received") {
+                            // One click, no form - charges are already on file from the Mark Bill Received form.
                             return (
-                              <button type="button" onClick={() => setEditing({ order: o, container: c, modal: "post" })} className={btnSecondary}>
+                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
                                 Forward for Approval
                               </button>
                             );
                           }
                           if (stage === "Pending Approval") {
-                            // One click, no form - charges are already tallied; this just confirms/posts the bill.
+                            // One click, no form.
                             return (
-                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
+                              <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billPosted: true })} className={btnSecondary}>
                                 Post
                               </button>
                             );
