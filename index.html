@@ -5199,6 +5199,8 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
+  const [showPayments, setShowPayments] = useState(false);
+  const [paySortDir, setPaySortDir] = useState("asc");
   const [showStatement, setShowStatement] = useState(false);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
@@ -5297,6 +5299,21 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
     ? frozenOrderIds.map((id) => sortedRows.find(({ container: c }) => c.id === id)).filter(Boolean)
     : sortedRows;
 
+  // Payment to Transporter — a separate view too, simpler than Statement: only bills that
+  // actually have a payment recorded (not every billed entry), since this is meant as a
+  // payments log/receipt view rather than a full account statement.
+  const paymentRows = searchedRows
+    .filter(({ container: c }) => c.billReceived && Number(c.billPaidAmount) > 0)
+    .sort((a, b) => {
+      const da = a.container.transporterBillDate || "", db = b.container.transporterBillDate || "";
+      const cmp = da < db ? -1 : da > db ? 1 : 0;
+      return paySortDir === "desc" ? -cmp : cmp;
+    });
+  function paymentDescription(o, c) {
+    const route = [o.origin, c.destination || o.destination].filter(Boolean).join(" → ");
+    return [o.jobNumber, c.vehiclePlate, route].filter(Boolean).join(" · ") || "—";
+  }
+
   // Statement of Account — a separate view, not a stage filter. Same "has this transporter's
   // bill actually been received" scope as the Excel export, so the numbers always agree with
   // what you'd download, just with date-range filtering and its own sort (including by
@@ -5364,21 +5381,33 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
         <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
         <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
-      <div className={cx("grid grid-cols-2 gap-4", canExportStatement ? "lg:grid-cols-6" : "lg:grid-cols-5")} key={`blocks-${stageTab}-${showStatement}`}>
+      <div className={cx("grid grid-cols-2 gap-4", canExportStatement ? "lg:grid-cols-7" : "lg:grid-cols-5")} key={`blocks-${stageTab}-${showPayments}-${showStatement}`}>
         {BILL_STAGES.map((s) => (
           <MiniStat
             key={s}
             label={s} value={stageCounts[s] || 0} color={billStageTextColor[s]}
-            onClick={() => { setShowStatement(false); setStageTab(stageTab === s ? "All" : s); }}
-            active={!showStatement && stageTab === s}
+            onClick={() => { setShowPayments(false); setShowStatement(false); setStageTab(stageTab === s ? "All" : s); }}
+            active={!showPayments && !showStatement && stageTab === s}
           />
         ))}
-        {/* Not a stage — a separate report view (date range filter), toggled on its own
+        {/* Neither of these is a stage — both are separate report views, toggled on their own
             rather than filtering the stage table like the blocks above. Finance Manager/Admin
-            only - Statement of Account (viewing and exporting) isn't part of Bill Checker's job. */}
+            only - neither viewing nor exporting these is part of Bill Checker's job. */}
         {canExportStatement && (
           <div
-            onClick={() => setShowStatement((v) => !v)}
+            onClick={() => { setShowStatement(false); setShowPayments((v) => !v); }}
+            className={cx(
+              cardCls, "p-5 cursor-pointer flex flex-col justify-center",
+              showPayments && "ring-2 ring-blue-500 border-blue-600"
+            )}
+          >
+            <div className="text-slate-500 text-xs font-medium mb-2 flex items-center gap-1.5"><Receipt size={13} /> Payment to Transporter</div>
+            <div className="text-lg font-bold text-white">{paymentRows.length}</div>
+          </div>
+        )}
+        {canExportStatement && (
+          <div
+            onClick={() => { setShowPayments(false); setShowStatement((v) => !v); }}
             className={cx(
               cardCls, "p-5 cursor-pointer flex flex-col justify-center",
               showStatement && "ring-2 ring-blue-500 border-blue-600"
@@ -5389,6 +5418,47 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           </div>
         )}
       </div>
+      {showPayments && canExportStatement && (
+        <div className="space-y-4">
+          {paymentRows.length === 0 ? (
+            <EmptyState icon={Receipt} text="No payments recorded yet for this transporter." />
+          ) : (
+            <div className={tableWrap} key={`pay-${paySortDir}`}>
+              <table className="w-full text-sm">
+                <thead className={theadCls}>
+                  <tr>
+                    <th
+                      className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")}
+                      onClick={() => setPaySortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        Date
+                        <span className="inline-flex flex-col -space-y-0.5 shrink-0">
+                          <ChevronUp size={13} className={cx("stroke-[3]", paySortDir === "asc" ? "text-blue-400" : "text-slate-600")} />
+                          <ChevronDown size={13} className={cx("stroke-[3]", paySortDir === "desc" ? "text-blue-400" : "text-slate-600")} />
+                        </span>
+                      </span>
+                    </th>
+                    <th className={thCls}>Description</th>
+                    <th className={thCls}>Bill Amount</th>
+                    <th className={thCls}>Paid Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paymentRows.map(({ order: o, container: c }) => (
+                    <tr key={c.id} className={trCls}>
+                      <td className={tdCls}>{c.transporterBillDate ? fmtDate(c.transporterBillDate) : "—"}</td>
+                      <td className={tdCls}>{paymentDescription(o, c)}</td>
+                      <td className={tdCls}>{formatPKR(containerTotalBillAmount(c))}</td>
+                      <td className={cx(tdCls, "text-emerald-400 font-medium")}>{formatPKR(c.billPaidAmount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
       {showStatement && canExportStatement ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
