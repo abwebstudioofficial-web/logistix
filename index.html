@@ -5448,7 +5448,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     <th className={thCls}>Container No.</th>
                     <th className={thCls}>Vehicle No.</th>
                     <SortTh colKey="loadingDate" label="Loading Date" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
-                    <SortTh colKey="destination" label="Destination" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
                     <th className={thCls}>Transporter Bill Date</th>
                     <th className={thCls}>Transporter Bill No.</th>
                     <th className={thCls}>Status</th>
@@ -5471,7 +5470,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                         <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
                         <td className={tdCls}>{c.vehiclePlate || "—"}</td>
                         <td className={tdCls}>{containerLoadingDate(c)}</td>
-                        <td className={tdCls}>{c.destination || o.destination || "—"}</td>
                         <td className={tdCls}>{c.transporterBillDate ? fmtDate(c.transporterBillDate) : "—"}</td>
                         <td className={tdCls}>{c.transporterBillNo || "—"}</td>
                         <td className={tdCls}><Badge text={stage} className={billStageColor[stage]} /></td>
