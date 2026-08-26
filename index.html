@@ -645,7 +645,7 @@ const ROLE_ALLOWED_VIEWS = {
   receiver_export: ["tracking_export"],
   empty_return_receiver: ["tracking_import"],
   data_entry: ["orders_domestic", "orders_import", "orders_export", "customers", "senders", "transporters", "settings"],
-  finance_manager: ["invoices", "contracts", "fuel_management", "settings"],
+  finance_manager: ["invoices", "contracts", "fuel_management", "bill_checker", "settings"],
   bill_checker: ["bill_checker", "settings"],
 };
 const ROLE_LABELS = {
@@ -5183,7 +5183,14 @@ function SortTh({ colKey, label, sortKey, sortDir, onSort }) {
   );
 }
 
-function TransporterBillsView({ data, updateContainerFields, isColVisible, onStatementExport }) {
+function TransporterBillsView({ data, updateContainerFields, isColVisible, onStatementExport, role }) {
+  // Bill Checker's job ends once a bill is forwarded: Mark Bill Received and Forward for
+  // Approval (Pending -> Bill Received -> Pending Approval) are both theirs to do. Everything
+  // from Pending Approval onward (posting, marking paid) plus the Statement of Account/Excel
+  // export belong to Finance Manager. Admin always has full access.
+  const isFinance = role === "admin" || role === "finance_manager" || !role;
+  const canAdvancePastReceived = isFinance;
+  const canExportStatement = isFinance;
   const [pickerQ, setPickerQ] = useState("");
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container, modal: "post" | "paid" }
@@ -5195,6 +5202,8 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   const [showStatement, setShowStatement] = useState(false);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
+  const [stmtDisplayed, setStmtDisplayed] = useState(false);
+  const [stmtError, setStmtError] = useState("");
   const [stmtSortKey, setStmtSortKey] = useState("loadingDate");
   const [stmtSortDir, setStmtSortDir] = useState("asc");
 
@@ -5348,21 +5357,12 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
 
   return (
     <div className="space-y-5" key={`${selectedTransporter}-${stageTab}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <button onClick={() => { setSelectedTransporter(null); setQ(""); }} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1 mb-2"><ArrowLeft size={14} /> Back to transporters</button>
-          <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
-          <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
-        </div>
-        <button
-          onClick={() => onStatementExport(selectedTransporter)}
-          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shrink-0"
-          title="Download this transporter's Statement of Account as Excel"
-        >
-          <Download size={13} /> Export Excel
-        </button>
+      <div>
+        <button onClick={() => { setSelectedTransporter(null); setQ(""); }} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1 mb-2"><ArrowLeft size={14} /> Back to transporters</button>
+        <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
+        <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4" key={`blocks-${stageTab}-${showStatement}`}>
+      <div className={cx("grid grid-cols-2 gap-4", canExportStatement ? "lg:grid-cols-6" : "lg:grid-cols-5")} key={`blocks-${stageTab}-${showStatement}`}>
         {BILL_STAGES.map((s) => (
           <MiniStat
             key={s}
@@ -5372,40 +5372,70 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           />
         ))}
         {/* Not a stage — a separate report view (date range filter), toggled on its own
-            rather than filtering the stage table like the blocks above. */}
-        <div
-          onClick={() => setShowStatement((v) => !v)}
-          className={cx(
-            cardCls, "p-5 cursor-pointer flex flex-col justify-center",
-            showStatement && "ring-2 ring-blue-500 border-blue-600"
-          )}
-        >
-          <div className="text-slate-500 text-xs font-medium mb-2 flex items-center gap-1.5"><Receipt size={13} /> Statement</div>
-          <div className="text-lg font-bold text-white">{stmtBilledRows.length}</div>
-        </div>
+            rather than filtering the stage table like the blocks above. Finance Manager/Admin
+            only - Statement of Account (viewing and exporting) isn't part of Bill Checker's job. */}
+        {canExportStatement && (
+          <div
+            onClick={() => setShowStatement((v) => !v)}
+            className={cx(
+              cardCls, "p-5 cursor-pointer flex flex-col justify-center",
+              showStatement && "ring-2 ring-blue-500 border-blue-600"
+            )}
+          >
+            <div className="text-slate-500 text-xs font-medium mb-2 flex items-center gap-1.5"><Receipt size={13} /> Statement</div>
+            <div className="text-lg font-bold text-white">{stmtBilledRows.length}</div>
+          </div>
+        )}
       </div>
-      {showStatement ? (
+      {showStatement && canExportStatement ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
             <div>
               <label className="text-slate-500 text-xs block mb-1">From</label>
-              <input type="date" className={inputCls} value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
+              <input
+                type="date" className={inputCls} value={stmtFrom}
+                onChange={(e) => { setStmtFrom(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
+              />
             </div>
             <div>
               <label className="text-slate-500 text-xs block mb-1">To</label>
-              <input type="date" className={inputCls} value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
+              <input
+                type="date" className={inputCls} value={stmtTo}
+                onChange={(e) => { setStmtTo(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
+              />
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
+                setStmtError(""); setStmtDisplayed(true);
+              }}
+              className={btnSecondary}
+            >
+              Display Statement
+            </button>
+            <button
+              type="button"
+              onClick={() => onStatementExport(selectedTransporter)}
+              className="inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all duration-150 active:scale-[0.97]"
+              title="Download this transporter's Statement of Account as Excel"
+            >
+              <Download size={14} /> Download Statement
+            </button>
             {(stmtFrom || stmtTo) && (
               <button
                 type="button"
-                onClick={() => { setStmtFrom(""); setStmtTo(""); }}
+                onClick={() => { setStmtFrom(""); setStmtTo(""); setStmtDisplayed(false); setStmtError(""); }}
                 className="text-slate-400 hover:text-white text-xs underline decoration-dotted underline-offset-4 mb-2"
               >
                 Clear filters
               </button>
             )}
           </div>
-          {statementRows.length === 0 ? (
+          {stmtError && <p className="text-amber-400 text-sm">{stmtError}</p>}
+          {!stmtDisplayed ? (
+            <EmptyState icon={Receipt} text="Select a From and To date, then click Display Statement to see entries." />
+          ) : statementRows.length === 0 ? (
             <EmptyState icon={Receipt} text="No billed containers match these filters." />
           ) : (
             <div className={tableWrap} key={`stmt-${stmtSortKey}-${stmtSortDir}-${stmtFrom}-${stmtTo}`}>
@@ -5509,24 +5539,32 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
                     {showTotalBillAmount && (
                       <td className={tdCls}>
-                        <button
-                          type="button"
-                          onClick={() => setEditing({ order: o, container: c, modal: "post" })}
-                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
-                        >
-                          {formatPKR(containerTotalBillAmount(c))}
-                        </button>
+                        {(canAdvancePastReceived || billStage(c) === "Bill Received") ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditing({ order: o, container: c, modal: "post" })}
+                            className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
+                          >
+                            {formatPKR(containerTotalBillAmount(c))}
+                          </button>
+                        ) : (
+                          <span className="text-slate-300 font-medium">{formatPKR(containerTotalBillAmount(c))}</span>
+                        )}
                       </td>
                     )}
                     {showPaidAmount && (
                       <td className={tdCls}>
-                        <button
-                          type="button"
-                          onClick={() => setEditing({ order: o, container: c, modal: "paid" })}
-                          className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
-                        >
-                          {c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}
-                        </button>
+                        {canAdvancePastReceived ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditing({ order: o, container: c, modal: "paid" })}
+                            className="text-blue-400 hover:text-blue-300 font-medium underline decoration-dotted underline-offset-4"
+                          >
+                            {c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}
+                          </button>
+                        ) : (
+                          <span className="text-slate-300 font-medium">{c.billPaidAmount ? formatPKR(c.billPaidAmount) : "Rs 0"}</span>
+                        )}
                       </td>
                     )}
                     {isColVisible("transporterBills", "attachment") && stageTab !== "Pending" && (
@@ -5558,12 +5596,19 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                             );
                           }
                           if (stage === "Bill Received") {
-                            // One click, no form - charges are already on file from the Mark Bill Received form.
+                            // One click, no form - charges are already on file from the Mark Bill Received
+                            // form. This is Bill Checker's job too: receive it, check it, forward it -
+                            // this is the last action they take on a bill before it becomes Finance's.
                             return (
                               <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
                                 Forward for Approval
                               </button>
                             );
+                          }
+                          // Pending Approval onward is Finance Manager's job - Bill Checker can see
+                          // the stage but can't advance it any further.
+                          if (!canAdvancePastReceived) {
+                            return <span className="text-slate-600 text-xs" title="Finance Manager handles this stage onward">—</span>;
                           }
                           if (stage === "Pending Approval") {
                             // One click, no form.
@@ -10677,7 +10722,7 @@ function LogistixERP() {
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "analytics" && <AnalyticsView data={data} />}
-              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} onStatementExport={handleTransporterStatementExport} />}
+              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} onStatementExport={handleTransporterStatementExport} role={viewSession.role} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}
               {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} isColVisible={isColVisible} />}
               {view === "settings" && <SettingsView columnVisibility={columnVisibility} setColumnVisibility={setColumnVisibility} isColVisible={isColVisible} />}
