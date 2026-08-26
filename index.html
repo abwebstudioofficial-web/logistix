@@ -5150,7 +5150,7 @@ function SortTh({ colKey, label, sortKey, sortDir, onSort }) {
   );
 }
 
-function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
+function TransporterBillsView({ data, updateContainerFields, isColVisible, onStatementExport }) {
   const [pickerQ, setPickerQ] = useState("");
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // { order, container, modal: "post" | "paid" }
@@ -5283,10 +5283,19 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible }) {
 
   return (
     <div className="space-y-5" key={`${selectedTransporter}-${stageTab}`}>
-      <div>
-        <button onClick={() => { setSelectedTransporter(null); setQ(""); }} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1 mb-2"><ArrowLeft size={14} /> Back to transporters</button>
-        <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
-        <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <button onClick={() => { setSelectedTransporter(null); setQ(""); }} className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1 mb-2"><ArrowLeft size={14} /> Back to transporters</button>
+          <h2 className="text-2xl font-bold text-white">{selectedTransporter}</h2>
+          <p className="text-slate-500 text-sm mt-1">Record transporter billing details and approved charges for each container</p>
+        </div>
+        <button
+          onClick={() => onStatementExport(selectedTransporter)}
+          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shrink-0"
+          title="Download this transporter's Statement of Account as Excel"
+        >
+          <Download size={13} /> Export Excel
+        </button>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4" key={`blocks-${stageTab}`}>
         {BILL_STAGES.map((s) => (
@@ -10129,6 +10138,61 @@ function LogistixERP() {
     return [s.id, s.swapDate ? fmtDate(s.swapDate) : "", s.department || "", s.swappedBy || "", s.cardNumber || "", xnum(s.qtyLtr, ""), xnum(s.amountPkr, "")];
   }
 
+  // Transporter Bills > Statement of Account — download only, no Attach, since this is a
+  // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
+  // re-imported like the round-trip exports elsewhere.
+  const STATEMENT_HEADERS = ["Sr.", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
+  function handleTransporterStatementExport(transporterName) {
+    const flatAll = [];
+    (data.orders || []).forEach((o) => {
+      orderContainers(o).forEach((c) => {
+        if (((c.transporter || "").trim() || "Unassigned") === transporterName) flatAll.push({ o, c });
+      });
+    });
+    // A raw Pending row has no bill on file yet - nothing to state, so only bills that have
+    // actually been received are worth including in an account statement.
+    const billed = flatAll
+      .filter(({ c }) => c.billReceived)
+      .sort((a, b) => {
+        const da = a.c.transporterBillDate || a.c.loadingDate || "";
+        const db = b.c.transporterBillDate || b.c.loadingDate || "";
+        return da < db ? -1 : da > db ? 1 : 0;
+      });
+    const dataRows = billed.map(({ o, c }, i) => {
+      const total = containerTotalBillAmount(c);
+      const paid = Number(c.billPaidAmount) || 0;
+      const loadingDate = c.loadingDate ? fmtDate(c.loadingDate) : (c.dispatchAt ? fmtDate(toLocalDateStr(new Date(c.dispatchAt))) : "");
+      return [i + 1, o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "", loadingDate, billStage(c), total, paid, total - paid];
+    });
+    const totalBilled = billed.reduce((sum, { c }) => sum + containerTotalBillAmount(c), 0);
+    const totalPaid = billed.reduce((sum, { c }) => sum + (Number(c.billPaidAmount) || 0), 0);
+    const balancePayable = totalBilled - totalPaid;
+    dataRows.push(Array(STATEMENT_HEADERS.length).fill(""));
+    dataRows.push(["", "", "", "", "", "Total Billed", totalBilled, "", ""]);
+    dataRows.push(["", "", "", "", "", "Total Paid", "", totalPaid, ""]);
+    dataRows.push(["", "", "", "", "", "Balance Payable", "", "", balancePayable]);
+    const rows = [STATEMENT_HEADERS, ...dataRows];
+    const headerWrap = new Set([2, 3, 4, 5, 6]); // Job No., Container No., Vehicle No., Loading Date, Status
+    const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
+    const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set(), 9, 8);
+    contentDefault[7] = 22; // Total Bill Amount — bold
+    contentDefault[8] = 22; // Paid Amount — bold
+    contentDefault[9] = 22; // Outstanding — bold
+    const colWidths = colWidthsFor(STATEMENT_HEADERS);
+    colWidths[0] = 6.29; // Sr.
+    buildXlsxBuffer([{
+      name: "Statement of Account", rows, headerRowIndex: 1, freezeRows: 1,
+      colWidths, headerOverrides, contentDefaultCols: contentDefault,
+    }]).then((buffer) => {
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${(transporterName || "Transporter").replace(/\s+/g, "-")}-Statement-of-Account-${todayISO()}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }).catch((err) => window.alert("Couldn't build the statement of account: " + err.message));
+  }
+
   function handleSwapExport(customerId, customerName) {
     const rows = (data.fuel_card_swaps || []).filter((s) => s.customerId === customerId);
     const dataRows = rows.map(buildSwapExportRow);
@@ -10458,7 +10522,7 @@ function LogistixERP() {
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "analytics" && <AnalyticsView data={data} />}
-              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} />}
+              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} onStatementExport={handleTransporterStatementExport} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}
               {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} isColVisible={isColVisible} />}
               {view === "settings" && <SettingsView columnVisibility={columnVisibility} setColumnVisibility={setColumnVisibility} isColVisible={isColVisible} />}
