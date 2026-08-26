@@ -5537,7 +5537,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
                     {showTotalBillAmount && (
                       <td className={tdCls}>
-                        {(canAdvancePastReceived || billStage(c) === "Bill Received") ? (
+                        {(canAdvancePastReceived || billStage(c) === "Bill Received" || billStage(c) === "Pending Approval") ? (
                           <button
                             type="button"
                             onClick={() => setEditing({ order: o, container: c, modal: "post" })}
