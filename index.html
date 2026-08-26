@@ -5204,7 +5204,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   const [stmtTo, setStmtTo] = useState("");
   const [stmtDisplayed, setStmtDisplayed] = useState(false);
   const [stmtError, setStmtError] = useState("");
-  const [stmtSortKey, setStmtSortKey] = useState("loadingDate");
+  const [stmtSortKey, setStmtSortKey] = useState("billDate");
   const [stmtSortDir, setStmtSortDir] = useState("asc");
 
   const flat = [];
@@ -5300,12 +5300,14 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   // Statement of Account — a separate view, not a stage filter. Same "has this transporter's
   // bill actually been received" scope as the Excel export, so the numbers always agree with
   // what you'd download, just with date-range filtering and its own sort (including by
-  // Destination, even without a destination filter control).
+  // Destination, even without a destination filter control). Sorted/filtered by the
+  // Transporter Bill Date ("Date" column) rather than Loading Date - the bill date is what
+  // this statement is actually organized around.
   const stmtBilledRows = searchedRows.filter(({ container: c }) => c.billReceived);
   function stmtSortValue(row, key) {
     const { order: o, container: c } = row;
     if (key === "destination") return (c.destination || o.destination || "").toLowerCase();
-    return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : ""); // loadingDate
+    return c.transporterBillDate || ""; // billDate
   }
   function stmtToggleSort(key) {
     if (stmtSortKey === key) setStmtSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -5313,7 +5315,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   }
   const statementRows = stmtBilledRows
     .filter(({ container: c }) => {
-      const d = c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
+      const d = c.transporterBillDate || "";
       if (stmtFrom && d && d < stmtFrom) return false;
       if (stmtTo && d && d > stmtTo) return false;
       return true;
@@ -5450,8 +5452,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     <th className={thCls}>Job No.</th>
                     <th className={thCls}>Container No.</th>
                     <th className={thCls}>Vehicle No.</th>
-                    <SortTh colKey="loadingDate" label="Loading Date" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
-                    <th className={thCls}>Transporter Bill Date</th>
+                    <SortTh colKey="billDate" label="Date" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
                     <th className={thCls}>Transporter Bill No.</th>
                     <th className={thCls}>Status</th>
                     <th className={thCls}>Total Bill Amount</th>
@@ -5472,7 +5473,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                         <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
                         <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
                         <td className={tdCls}>{c.vehiclePlate || "—"}</td>
-                        <td className={tdCls}>{containerLoadingDate(c)}</td>
                         <td className={tdCls}>{c.transporterBillDate ? fmtDate(c.transporterBillDate) : "—"}</td>
                         <td className={tdCls}>{c.transporterBillNo || "—"}</td>
                         <td className={tdCls}><Badge text={stage} className={billStageColor[stage]} /></td>
@@ -10369,7 +10369,7 @@ function LogistixERP() {
   // Transporter Bills > Statement of Account — download only, no Attach, since this is a
   // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
   // re-imported like the round-trip exports elsewhere.
-  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Transporter Bill Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
+  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Job No.", "Container No.", "Vehicle No.", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
   function handleTransporterStatementExport(transporterName, fromDate, toDate) {
     const flatAll = [];
     (data.orders || []).forEach((o) => {
@@ -10379,49 +10379,48 @@ function LogistixERP() {
     });
     // A raw Pending row has no bill on file yet - nothing to state, so only bills that have
     // actually been received are worth including in an account statement. Date range (when
-    // given) filters by Loading Date, same field and same comparison the in-app Statement
-    // view uses, so the download always matches what was on screen when you clicked it.
+    // given), sorting, and the "Date" column itself are all the Transporter Bill Date, same
+    // field the in-app Statement view uses, so the download always matches what was on screen.
     const billed = flatAll
       .filter(({ c }) => c.billReceived)
       .filter(({ c }) => {
         if (!fromDate && !toDate) return true;
-        const d = c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
+        const d = c.transporterBillDate || "";
         if (fromDate && d && d < fromDate) return false;
         if (toDate && d && d > toDate) return false;
         return true;
       })
       .sort((a, b) => {
-        const da = a.c.transporterBillDate || a.c.loadingDate || "";
-        const db = b.c.transporterBillDate || b.c.loadingDate || "";
+        const da = a.c.transporterBillDate || "";
+        const db = b.c.transporterBillDate || "";
         return da < db ? -1 : da > db ? 1 : 0;
       });
     const dataRows = billed.map(({ o, c }, i) => {
       const total = containerTotalBillAmount(c);
       const paid = Number(c.billPaidAmount) || 0;
-      const loadingDate = c.loadingDate ? fmtDate(c.loadingDate) : (c.dispatchAt ? fmtDate(toLocalDateStr(new Date(c.dispatchAt))) : "");
       return [
-        i + 1, o.shipmentType || "Import", o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "", loadingDate,
+        i + 1, o.shipmentType || "Import", o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "",
         c.transporterBillDate ? fmtDate(c.transporterBillDate) : "", c.transporterBillNo || "",
         billStage(c), total, paid, total - paid,
       ];
     });
     const rows = [[transporterName || "Transporter"], STATEMENT_HEADERS, ...dataRows];
-    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // every column except Sr.
+    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
     const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set([3]), 9, 8);
-    contentDefault[10] = 22; // Total Bill Amount — bold
-    contentDefault[11] = 22; // Paid Amount — bold
-    contentDefault[12] = 22; // Outstanding — bold
+    contentDefault[9] = 22; // Total Bill Amount — bold
+    contentDefault[10] = 22; // Paid Amount — bold
+    contentDefault[11] = 22; // Outstanding — bold
     const colWidths = colWidthsFor(STATEMENT_HEADERS);
     colWidths[0] = 6.29; // Sr.
-    colWidths[6] = 12; colWidths[7] = 12; // Transporter Bill Date, Transporter Bill No. — narrower
-    colWidths[8] = 20; // Status — wider, "Pending Approval" is the longest label
-    colWidths[9] = 13; colWidths[10] = 13; colWidths[11] = 13; // amount columns after Status — narrower
+    colWidths[5] = 12; colWidths[6] = 12; // Date, Transporter Bill No. — narrower
+    colWidths[7] = 20; // Status — wider, "Pending Approval" is the longest label
+    colWidths[8] = 13; colWidths[9] = 13; colWidths[10] = 13; // amount columns after Status — narrower
     buildXlsxBuffer([{
       name: "Statement of Account", rows, headerRowIndex: 2, freezeRows: 2,
       colWidths, headerOverrides, contentDefaultCols: contentDefault, titleCell: { row: 1, col: 1 },
       mergeCells: [{ row: 1, startCol: 1, endCol: STATEMENT_HEADERS.length }],
-      conditionalCols: { 9: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
+      conditionalCols: { 8: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
