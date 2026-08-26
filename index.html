@@ -9111,6 +9111,8 @@ function LogistixERP() {
   const [profile, setProfile] = useState(null);
 
   const [data, setDataState] = useState(null);
+  const dataRef = useRef(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
   const [dataLoading, setDataLoading] = useState(false);
   const [view, setView] = useState("dashboard");
   // Lifted out of OrdersView so the Export/Attach bar (rendered at this level, above the tab
@@ -9394,25 +9396,44 @@ function LogistixERP() {
     setDataState((prev) => ({ ...prev, orders: prev.orders.map((o) => (o.id === orderId ? { ...o, containers } : o)) }));
   }
 
+  const updateQueueRef = useRef(Promise.resolve());
   async function updateContainerFields(orderId, containerId, fields, opts) {
-    const order = data.orders.find((o) => o.id === orderId);
-    if (!order) return;
-    const actor = (profile && profile.name) || "Someone";
-    const skipLog = opts && opts.skipLog;
-    const containers = orderContainers(order).map((c) => {
-      if (c.id !== containerId) return c;
-      let history = Array.isArray(c.history) ? c.history : [];
-      if (!skipLog) {
-        const desc = describeFieldChange(fields);
-        if (desc) {
-          history = [...history, { id: uid("evt"), message: desc, at: new Date().toISOString(), location: "", by: actor }];
+    // Serialized so near-simultaneous edits to a container (e.g. editing a charge amount,
+    // then immediately clicking Forward for Approval) never race. Previously each call read
+    // data.orders independently at the moment it started; if a second call started before the
+    // first one's database write + state update had finished, both computed their change from
+    // the same stale snapshot, and whichever one's write landed last silently overwrote the
+    // other's — which is exactly how a freshly-edited Rs 5000 charge could revert back toward
+    // an old value after clicking Forward for Approval right after editing it. Now every call
+    // waits its turn and reads dataRef.current, which is updated the instant the previous call
+    // finishes, not just whenever React gets around to re-rendering.
+    const run = async () => {
+      const source = dataRef.current || data;
+      if (!source) return;
+      const order = source.orders.find((o) => o.id === orderId);
+      if (!order) return;
+      const actor = (profile && profile.name) || "Someone";
+      const skipLog = opts && opts.skipLog;
+      const containers = orderContainers(order).map((c) => {
+        if (c.id !== containerId) return c;
+        let history = Array.isArray(c.history) ? c.history : [];
+        if (!skipLog) {
+          const desc = describeFieldChange(fields);
+          if (desc) {
+            history = [...history, { id: uid("evt"), message: desc, at: new Date().toISOString(), location: "", by: actor }];
+          }
         }
-      }
-      return { ...c, ...fields, history };
-    });
-    const { error } = await supabaseClient.from("orders").update({ containers }).eq("id", orderId);
-    if (error) { window.alert("Couldn't save: " + error.message); return; }
-    setDataState((prev) => ({ ...prev, orders: prev.orders.map((o) => (o.id === orderId ? { ...o, containers } : o)) }));
+        return { ...c, ...fields, history };
+      });
+      const { error } = await supabaseClient.from("orders").update({ containers }).eq("id", orderId);
+      if (error) { window.alert("Couldn't save: " + error.message); return; }
+      const next = { ...source, orders: source.orders.map((o) => (o.id === orderId ? { ...o, containers } : o)) };
+      dataRef.current = next;
+      setDataState(next);
+    };
+    const result = updateQueueRef.current.then(run, run);
+    updateQueueRef.current = result.catch(() => {}); // keep the chain alive even if one call fails
+    return result;
   }
 
   async function updateDriverStatus(driverId, status) {
