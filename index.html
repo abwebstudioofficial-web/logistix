@@ -10141,7 +10141,7 @@ function LogistixERP() {
   // Transporter Bills > Statement of Account — download only, no Attach, since this is a
   // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
   // re-imported like the round-trip exports elsewhere.
-  const STATEMENT_HEADERS = ["Sr.", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
+  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Transporter Bill Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
   function handleTransporterStatementExport(transporterName) {
     const flatAll = [];
     (data.orders || []).forEach((o) => {
@@ -10162,24 +10162,30 @@ function LogistixERP() {
       const total = containerTotalBillAmount(c);
       const paid = Number(c.billPaidAmount) || 0;
       const loadingDate = c.loadingDate ? fmtDate(c.loadingDate) : (c.dispatchAt ? fmtDate(toLocalDateStr(new Date(c.dispatchAt))) : "");
-      return [i + 1, o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "", loadingDate, billStage(c), total, paid, total - paid];
+      return [
+        i + 1, o.shipmentType || "Import", o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "", loadingDate,
+        c.transporterBillDate ? fmtDate(c.transporterBillDate) : "", c.transporterBillNo || "",
+        billStage(c), total, paid, total - paid,
+      ];
     });
     const totalBilled = billed.reduce((sum, { c }) => sum + containerTotalBillAmount(c), 0);
     const totalPaid = billed.reduce((sum, { c }) => sum + (Number(c.billPaidAmount) || 0), 0);
     const balancePayable = totalBilled - totalPaid;
     dataRows.push(Array(STATEMENT_HEADERS.length).fill(""));
-    dataRows.push(["", "", "", "", "", "Total Billed", totalBilled, "", ""]);
-    dataRows.push(["", "", "", "", "", "Total Paid", "", totalPaid, ""]);
-    dataRows.push(["", "", "", "", "", "Balance Payable", "", "", balancePayable]);
+    dataRows.push(["", "", "", "", "", "", "", "", "Total Billed", totalBilled, "", ""]);
+    dataRows.push(["", "", "", "", "", "", "", "", "Total Paid", "", totalPaid, ""]);
+    dataRows.push(["", "", "", "", "", "", "", "", "Balance Payable", "", "", balancePayable]);
     const rows = [STATEMENT_HEADERS, ...dataRows];
-    const headerWrap = new Set([2, 3, 4, 5, 6]); // Job No., Container No., Vehicle No., Loading Date, Status
+    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9]); // Shipment Type through Status
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
     const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set(), 9, 8);
-    contentDefault[7] = 22; // Total Bill Amount — bold
-    contentDefault[8] = 22; // Paid Amount — bold
-    contentDefault[9] = 22; // Outstanding — bold
+    contentDefault[10] = 22; // Total Bill Amount — bold
+    contentDefault[11] = 22; // Paid Amount — bold
+    contentDefault[12] = 22; // Outstanding — bold
     const colWidths = colWidthsFor(STATEMENT_HEADERS);
     colWidths[0] = 6.29; // Sr.
+    colWidths[8] = 20; // Status — wider, "Pending Approval" is the longest label
+    colWidths[9] = 13; colWidths[10] = 13; colWidths[11] = 13; // amount columns after Status — narrower
     buildXlsxBuffer([{
       name: "Statement of Account", rows, headerRowIndex: 1, freezeRows: 1,
       colWidths, headerOverrides, contentDefaultCols: contentDefault,
