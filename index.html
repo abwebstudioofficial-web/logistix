@@ -5195,7 +5195,6 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   const [showStatement, setShowStatement] = useState(false);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
-  const [stmtDestination, setStmtDestination] = useState("All");
   const [stmtSortKey, setStmtSortKey] = useState("loadingDate");
   const [stmtSortDir, setStmtSortDir] = useState("asc");
 
@@ -5291,11 +5290,9 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
 
   // Statement of Account — a separate view, not a stage filter. Same "has this transporter's
   // bill actually been received" scope as the Excel export, so the numbers always agree with
-  // what you'd download, just with date-range/destination filtering and its own sort.
+  // what you'd download, just with date-range filtering and its own sort (including by
+  // Destination, even without a destination filter control).
   const stmtBilledRows = searchedRows.filter(({ container: c }) => c.billReceived);
-  const stmtDestinations = Array.from(new Set(
-    stmtBilledRows.map(({ order: o, container: c }) => c.destination || o.destination).filter(Boolean)
-  )).sort((a, b) => a.localeCompare(b));
   function stmtSortValue(row, key) {
     const { order: o, container: c } = row;
     if (key === "destination") return (c.destination || o.destination || "").toLowerCase();
@@ -5306,9 +5303,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
     else { setStmtSortKey(key); setStmtSortDir("asc"); }
   }
   const statementRows = stmtBilledRows
-    .filter(({ order: o, container: c }) => {
-      const dest = c.destination || o.destination || "";
-      if (stmtDestination !== "All" && dest !== stmtDestination) return false;
+    .filter(({ container: c }) => {
       const d = c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
       if (stmtFrom && d && d < stmtFrom) return false;
       if (stmtTo && d && d > stmtTo) return false;
@@ -5367,29 +5362,26 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           <Download size={13} /> Export Excel
         </button>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4" key={`blocks-${stageTab}`}>
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4" key={`blocks-${stageTab}-${showStatement}`}>
         {BILL_STAGES.map((s) => (
           <MiniStat
             key={s}
             label={s} value={stageCounts[s] || 0} color={billStageTextColor[s]}
-            onClick={() => setStageTab(stageTab === s ? "All" : s)}
-            active={stageTab === s}
+            onClick={() => { setShowStatement(false); setStageTab(stageTab === s ? "All" : s); }}
+            active={!showStatement && stageTab === s}
           />
         ))}
-      </div>
-      {/* Not a stage — a separate report view (date range + destination filter), toggled on
-          its own rather than mixed in with the stage blocks above. */}
-      <div
-        onClick={() => setShowStatement((v) => !v)}
-        className={cx(
-          cardCls, "p-4 flex items-center gap-3 cursor-pointer",
-          showStatement && "ring-2 ring-blue-500 border-blue-600"
-        )}
-      >
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-blue-600 shrink-0"><Receipt size={18} className="text-white" /></div>
-        <div>
-          <div className="text-white font-semibold text-sm">Statement of Account</div>
-          <div className="text-slate-500 text-xs">Filter by date range and destination · {stmtBilledRows.length} bill{stmtBilledRows.length === 1 ? "" : "s"} on file</div>
+        {/* Not a stage — a separate report view (date range filter), toggled on its own
+            rather than filtering the stage table like the blocks above. */}
+        <div
+          onClick={() => setShowStatement((v) => !v)}
+          className={cx(
+            cardCls, "p-5 cursor-pointer flex flex-col justify-center",
+            showStatement && "ring-2 ring-blue-500 border-blue-600"
+          )}
+        >
+          <div className="text-slate-500 text-xs font-medium mb-2 flex items-center gap-1.5"><Receipt size={13} /> Statement</div>
+          <div className="text-lg font-bold text-white">{stmtBilledRows.length}</div>
         </div>
       </div>
       {showStatement ? (
@@ -5403,17 +5395,10 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
               <label className="text-slate-500 text-xs block mb-1">To</label>
               <input type="date" className={inputCls} value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
             </div>
-            <div>
-              <label className="text-slate-500 text-xs block mb-1">Destination</label>
-              <select className={inputCls} value={stmtDestination} onChange={(e) => setStmtDestination(e.target.value)}>
-                <option value="All">All destinations</option>
-                {stmtDestinations.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            {(stmtFrom || stmtTo || stmtDestination !== "All") && (
+            {(stmtFrom || stmtTo) && (
               <button
                 type="button"
-                onClick={() => { setStmtFrom(""); setStmtTo(""); setStmtDestination("All"); }}
+                onClick={() => { setStmtFrom(""); setStmtTo(""); }}
                 className="text-slate-400 hover:text-white text-xs underline decoration-dotted underline-offset-4 mb-2"
               >
                 Clear filters
@@ -5423,7 +5408,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           {statementRows.length === 0 ? (
             <EmptyState icon={Receipt} text="No billed containers match these filters." />
           ) : (
-            <div className={tableWrap} key={`stmt-${stmtSortKey}-${stmtSortDir}-${stmtFrom}-${stmtTo}-${stmtDestination}`}>
+            <div className={tableWrap} key={`stmt-${stmtSortKey}-${stmtSortDir}-${stmtFrom}-${stmtTo}`}>
               <table className="w-full text-sm">
                 <thead className={theadCls}>
                   <tr>
