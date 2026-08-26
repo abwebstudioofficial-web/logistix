@@ -5192,6 +5192,12 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
+  const [showStatement, setShowStatement] = useState(false);
+  const [stmtFrom, setStmtFrom] = useState("");
+  const [stmtTo, setStmtTo] = useState("");
+  const [stmtDestination, setStmtDestination] = useState("All");
+  const [stmtSortKey, setStmtSortKey] = useState("loadingDate");
+  const [stmtSortDir, setStmtSortDir] = useState("asc");
 
   const flat = [];
   data.orders.forEach((o) => {
@@ -5283,6 +5289,37 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
     ? frozenOrderIds.map((id) => sortedRows.find(({ container: c }) => c.id === id)).filter(Boolean)
     : sortedRows;
 
+  // Statement of Account — a separate view, not a stage filter. Same "has this transporter's
+  // bill actually been received" scope as the Excel export, so the numbers always agree with
+  // what you'd download, just with date-range/destination filtering and its own sort.
+  const stmtBilledRows = searchedRows.filter(({ container: c }) => c.billReceived);
+  const stmtDestinations = Array.from(new Set(
+    stmtBilledRows.map(({ order: o, container: c }) => c.destination || o.destination).filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+  function stmtSortValue(row, key) {
+    const { order: o, container: c } = row;
+    if (key === "destination") return (c.destination || o.destination || "").toLowerCase();
+    return c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : ""); // loadingDate
+  }
+  function stmtToggleSort(key) {
+    if (stmtSortKey === key) setStmtSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setStmtSortKey(key); setStmtSortDir("asc"); }
+  }
+  const statementRows = stmtBilledRows
+    .filter(({ order: o, container: c }) => {
+      const dest = c.destination || o.destination || "";
+      if (stmtDestination !== "All" && dest !== stmtDestination) return false;
+      const d = c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
+      if (stmtFrom && d && d < stmtFrom) return false;
+      if (stmtTo && d && d > stmtTo) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const va = stmtSortValue(a, stmtSortKey), vb = stmtSortValue(b, stmtSortKey);
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return stmtSortDir === "desc" ? -cmp : cmp;
+    });
+
   // Picker screen — choose a transporter before seeing any bills.
   if (!selectedTransporter) {
     const visibleGroups = transporterGroups.filter((g) => !pickerQ || g.name.toLowerCase().includes(pickerQ.toLowerCase()));
@@ -5340,6 +5377,102 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           />
         ))}
       </div>
+      {/* Not a stage — a separate report view (date range + destination filter), toggled on
+          its own rather than mixed in with the stage blocks above. */}
+      <div
+        onClick={() => setShowStatement((v) => !v)}
+        className={cx(
+          cardCls, "p-4 flex items-center gap-3 cursor-pointer",
+          showStatement && "ring-2 ring-blue-500 border-blue-600"
+        )}
+      >
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-blue-600 shrink-0"><Receipt size={18} className="text-white" /></div>
+        <div>
+          <div className="text-white font-semibold text-sm">Statement of Account</div>
+          <div className="text-slate-500 text-xs">Filter by date range and destination · {stmtBilledRows.length} bill{stmtBilledRows.length === 1 ? "" : "s"} on file</div>
+        </div>
+      </div>
+      {showStatement ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="text-slate-500 text-xs block mb-1">From</label>
+              <input type="date" className={inputCls} value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-slate-500 text-xs block mb-1">To</label>
+              <input type="date" className={inputCls} value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-slate-500 text-xs block mb-1">Destination</label>
+              <select className={inputCls} value={stmtDestination} onChange={(e) => setStmtDestination(e.target.value)}>
+                <option value="All">All destinations</option>
+                {stmtDestinations.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            {(stmtFrom || stmtTo || stmtDestination !== "All") && (
+              <button
+                type="button"
+                onClick={() => { setStmtFrom(""); setStmtTo(""); setStmtDestination("All"); }}
+                className="text-slate-400 hover:text-white text-xs underline decoration-dotted underline-offset-4 mb-2"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+          {statementRows.length === 0 ? (
+            <EmptyState icon={Receipt} text="No billed containers match these filters." />
+          ) : (
+            <div className={tableWrap} key={`stmt-${stmtSortKey}-${stmtSortDir}-${stmtFrom}-${stmtTo}-${stmtDestination}`}>
+              <table className="w-full text-sm">
+                <thead className={theadCls}>
+                  <tr>
+                    <th className={thCls}>Sr.</th>
+                    <th className={thCls}>Type</th>
+                    <th className={thCls}>Job No.</th>
+                    <th className={thCls}>Container No.</th>
+                    <th className={thCls}>Vehicle No.</th>
+                    <SortTh colKey="loadingDate" label="Loading Date" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
+                    <SortTh colKey="destination" label="Destination" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
+                    <th className={thCls}>Transporter Bill Date</th>
+                    <th className={thCls}>Transporter Bill No.</th>
+                    <th className={thCls}>Status</th>
+                    <th className={thCls}>Total Bill Amount</th>
+                    <th className={thCls}>Paid Amount</th>
+                    <th className={thCls}>Outstanding</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statementRows.map(({ order: o, container: c }, i) => {
+                    const total = containerTotalBillAmount(c);
+                    const paid = Number(c.billPaidAmount) || 0;
+                    const shipType = o.shipmentType || "Import";
+                    const stage = billStage(c);
+                    return (
+                      <tr key={c.id} className={trCls}>
+                        <td className={tdCls}>{i + 1}</td>
+                        <td className={tdCls}><Badge text={shipType} className={shipmentTypeColor[shipType] || priorityColor.Normal} /></td>
+                        <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
+                        <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
+                        <td className={tdCls}>{c.vehiclePlate || "—"}</td>
+                        <td className={tdCls}>{containerLoadingDate(c)}</td>
+                        <td className={tdCls}>{c.destination || o.destination || "—"}</td>
+                        <td className={tdCls}>{c.transporterBillDate ? fmtDate(c.transporterBillDate) : "—"}</td>
+                        <td className={tdCls}>{c.transporterBillNo || "—"}</td>
+                        <td className={tdCls}><Badge text={stage} className={billStageColor[stage]} /></td>
+                        <td className={tdCls}>{formatPKR(total)}</td>
+                        <td className={tdCls}>{formatPKR(paid)}</td>
+                        <td className={tdCls}>{formatPKR(total - paid)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
       <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
       {displayRows.length === 0 ? (
         <EmptyState icon={Receipt} text="No containers found." />
@@ -5477,6 +5610,8 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
       {editing && editing.modal === "post" && (
         <TransporterBillModal
