@@ -10169,43 +10169,7 @@ function LogistixERP() {
   // Transporter Bills > Statement of Account — download only, no Attach, since this is a
   // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
   // re-imported like the round-trip exports elsewhere.
-  // Domestic orders never carry a Job No. or Container No. anywhere else in the app (only
-  // Vehicle No. is tracked for them), so a Domestic sheet with those columns would always show
-  // dashes. Import and Export both use Job No./Container No. normally, so they share a layout.
-  function buildStatementSheet(sheetName, rows, includeJobContainer) {
-    const headers = includeJobContainer
-      ? ["Sr.", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Transporter Bill Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"]
-      : ["Sr.", "Vehicle No.", "Loading Date", "Transporter Bill Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
-    const dataRows = rows.map(({ o, c }, i) => {
-      const total = containerTotalBillAmount(c);
-      const paid = Number(c.billPaidAmount) || 0;
-      const loadingDate = c.loadingDate ? fmtDate(c.loadingDate) : (c.dispatchAt ? fmtDate(toLocalDateStr(new Date(c.dispatchAt))) : "");
-      const billDate = c.transporterBillDate ? fmtDate(c.transporterBillDate) : "";
-      const tail = [loadingDate, billDate, c.transporterBillNo || "", billStage(c), total, paid, total - paid];
-      return includeJobContainer
-        ? [i + 1, o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "", ...tail]
-        : [i + 1, c.vehiclePlate || "", ...tail];
-    });
-    const numCols = headers.length;
-    const statusCol = includeJobContainer ? 8 : 6;
-    const totalCol = statusCol + 1, paidCol = statusCol + 2, outstandingCol = statusCol + 3;
-    const billDateCol = statusCol - 2, billNoCol = statusCol - 1;
-    const headerWrap = new Set(Array.from({ length: numCols }, (_, i) => i + 1).filter((c) => c !== 1)); // every col except Sr.
-    const headerOverrides = buildColStyleMap(numCols, headerWrap, 5, 6);
-    const contentDefault = buildColStyleMap(numCols, includeJobContainer ? new Set([2]) : new Set(), 9, 8); // Job No. content wraps
-    contentDefault[totalCol] = 22; contentDefault[paidCol] = 22; contentDefault[outstandingCol] = 22; // bold
-    const colWidths = colWidthsFor(headers);
-    colWidths[0] = 6.29; // Sr.
-    colWidths[billDateCol - 1] = 12; colWidths[billNoCol - 1] = 12; // Transporter Bill Date/No. — narrower
-    colWidths[statusCol - 1] = 20; // Status — wider, "Pending Approval" is the longest label
-    colWidths[totalCol - 1] = 13; colWidths[paidCol - 1] = 13; colWidths[outstandingCol - 1] = 13; // amount columns — narrower
-    return {
-      name: sheetName, rows: [headers, ...dataRows], headerRowIndex: 1, freezeRows: 1,
-      colWidths, headerOverrides, contentDefaultCols: contentDefault,
-      conditionalCols: { [statusCol]: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
-    };
-  }
-
+  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Transporter Bill Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
   function handleTransporterStatementExport(transporterName) {
     const flatAll = [];
     (data.orders || []).forEach((o) => {
@@ -10215,22 +10179,40 @@ function LogistixERP() {
     });
     // A raw Pending row has no bill on file yet - nothing to state, so only bills that have
     // actually been received are worth including in an account statement.
-    const sortByBillDate = (a, b) => {
-      const da = a.c.transporterBillDate || a.c.loadingDate || "";
-      const db = b.c.transporterBillDate || b.c.loadingDate || "";
-      return da < db ? -1 : da > db ? 1 : 0;
-    };
-    const billed = flatAll.filter(({ c }) => c.billReceived);
-    const importRows = billed.filter(({ o }) => (o.shipmentType || "Import") === "Import").sort(sortByBillDate);
-    const domesticRows = billed.filter(({ o }) => o.shipmentType === "Domestic").sort(sortByBillDate);
-    const exportRows = billed.filter(({ o }) => o.shipmentType === "Export").sort(sortByBillDate);
-
-    const sheets = [
-      buildStatementSheet("Import Bills", importRows, true),
-      buildStatementSheet("Domestic Bills", domesticRows, false),
-      buildStatementSheet("Export Bills", exportRows, true),
-    ];
-    buildXlsxBuffer(sheets).then((buffer) => {
+    const billed = flatAll
+      .filter(({ c }) => c.billReceived)
+      .sort((a, b) => {
+        const da = a.c.transporterBillDate || a.c.loadingDate || "";
+        const db = b.c.transporterBillDate || b.c.loadingDate || "";
+        return da < db ? -1 : da > db ? 1 : 0;
+      });
+    const dataRows = billed.map(({ o, c }, i) => {
+      const total = containerTotalBillAmount(c);
+      const paid = Number(c.billPaidAmount) || 0;
+      const loadingDate = c.loadingDate ? fmtDate(c.loadingDate) : (c.dispatchAt ? fmtDate(toLocalDateStr(new Date(c.dispatchAt))) : "");
+      return [
+        i + 1, o.shipmentType || "Import", o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "", loadingDate,
+        c.transporterBillDate ? fmtDate(c.transporterBillDate) : "", c.transporterBillNo || "",
+        billStage(c), total, paid, total - paid,
+      ];
+    });
+    const rows = [STATEMENT_HEADERS, ...dataRows];
+    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // every column except Sr.
+    const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
+    const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set([3]), 9, 8);
+    contentDefault[10] = 22; // Total Bill Amount — bold
+    contentDefault[11] = 22; // Paid Amount — bold
+    contentDefault[12] = 22; // Outstanding — bold
+    const colWidths = colWidthsFor(STATEMENT_HEADERS);
+    colWidths[0] = 6.29; // Sr.
+    colWidths[6] = 12; colWidths[7] = 12; // Transporter Bill Date, Transporter Bill No. — narrower
+    colWidths[8] = 20; // Status — wider, "Pending Approval" is the longest label
+    colWidths[9] = 13; colWidths[10] = 13; colWidths[11] = 13; // amount columns after Status — narrower
+    buildXlsxBuffer([{
+      name: "Statement of Account", rows, headerRowIndex: 1, freezeRows: 1,
+      colWidths, headerOverrides, contentDefaultCols: contentDefault,
+      conditionalCols: { 9: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
+    }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
