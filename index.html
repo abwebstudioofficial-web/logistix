@@ -5459,7 +5459,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           )}
         </div>
       )}
-      {showStatement && canExportStatement ? (
+      {(showStatement || showPayments) && canExportStatement ? (showStatement ? (
         <div className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
             <div>
@@ -5557,7 +5557,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
             </div>
           )}
         </div>
-      ) : (
+      ) : null) : (
         <>
       <SearchBox value={q} onChange={setQ} placeholder="Search orders, containers..." />
       {displayRows.length === 0 ? (
