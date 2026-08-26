@@ -1569,7 +1569,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
@@ -1706,6 +1706,9 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
       .join("\n");
     const lastCol = xlsxColLetter(Math.max(1, ...s.rows.map((r) => r.length)));
     const lastRow = Math.max(1, s.rows.length);
+    const mergeCellsXml = (s.mergeCells && s.mergeCells.length)
+      ? `<mergeCells count="${s.mergeCells.length}">${s.mergeCells.map((m) => `<mergeCell ref="${xlsxColLetter(m.startCol)}${m.row}:${xlsxColLetter(m.endCol)}${m.row}"/>`).join("")}</mergeCells>`
+      : "";
     zip.file(`xl/worksheets/sheet${sheetIdx + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <dimension ref="A1:${lastCol}${lastRow}"/>
@@ -1715,6 +1718,7 @@ ${colsXml ? `<cols>${colsXml}</cols>` : ""}
 <sheetData>
 ${rowsXml}
 </sheetData>
+${mergeCellsXml}
 </worksheet>`);
   });
 
@@ -10212,6 +10216,7 @@ function LogistixERP() {
     buildXlsxBuffer([{
       name: "Statement of Account", rows, headerRowIndex: 2, freezeRows: 2,
       colWidths, headerOverrides, contentDefaultCols: contentDefault, titleCell: { row: 1, col: 1 },
+      mergeCells: [{ row: 1, startCol: 1, endCol: STATEMENT_HEADERS.length }],
       conditionalCols: { 9: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
