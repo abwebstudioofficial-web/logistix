@@ -1679,12 +1679,12 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
       .map((values, i) => {
         const rowNum = i + 1;
         const isHeader = rowNum === s.headerRowIndex;
+        const isTitleRow = !!(s.titleCell && s.titleCell.row === rowNum);
         const cellOverrides = {};
         if (isHeader && s.headerOverrides) {
           Object.assign(cellOverrides, s.headerOverrides);
         }
-        if (s.titleCell && s.titleCell.row === rowNum) cellOverrides[s.titleCell.col] = 7;
-        if (!isHeader) {
+        if (!isHeader && !isTitleRow) {
           if (s.contentDefaultCols) Object.assign(cellOverrides, s.contentDefaultCols);
           if (s.conditionalCols) {
             Object.entries(s.conditionalCols).forEach(([colIdx, fn]) => {
@@ -1693,8 +1693,9 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
             });
           }
         }
+        if (isTitleRow) cellOverrides[s.titleCell.col] = 7; // applied last so it always wins over any content default
         const noFillRowSet = new Set(s.noFillRows || []);
-        const isDataRow = rowNum > s.headerRowIndex && !noFillRowSet.has(rowNum);
+        const isDataRow = rowNum > s.headerRowIndex && !noFillRowSet.has(rowNum) && !isTitleRow;
         const rowXml = xlsxRowXml(rowNum, values, cellOverrides, isDataRow);
         // Every row gets an explicit height + customHeight="1" — without that flag, Excel
         // treats defaultRowHeight as a mere suggestion and auto-expands any row containing
@@ -10196,7 +10197,7 @@ function LogistixERP() {
         billStage(c), total, paid, total - paid,
       ];
     });
-    const rows = [STATEMENT_HEADERS, ...dataRows];
+    const rows = [[transporterName || "Transporter"], STATEMENT_HEADERS, ...dataRows];
     const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
     const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set([3]), 9, 8);
@@ -10209,8 +10210,8 @@ function LogistixERP() {
     colWidths[8] = 20; // Status — wider, "Pending Approval" is the longest label
     colWidths[9] = 13; colWidths[10] = 13; colWidths[11] = 13; // amount columns after Status — narrower
     buildXlsxBuffer([{
-      name: "Statement of Account", rows, headerRowIndex: 1, freezeRows: 1,
-      colWidths, headerOverrides, contentDefaultCols: contentDefault,
+      name: "Statement of Account", rows, headerRowIndex: 2, freezeRows: 2,
+      colWidths, headerOverrides, contentDefaultCols: contentDefault, titleCell: { row: 1, col: 1 },
       conditionalCols: { 9: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
