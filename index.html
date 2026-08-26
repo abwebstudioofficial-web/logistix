@@ -1524,7 +1524,7 @@ function xlsxColLetter(n) {
 }
 const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="11">
+<fonts count="15">
 <font><sz val="11"/><name val="Calibri"/></font>
 <font><sz val="10"/><name val="Tahoma"/><b/><color rgb="FF000000"/></font>
 <font><sz val="10"/><name val="Tahoma"/><b/><color rgb="FFFFFFFF"/></font>
@@ -1536,8 +1536,12 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <font><sz val="10"/><name val="Tahoma"/><color rgb="FF006100"/></font>
 <font><sz val="10"/><name val="Tahoma"/><color rgb="FF002060"/></font>
 <font><sz val="10"/><name val="Tahoma"/><color rgb="FFFFFFFF"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF404040"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF1F4E78"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF9C6500"/></font>
+<font><sz val="10"/><name val="Tahoma"/><color rgb="FF5F3F8C"/></font>
 </fonts>
-<fills count="8">
+<fills count="11">
 <fill><patternFill patternType="none"/></fill>
 <fill><patternFill patternType="gray125"/></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill>
@@ -1546,6 +1550,9 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FFFFC7CE"/><bgColor indexed="64"/></patternFill></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF00B0F0"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFDDEBF7"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFE4DFEC"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
 <borders count="4">
 <border><left/><right/><top/><bottom/><diagonal/></border>
@@ -1554,7 +1561,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <border><left/><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="23">
+<cellXfs count="27">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
@@ -1578,6 +1585,10 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="3" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="11" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="12" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="13" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="14" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 
@@ -1597,6 +1608,9 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 // 21=data center wrap, no-left border     (col H content)
 // 22=data center no-wrap, BOLD (Tahoma10) — for charges/amount columns (Freight, LOLO/Stay/
 // Other Charges, Bill Amount Approved, Total Bill Amount, etc.)
+// 23=Bill stage: Pending (gray)     24=Bill stage: Bill Received (blue)
+// 25=Bill stage: Pending Approval (amber)   26=Bill stage: Posted (violet)
+// Bill stage "Paid" reuses style 10 (Cargo Type green) — same "complete/good" meaning.
 
 // Builds one <row> element. `values` is a plain array (1 per column). Every cell's style
 // comes from `cellStyleOverrides[col]` — the caller is expected to have already worked out
@@ -1679,7 +1693,8 @@ ${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.open
             });
           }
         }
-        const isDataRow = rowNum > s.headerRowIndex;
+        const noFillRowSet = new Set(s.noFillRows || []);
+        const isDataRow = rowNum > s.headerRowIndex && !noFillRowSet.has(rowNum);
         const rowXml = xlsxRowXml(rowNum, values, cellOverrides, isDataRow);
         // Every row gets an explicit height + customHeight="1" — without that flag, Excel
         // treats defaultRowHeight as a mere suggestion and auto-expands any row containing
@@ -1839,6 +1854,19 @@ const CARGO_TYPE_RULE = (val) => {
   return 12;
 };
 const LOADING_POINT_RULE = textContainsStyle([["PICT", 13], ["QICT", 14], ["KICT", 15], ["SAPT", 16]]);
+
+// Colors the Status column in the Transporter Bills Statement of Account to match the same
+// stage badge colors used on the site (billStageColor) — gray/blue/amber/violet/green.
+const BILL_STATUS_COLOR_RULE = (val) => {
+  switch (val) {
+    case "Pending": return 23;
+    case "Bill Received": return 24;
+    case "Pending Approval": return 25;
+    case "Posted": return 26;
+    case "Paid": return 10; // reuse Cargo Type green - same "complete/good" meaning
+    default: return null;
+  }
+};
 
 async function buildTemplateWorkbook(data, mode) {
   const allOrders = data.orders || [];
@@ -10176,7 +10204,13 @@ function LogistixERP() {
     dataRows.push(["", "", "", "", "", "", "", "", "Total Paid", "", totalPaid, ""]);
     dataRows.push(["", "", "", "", "", "", "", "", "Balance Payable", "", "", balancePayable]);
     const rows = [STATEMENT_HEADERS, ...dataRows];
-    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9]); // Shipment Type through Status
+    // The blank spacer row and the 3 summary rows sit among the real bill rows, but they're
+    // structural, not data — without this they'd get every empty cell filled with "-" the same
+    // as a genuine bill row, which is exactly what was making them look like broken data rows.
+    const firstDataRow = 2; // row 1 is the header
+    const lastBillRow = firstDataRow + billed.length - 1;
+    const noFillRows = [lastBillRow + 1, lastBillRow + 2, lastBillRow + 3, lastBillRow + 4];
+    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
     const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set(), 9, 8);
     contentDefault[10] = 22; // Total Bill Amount — bold
@@ -10184,11 +10218,13 @@ function LogistixERP() {
     contentDefault[12] = 22; // Outstanding — bold
     const colWidths = colWidthsFor(STATEMENT_HEADERS);
     colWidths[0] = 6.29; // Sr.
+    colWidths[6] = 12; colWidths[7] = 12; // Transporter Bill Date, Transporter Bill No. — narrower
     colWidths[8] = 20; // Status — wider, "Pending Approval" is the longest label
     colWidths[9] = 13; colWidths[10] = 13; colWidths[11] = 13; // amount columns after Status — narrower
     buildXlsxBuffer([{
       name: "Statement of Account", rows, headerRowIndex: 1, freezeRows: 1,
-      colWidths, headerOverrides, contentDefaultCols: contentDefault,
+      colWidths, headerOverrides, contentDefaultCols: contentDefault, noFillRows,
+      conditionalCols: { 9: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
