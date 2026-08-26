@@ -5183,7 +5183,111 @@ function SortTh({ colKey, label, sortKey, sortDir, onSort }) {
   );
 }
 
-function TransporterBillsView({ data, updateContainerFields, isColVisible, onStatementExport, role }) {
+const PAYMENT_METHODS = ["Cheque", "Online Transfer", "Cash", "Fuel Card"];
+
+// Form for manually adding a "Payment to Transporter" entry not tied to any specific bill
+// (advances, adjustments, etc). Saved onto the transporter record itself (manualPayments),
+// since unlike the bill-derived rows there's no container to attach it to.
+function ManualPaymentModal({ transporter, updateTransporterManualPayments, onClose }) {
+  const [date, setDate] = useState(todayISO());
+  const [description, setDescription] = useState("");
+  const [billAmount, setBillAmount] = useState("");
+  const [paidAmount, setPaidAmount] = useState("");
+  const [paymentThrough, setPaymentThrough] = useState(PAYMENT_METHODS[0]);
+  const [referenceNo, setReferenceNo] = useState("");
+  const [attachment, setAttachment] = useState("");
+  const [attachmentError, setAttachmentError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileInputRef = useRef(null);
+
+  async function handleFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setAttachmentError(null);
+    try {
+      const dataUrl = await fileToAttachmentDataUrl(file, 900, 0.6);
+      setAttachment(dataUrl);
+    } catch (err) {
+      setAttachmentError("Couldn't read that file — try a different image or PDF.");
+    }
+  }
+
+  async function save() {
+    if (!date || !description.trim() || !paidAmount) {
+      window.alert("Date, Description, and Paid Amount are required.");
+      return;
+    }
+    setBusy(true);
+    const entry = {
+      id: uid("pay"), date, description: description.trim(),
+      billAmount: xnum(billAmount, 0), paidAmount: xnum(paidAmount, 0),
+      paymentThrough, referenceNo: referenceNo.trim(), attachment,
+    };
+    const nextPayments = [...(Array.isArray(transporter.manualPayments) ? transporter.manualPayments : []), entry];
+    await updateTransporterManualPayments(transporter.id, nextPayments);
+    setBusy(false);
+    onClose();
+  }
+
+  return (
+    <Modal title={`Add Payment — ${transporter.name}`} onClose={onClose}>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <label className="text-slate-500 text-xs block mb-1">Date <span className="text-red-400">*</span></label>
+          <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-slate-500 text-xs block mb-1">Reference No.</label>
+          <input className={inputCls} value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)} placeholder="Optional" />
+        </div>
+      </div>
+      <div className="mb-2">
+        <label className="text-slate-500 text-xs block mb-1">Description <span className="text-red-400">*</span></label>
+        <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this payment was for" />
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div>
+          <label className="text-slate-500 text-xs block mb-1">Bill Amount</label>
+          <input type="number" min="0" className={inputCls} value={billAmount} onChange={(e) => setBillAmount(e.target.value)} placeholder="0" />
+        </div>
+        <div>
+          <label className="text-slate-500 text-xs block mb-1">Paid Amount <span className="text-red-400">*</span></label>
+          <input type="number" min="0" className={inputCls} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} placeholder="0" />
+        </div>
+      </div>
+      <div className="mb-3">
+        <label className="text-slate-500 text-xs block mb-1">Paid Through</label>
+        <select className={inputCls} value={paymentThrough} onChange={(e) => setPaymentThrough(e.target.value)}>
+          {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+      <div className="mb-3">
+        <label className="text-slate-500 text-xs block mb-1">Attachment (image or PDF, optional)</label>
+        <input ref={fileInputRef} type="file" accept="image/*,application/pdf" onChange={handleFile} style={{ display: "none" }} />
+        <button type="button" onClick={() => fileInputRef.current && fileInputRef.current.click()} className={btnSecondary}>
+          {attachment ? "Replace File" : "Choose File"}
+        </button>
+        {attachmentError && <p className="text-red-400 text-xs mt-1">{attachmentError}</p>}
+        {attachment && !isPdfDataUrl(attachment) && (
+          <a href={attachment} target="_blank" rel="noreferrer" className="block mt-2">
+            <img src={attachment} alt="Payment attachment" className="rounded-lg border border-slate-800 max-h-40" />
+          </a>
+        )}
+        {attachment && isPdfDataUrl(attachment) && (
+          <a href={attachment} download="payment-attachment.pdf" className="mt-2 flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2">
+            <FileText size={16} /> PDF attached — click to view or download
+          </a>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button type="button" onClick={onClose} disabled={busy} className={btnSecondary}>Cancel</button>
+        <button type="button" onClick={save} disabled={busy} className={btnPrimary}>{busy ? "Saving…" : "Save Payment"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function TransporterBillsView({ data, updateContainerFields, updateTransporterManualPayments, isColVisible, onStatementExport, role }) {
   // Bill Checker's job ends once a bill is forwarded: Mark Bill Received and Forward for
   // Approval (Pending -> Bill Received -> Pending Approval) are both theirs to do. Everything
   // from Pending Approval onward (posting, marking paid) plus the Statement of Account/Excel
@@ -5200,13 +5304,13 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
   const [showPayments, setShowPayments] = useState(false);
+  const [showAddPayment, setShowAddPayment] = useState(false);
   const [paySortDir, setPaySortDir] = useState("asc");
   const [showStatement, setShowStatement] = useState(false);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
   const [stmtDisplayed, setStmtDisplayed] = useState(false);
   const [stmtError, setStmtError] = useState("");
-  const [stmtSortKey, setStmtSortKey] = useState("billDate");
   const [stmtSortDir, setStmtSortDir] = useState("asc");
 
   const flat = [];
@@ -5301,45 +5405,62 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
 
   // Payment to Transporter — a separate view too, simpler than Statement: only bills that
   // actually have a payment recorded (not every billed entry), since this is meant as a
-  // payments log/receipt view rather than a full account statement.
-  const paymentRows = searchedRows
-    .filter(({ container: c }) => c.billReceived && Number(c.billPaidAmount) > 0)
-    .sort((a, b) => {
-      const da = a.container.transporterBillDate || "", db = b.container.transporterBillDate || "";
-      const cmp = da < db ? -1 : da > db ? 1 : 0;
-      return paySortDir === "desc" ? -cmp : cmp;
-    });
+  // payments log/receipt view rather than a full account statement. Combines those bill-
+  // derived rows with manually-added entries (advances, adjustments - anything not tied to
+  // a specific bill) into one unified, sorted list.
+  const currentTransporter = (data.transporters || []).find((t) => t.name === selectedTransporter);
+  const manualPayments = Array.isArray(currentTransporter && currentTransporter.manualPayments) ? currentTransporter.manualPayments : [];
   function paymentDescription(o, c) {
     const route = [o.origin, c.destination || o.destination].filter(Boolean).join(" → ");
     return [o.jobNumber, c.vehiclePlate, route].filter(Boolean).join(" · ") || "—";
   }
+  const billPaymentRows = searchedRows
+    .filter(({ container: c }) => c.billReceived && Number(c.billPaidAmount) > 0)
+    .map(({ order: o, container: c }) => ({
+      kind: "bill", key: c.id, date: c.transporterBillDate || "",
+      description: paymentDescription(o, c), billAmount: containerTotalBillAmount(c),
+      paidAmount: Number(c.billPaidAmount) || 0, paymentThrough: "", referenceNo: "", attachment: c.billAttachment || "",
+    }));
+  const manualPaymentRows = manualPayments
+    .filter((p) => !q || `${p.description} ${p.referenceNo || ""}`.toLowerCase().includes(q.toLowerCase()))
+    .map((p) => ({
+      kind: "manual", key: p.id, date: p.date || "", description: p.description || "—",
+      billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+      paymentThrough: p.paymentThrough || "", referenceNo: p.referenceNo || "", attachment: p.attachment || "",
+    }));
+  const paymentRows = [...billPaymentRows, ...manualPaymentRows].sort((a, b) => {
+    const cmp = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    return paySortDir === "desc" ? -cmp : cmp;
+  });
 
   // Statement of Account — a separate view, not a stage filter. Same "has this transporter's
   // bill actually been received" scope as the Excel export, so the numbers always agree with
-  // what you'd download, just with date-range filtering and its own sort (including by
-  // Destination, even without a destination filter control). Sorted/filtered by the
-  // Transporter Bill Date ("Date" column) rather than Loading Date - the bill date is what
-  // this statement is actually organized around.
+  // what you'd download, just with date-range filtering. Sorted/filtered by the Transporter
+  // Bill Date ("Date" column) rather than Loading Date - the bill date is what this statement
+  // is actually organized around. Combines bill-derived rows with manually-added "Payment to
+  // Transporter" entries, same as that view does, so anything added there also shows up here.
   const stmtBilledRows = searchedRows.filter(({ container: c }) => c.billReceived);
-  function stmtSortValue(row, key) {
-    const { order: o, container: c } = row;
-    if (key === "destination") return (c.destination || o.destination || "").toLowerCase();
-    return c.transporterBillDate || ""; // billDate
+  function statementDescription(o, c) {
+    return [o.jobNumber, c.containerNumber, c.vehiclePlate].filter(Boolean).join(" · ") || paymentDescription(o, c);
   }
-  function stmtToggleSort(key) {
-    if (stmtSortKey === key) setStmtSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setStmtSortKey(key); setStmtSortDir("asc"); }
-  }
-  const statementRows = stmtBilledRows
-    .filter(({ container: c }) => {
-      const d = c.transporterBillDate || "";
-      if (stmtFrom && d && d < stmtFrom) return false;
-      if (stmtTo && d && d > stmtTo) return false;
+  const stmtBillEntries = stmtBilledRows.map(({ order: o, container: c }) => ({
+    kind: "bill", key: c.id, type: o.shipmentType || "Import", description: statementDescription(o, c),
+    date: c.transporterBillDate || "", transporterBillNo: c.transporterBillNo || "", status: billStage(c),
+    billAmount: containerTotalBillAmount(c), paidAmount: Number(c.billPaidAmount) || 0,
+  }));
+  const stmtManualEntries = manualPayments.map((p) => ({
+    kind: "manual", key: p.id, type: "—", description: p.description || "—",
+    date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
+    billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+  }));
+  const statementRows = [...stmtBillEntries, ...stmtManualEntries]
+    .filter((r) => {
+      if (stmtFrom && r.date && r.date < stmtFrom) return false;
+      if (stmtTo && r.date && r.date > stmtTo) return false;
       return true;
     })
     .sort((a, b) => {
-      const va = stmtSortValue(a, stmtSortKey), vb = stmtSortValue(b, stmtSortKey);
-      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      const cmp = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
       return stmtSortDir === "desc" ? -cmp : cmp;
     });
 
@@ -5420,6 +5541,11 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
       </div>
       {showPayments && canExportStatement && (
         <div className="space-y-4">
+          <div className="flex justify-end">
+            <button type="button" onClick={() => setShowAddPayment(true)} className={btnPrimary}>
+              <Plus size={16} /> Add Payment
+            </button>
+          </div>
           {paymentRows.length === 0 ? (
             <EmptyState icon={Receipt} text="No payments recorded yet for this transporter." />
           ) : (
@@ -5442,15 +5568,35 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     <th className={thCls}>Description</th>
                     <th className={thCls}>Bill Amount</th>
                     <th className={thCls}>Paid Amount</th>
+                    <th className={thCls}>Paid Through</th>
+                    <th className={thCls}>Reference No.</th>
+                    <th className={thCls}>Attachment</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paymentRows.map(({ order: o, container: c }) => (
-                    <tr key={c.id} className={trCls}>
-                      <td className={tdCls}>{c.transporterBillDate ? fmtDate(c.transporterBillDate) : "—"}</td>
-                      <td className={tdCls}>{paymentDescription(o, c)}</td>
-                      <td className={tdCls}>{formatPKR(containerTotalBillAmount(c))}</td>
-                      <td className={cx(tdCls, "text-emerald-400 font-medium")}>{formatPKR(c.billPaidAmount)}</td>
+                  {paymentRows.map((r) => (
+                    <tr key={r.key} className={trCls}>
+                      <td className={tdCls}>{r.date ? fmtDate(r.date) : "—"}</td>
+                      <td className={tdCls}>{r.description}</td>
+                      <td className={tdCls}>{formatPKR(r.billAmount)}</td>
+                      <td className={cx(tdCls, "text-emerald-400 font-medium")}>{formatPKR(r.paidAmount)}</td>
+                      <td className={tdCls}>{r.paymentThrough || "—"}</td>
+                      <td className={cx(tdCls, "font-mono")}>{r.referenceNo || "—"}</td>
+                      <td className={tdCls}>
+                        {r.attachment ? (
+                          <a
+                            href={r.attachment}
+                            target={isPdfDataUrl(r.attachment) ? undefined : "_blank"}
+                            rel={isPdfDataUrl(r.attachment) ? undefined : "noreferrer"}
+                            download={isPdfDataUrl(r.attachment) ? "payment-attachment.pdf" : undefined}
+                            className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
+                          >
+                            <FileText size={14} /> {isPdfDataUrl(r.attachment) ? "PDF" : "View"}
+                          </a>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -5458,6 +5604,13 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
             </div>
           )}
         </div>
+      )}
+      {showAddPayment && currentTransporter && (
+        <ManualPaymentModal
+          transporter={currentTransporter}
+          updateTransporterManualPayments={updateTransporterManualPayments}
+          onClose={() => setShowAddPayment(false)}
+        />
       )}
       {(showStatement || showPayments) && canExportStatement ? (showStatement ? (
         <div className="space-y-4">
@@ -5513,16 +5666,25 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
           ) : statementRows.length === 0 ? (
             <EmptyState icon={Receipt} text="No billed containers match these filters." />
           ) : (
-            <div className={tableWrap} key={`stmt-${stmtSortKey}-${stmtSortDir}-${stmtFrom}-${stmtTo}`}>
+            <div className={tableWrap} key={`stmt-${stmtSortDir}-${stmtFrom}-${stmtTo}`}>
               <table className="w-full text-sm">
                 <thead className={theadCls}>
                   <tr>
                     <th className={thCls}>Sr.</th>
                     <th className={thCls}>Type</th>
-                    <th className={thCls}>Job No.</th>
-                    <th className={thCls}>Container No.</th>
-                    <th className={thCls}>Vehicle No.</th>
-                    <SortTh colKey="billDate" label="Date" sortKey={stmtSortKey} sortDir={stmtSortDir} onSort={stmtToggleSort} />
+                    <th className={thCls}>Description</th>
+                    <th
+                      className={cx(thCls, "cursor-pointer select-none hover:text-slate-300")}
+                      onClick={() => setStmtSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        Date
+                        <span className="inline-flex flex-col -space-y-0.5 shrink-0">
+                          <ChevronUp size={13} className={cx("stroke-[3]", stmtSortDir === "asc" ? "text-blue-400" : "text-slate-600")} />
+                          <ChevronDown size={13} className={cx("stroke-[3]", stmtSortDir === "desc" ? "text-blue-400" : "text-slate-600")} />
+                        </span>
+                      </span>
+                    </th>
                     <th className={thCls}>Transporter Bill No.</th>
                     <th className={thCls}>Status</th>
                     <th className={thCls}>Total Bill Amount</th>
@@ -5531,27 +5693,19 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                   </tr>
                 </thead>
                 <tbody>
-                  {statementRows.map(({ order: o, container: c }, i) => {
-                    const total = containerTotalBillAmount(c);
-                    const paid = Number(c.billPaidAmount) || 0;
-                    const shipType = o.shipmentType || "Import";
-                    const stage = billStage(c);
-                    return (
-                      <tr key={c.id} className={trCls}>
-                        <td className={tdCls}>{i + 1}</td>
-                        <td className={tdCls}><Badge text={shipType} className={shipmentTypeColor[shipType] || priorityColor.Normal} /></td>
-                        <td className={cx(tdCls, "font-mono text-slate-200")}>{o.jobNumber || "—"}</td>
-                        <td className={cx(tdCls, "font-mono")}>{c.containerNumber || "—"}</td>
-                        <td className={tdCls}>{c.vehiclePlate || "—"}</td>
-                        <td className={tdCls}>{c.transporterBillDate ? fmtDate(c.transporterBillDate) : "—"}</td>
-                        <td className={tdCls}>{c.transporterBillNo || "—"}</td>
-                        <td className={tdCls}><Badge text={stage} className={billStageColor[stage]} /></td>
-                        <td className={tdCls}>{formatPKR(total)}</td>
-                        <td className={tdCls}>{formatPKR(paid)}</td>
-                        <td className={tdCls}>{formatPKR(total - paid)}</td>
-                      </tr>
-                    );
-                  })}
+                  {statementRows.map((r, i) => (
+                    <tr key={r.key} className={trCls}>
+                      <td className={tdCls}>{i + 1}</td>
+                      <td className={tdCls}>{r.type === "—" ? "—" : <Badge text={r.type} className={shipmentTypeColor[r.type] || priorityColor.Normal} />}</td>
+                      <td className={cx(tdCls, "font-mono text-slate-200")}>{r.description}</td>
+                      <td className={tdCls}>{r.date ? fmtDate(r.date) : "—"}</td>
+                      <td className={tdCls}>{r.transporterBillNo || "—"}</td>
+                      <td className={tdCls}>{r.status === "—" ? "—" : <Badge text={r.status} className={billStageColor[r.status]} />}</td>
+                      <td className={tdCls}>{formatPKR(r.billAmount)}</td>
+                      <td className={tdCls}>{formatPKR(r.paidAmount)}</td>
+                      <td className={tdCls}>{formatPKR(r.billAmount - r.paidAmount)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -9509,6 +9663,26 @@ function LogistixERP() {
     return result;
   }
 
+  // Manually-added "Payment to Transporter" entries live on the transporter record itself
+  // (manualPayments, a JSON array) rather than on any specific order/container - some
+  // payments (advances, adjustments) aren't tied to one bill. Same serialized-queue pattern
+  // as updateContainerFields, for the same reason: two payments added close together must
+  // not race and silently drop one.
+  async function updateTransporterManualPayments(transporterId, nextPayments) {
+    const run = async () => {
+      const source = dataRef.current || data;
+      if (!source) return;
+      const { error } = await supabaseClient.from("transporters").update({ manual_payments: nextPayments }).eq("id", transporterId);
+      if (error) { window.alert("Couldn't save: " + error.message); return; }
+      const next = { ...source, transporters: source.transporters.map((t) => (t.id === transporterId ? { ...t, manualPayments: nextPayments } : t)) };
+      dataRef.current = next;
+      setDataState(next);
+    };
+    const result = updateQueueRef.current.then(run, run);
+    updateQueueRef.current = result.catch(() => {});
+    return result;
+  }
+
   async function updateDriverStatus(driverId, status) {
     const { error } = await supabaseClient.from("drivers").update({ status }).eq("id", driverId);
     if (error) { window.alert("Couldn't update driver: " + error.message); return; }
@@ -10439,7 +10613,7 @@ function LogistixERP() {
   // Transporter Bills > Statement of Account — download only, no Attach, since this is a
   // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
   // re-imported like the round-trip exports elsewhere.
-  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Job No.", "Container No.", "Vehicle No.", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
+  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Description", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
   function handleTransporterStatementExport(transporterName, fromDate, toDate) {
     const flatAll = [];
     (data.orders || []).forEach((o) => {
@@ -10451,46 +10625,50 @@ function LogistixERP() {
     // actually been received are worth including in an account statement. Date range (when
     // given), sorting, and the "Date" column itself are all the Transporter Bill Date, same
     // field the in-app Statement view uses, so the download always matches what was on screen.
-    const billed = flatAll
+    // Also includes manually-added "Payment to Transporter" entries, same as that view does.
+    const transporterRecord = (data.transporters || []).find((t) => t.name === transporterName);
+    const manualPayments = Array.isArray(transporterRecord && transporterRecord.manualPayments) ? transporterRecord.manualPayments : [];
+    const billEntries = flatAll
       .filter(({ c }) => c.billReceived)
-      .filter(({ c }) => {
+      .map(({ o, c }) => ({
+        type: o.shipmentType || "Import",
+        description: [o.jobNumber, c.containerNumber, c.vehiclePlate].filter(Boolean).join(" · ") || "-",
+        date: c.transporterBillDate || "", transporterBillNo: c.transporterBillNo || "", status: billStage(c),
+        billAmount: containerTotalBillAmount(c), paidAmount: Number(c.billPaidAmount) || 0,
+      }));
+    const manualEntries = manualPayments.map((p) => ({
+      type: "-", description: p.description || "-", date: p.date || "", transporterBillNo: p.referenceNo || "",
+      status: "-", billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+    }));
+    const entries = [...billEntries, ...manualEntries]
+      .filter((r) => {
         if (!fromDate && !toDate) return true;
-        const d = c.transporterBillDate || "";
-        if (fromDate && d && d < fromDate) return false;
-        if (toDate && d && d > toDate) return false;
+        if (fromDate && r.date && r.date < fromDate) return false;
+        if (toDate && r.date && r.date > toDate) return false;
         return true;
       })
-      .sort((a, b) => {
-        const da = a.c.transporterBillDate || "";
-        const db = b.c.transporterBillDate || "";
-        return da < db ? -1 : da > db ? 1 : 0;
-      });
-    const dataRows = billed.map(({ o, c }, i) => {
-      const total = containerTotalBillAmount(c);
-      const paid = Number(c.billPaidAmount) || 0;
-      return [
-        i + 1, o.shipmentType || "Import", o.jobNumber || "", c.containerNumber || "-", c.vehiclePlate || "",
-        c.transporterBillDate ? fmtDate(c.transporterBillDate) : "", c.transporterBillNo || "",
-        billStage(c), total, paid, total - paid,
-      ];
-    });
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const dataRows = entries.map((r, i) => [
+      i + 1, r.type, r.description, r.date ? fmtDate(r.date) : "", r.transporterBillNo,
+      r.status, r.billAmount, r.paidAmount, r.billAmount - r.paidAmount,
+    ]);
     const rows = [[transporterName || "Transporter"], STATEMENT_HEADERS, ...dataRows];
-    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]); // every column except Sr.
+    const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
-    const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set([3]), 9, 8);
-    contentDefault[9] = 22; // Total Bill Amount — bold
-    contentDefault[10] = 22; // Paid Amount — bold
-    contentDefault[11] = 22; // Outstanding — bold
+    const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set([3]), 9, 8); // Description wraps
+    contentDefault[7] = 22; // Total Bill Amount — bold
+    contentDefault[8] = 22; // Paid Amount — bold
+    contentDefault[9] = 22; // Outstanding — bold
     const colWidths = colWidthsFor(STATEMENT_HEADERS);
     colWidths[0] = 6.29; // Sr.
-    colWidths[5] = 12; colWidths[6] = 12; // Date, Transporter Bill No. — narrower
-    colWidths[7] = 20; // Status — wider, "Pending Approval" is the longest label
-    colWidths[8] = 13; colWidths[9] = 13; colWidths[10] = 13; // amount columns after Status — narrower
+    colWidths[3] = 12; colWidths[4] = 12; // Date, Transporter Bill No. — narrower
+    colWidths[5] = 20; // Status — wider, "Pending Approval" is the longest label
+    colWidths[6] = 13; colWidths[7] = 13; colWidths[8] = 13; // amount columns after Status — narrower
     buildXlsxBuffer([{
       name: "Statement of Account", rows, headerRowIndex: 2, freezeRows: 2,
       colWidths, headerOverrides, contentDefaultCols: contentDefault, titleCell: { row: 1, col: 1 },
       mergeCells: [{ row: 1, startCol: 1, endCol: STATEMENT_HEADERS.length }],
-      conditionalCols: { 8: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
+      conditionalCols: { 6: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
@@ -10831,7 +11009,7 @@ function LogistixERP() {
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "analytics" && <AnalyticsView data={data} />}
-              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} isColVisible={isColVisible} onStatementExport={handleTransporterStatementExport} role={viewSession.role} />}
+              {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} updateTransporterManualPayments={updateTransporterManualPayments} isColVisible={isColVisible} onStatementExport={handleTransporterStatementExport} role={viewSession.role} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}
               {view === "order_history" && viewSession.role === "admin" && <OrderHistoryView data={data} openModal={setModal} isColVisible={isColVisible} />}
               {view === "settings" && <SettingsView columnVisibility={columnVisibility} setColumnVisibility={setColumnVisibility} isColVisible={isColVisible} />}
