@@ -5416,9 +5416,12 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
             </button>
             <button
               type="button"
-              onClick={() => onStatementExport(selectedTransporter)}
+              onClick={() => {
+                if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
+                setStmtError(""); onStatementExport(selectedTransporter, stmtFrom, stmtTo);
+              }}
               className="inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all duration-150 active:scale-[0.97]"
-              title="Download this transporter's Statement of Account as Excel"
+              title="Download this transporter's Statement of Account as Excel, for the selected date range"
             >
               <Download size={14} /> Download Statement
             </button>
@@ -10367,7 +10370,7 @@ function LogistixERP() {
   // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
   // re-imported like the round-trip exports elsewhere.
   const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Job No.", "Container No.", "Vehicle No.", "Loading Date", "Transporter Bill Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
-  function handleTransporterStatementExport(transporterName) {
+  function handleTransporterStatementExport(transporterName, fromDate, toDate) {
     const flatAll = [];
     (data.orders || []).forEach((o) => {
       orderContainers(o).forEach((c) => {
@@ -10375,9 +10378,18 @@ function LogistixERP() {
       });
     });
     // A raw Pending row has no bill on file yet - nothing to state, so only bills that have
-    // actually been received are worth including in an account statement.
+    // actually been received are worth including in an account statement. Date range (when
+    // given) filters by Loading Date, same field and same comparison the in-app Statement
+    // view uses, so the download always matches what was on screen when you clicked it.
     const billed = flatAll
       .filter(({ c }) => c.billReceived)
+      .filter(({ c }) => {
+        if (!fromDate && !toDate) return true;
+        const d = c.loadingDate || (c.dispatchAt ? toLocalDateStr(new Date(c.dispatchAt)) : "");
+        if (fromDate && d && d < fromDate) return false;
+        if (toDate && d && d > toDate) return false;
+        return true;
+      })
       .sort((a, b) => {
         const da = a.c.transporterBillDate || a.c.loadingDate || "";
         const db = b.c.transporterBillDate || b.c.loadingDate || "";
@@ -10414,7 +10426,8 @@ function LogistixERP() {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `${(transporterName || "Transporter").replace(/\s+/g, "-")}-Statement-of-Account-${todayISO()}.xlsx`;
+      const rangeSuffix = (fromDate || toDate) ? `-${fromDate || "start"}_to_${toDate || "end"}` : "";
+      a.href = url; a.download = `${(transporterName || "Transporter").replace(/\s+/g, "-")}-Statement-of-Account${rangeSuffix}-${todayISO()}.xlsx`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }).catch((err) => window.alert("Couldn't build the statement of account: " + err.message));
