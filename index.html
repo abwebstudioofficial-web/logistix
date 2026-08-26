@@ -5537,7 +5537,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     {isColVisible("transporterBills", "freightAmount") && <td className={tdCls}>{c.freightAmount ? formatPKR(c.freightAmount) : "—"}</td>}
                     {showTotalBillAmount && (
                       <td className={tdCls}>
-                        {(canAdvancePastReceived || billStage(c) === "Bill Received") ? (
+                        {billStage(c) === "Bill Received" ? (
                           <button
                             type="button"
                             onClick={() => setEditing({ order: o, container: c, modal: "post" })}
@@ -5552,7 +5552,7 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                     )}
                     {showPaidAmount && (
                       <td className={tdCls}>
-                        {canAdvancePastReceived ? (
+                        {(canAdvancePastReceived && billStage(c) === "Paid") ? (
                           <button
                             type="button"
                             onClick={() => setEditing({ order: o, container: c, modal: "paid" })}
@@ -5597,6 +5597,14 @@ function TransporterBillsView({ data, updateContainerFields, isColVisible, onSta
                             // One click, no form - charges are already on file from the Mark Bill Received
                             // form. This is Bill Checker's job too: receive it, check it, forward it -
                             // this is the last action they take on a bill before it becomes Finance's.
+                            const total = containerTotalBillAmount(c);
+                            if (total < 1000) {
+                              return (
+                                <span className="text-amber-500 text-xs" title="Total Bill Amount is under Rs 1,000 — check the entered charges before forwarding">
+                                  Amount too low to forward
+                                </span>
+                              );
+                            }
                             return (
                               <button type="button" onClick={() => updateContainerFields(o.id, c.id, { billApproved: true })} className={btnSecondary}>
                                 Forward for Approval
