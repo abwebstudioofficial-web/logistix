@@ -5336,13 +5336,11 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
   const [showStatement, setShowStatement] = useState(true);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
-  const [stmtDisplayed, setStmtDisplayed] = useState(false);
-  const [stmtError, setStmtError] = useState("");
   const [stmtSortDir, setStmtSortDir] = useState("asc");
   const [stmtPage, setStmtPage] = useState(1);
   useEffect(() => { setMainPage(1); }, [stageTab, sortKey, sortDir, q, selectedTransporter]);
   useEffect(() => { setPayPage(1); }, [q, paySortDir, selectedTransporter]);
-  useEffect(() => { setStmtPage(1); }, [stmtFrom, stmtTo, stmtSortDir, stmtDisplayed, selectedTransporter]);
+  useEffect(() => { setStmtPage(1); }, [stmtFrom, stmtTo, stmtSortDir, selectedTransporter]);
 
 
   const flat = [];
@@ -5658,33 +5656,17 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="text-slate-500 text-xs block mb-1">From</label>
-                <input
-                  type="date" className={inputCls} value={stmtFrom}
-                  onChange={(e) => { setStmtFrom(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
-                />
+                <input type="date" className={inputCls} value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
               </div>
               <div>
                 <label className="text-slate-500 text-xs block mb-1">To</label>
-                <input
-                  type="date" className={inputCls} value={stmtTo}
-                  onChange={(e) => { setStmtTo(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
-                />
+                <input type="date" className={inputCls} value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
-                  setStmtError(""); setStmtDisplayed(true);
-                }}
-                className={btnSecondary}
-              >
-                Display Statement
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
-                  setStmtError(""); onStatementExport(selectedTransporter, stmtFrom, stmtTo);
+                  if (!stmtFrom || !stmtTo) { window.alert("Select both a From and To date first to download a statement for a specific range."); return; }
+                  onStatementExport(selectedTransporter, stmtFrom, stmtTo);
                 }}
                 className="inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all duration-150 active:scale-[0.97]"
                 title="Download this transporter's Statement of Account as Excel, for the selected date range"
@@ -5694,7 +5676,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
               {(stmtFrom || stmtTo) && (
                 <button
                   type="button"
-                  onClick={() => { setStmtFrom(""); setStmtTo(""); setStmtDisplayed(false); setStmtError(""); }}
+                  onClick={() => { setStmtFrom(""); setStmtTo(""); }}
                   className="text-slate-400 hover:text-white text-xs underline decoration-dotted underline-offset-4 mb-2"
                 >
                   Clear filters
@@ -5702,10 +5684,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
               )}
             </div>
           </div>
-          {stmtError && <p className="text-amber-400 text-sm">{stmtError}</p>}
-          {!stmtDisplayed ? (
-            <EmptyState icon={Receipt} text="Select a From and To date, then click Display Statement to see entries." />
-          ) : statementRows.length === 0 ? (
+          {statementRows.length === 0 ? (
             <EmptyState icon={Receipt} text="No billed containers match these filters." />
           ) : (
             <div className={tableWrap} key={`stmt-${stmtSortDir}-${stmtFrom}-${stmtTo}`}>
