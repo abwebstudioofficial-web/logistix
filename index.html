@@ -5652,6 +5652,14 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
             )}
           </div>
           {stmtError && <p className="text-amber-400 text-sm">{stmtError}</p>}
+          {stmtDisplayed && statementRows.length > 0 && (
+            <div className="inline-flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-lg px-4 py-2">
+              <span className="text-slate-500 text-sm">Total Outstanding</span>
+              <span className="text-white font-semibold text-lg">
+                {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0))}
+              </span>
+            </div>
+          )}
           {!stmtDisplayed ? (
             <EmptyState icon={Receipt} text="Select a From and To date, then click Display Statement to see entries." />
           ) : statementRows.length === 0 ? (
