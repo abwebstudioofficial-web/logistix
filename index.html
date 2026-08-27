@@ -2410,7 +2410,7 @@ async function downloadBiltyReceipt(order, data) {
       // apply to a domestic shipment. Shows Domestic Category, PO/SAP No., Movement
       // Through, Loading Date, Vehicle Size, Transporter, and Freight Amount instead.
       const W = 870;
-      const fieldRows = ["desc", "poSap", "movement", "loadingDate", "vehicleSize", "transporter", "freight"];
+      const fieldRows = ["desc", "poSap", "movement", "loadingDate", "vehicleSize", "transporter", "freight", "qty", "weight", "amount"];
       const pBodyH = 18 + fieldRows.length * 22 + 12;
       const srY = 150;
       const infoY = srY + 82;
@@ -2485,7 +2485,9 @@ async function downloadBiltyReceipt(order, data) {
       labelValue("Movement Through:  ", container.movementThrough || "—", infoCols[2] + 8);
       labelValue("Vehicle Size:  ", container.vehicleSize || "—", infoCols[3] + 8);
 
-      // particulars — simple field list, no container/seal line items, no QTY/Amount/Weight grid
+      // particulars — simple field list (no container/seal line items, since Domestic has one
+      // vehicle per shipment rather than multiple containers), now including Quantity/Weight/
+      // Amount as their own rows
       ctx.fillStyle = BAR; ctx.fillRect(32, pY, W - 64, 24);
       txt(ctx, "Particulars", (32 + W - 32) / 2, pY + 16, { size: 10.5, weight: "bold", color: "#ffffff", align: "center" });
       box(ctx, 32, pY, W - 64, 24 + pBodyH, { lw: 1.2 });
@@ -2504,6 +2506,9 @@ async function downloadBiltyReceipt(order, data) {
       pRow("Vehicle Size:", container.vehicleSize);
       pRow("Transporter:", container.transporter);
       pRow("Freight Amount:", container.freightAmount !== "" && container.freightAmount !== undefined && container.freightAmount !== null ? formatPKR(container.freightAmount) : "");
+      pRow("Quantity:", container.qtyLabel);
+      pRow("Weight:", container.weight);
+      pRow("Amount:", container.amount !== "" && container.amount !== undefined && container.amount !== null ? formatPKR(container.amount) : "");
 
       // remarks
       txt(ctx, "Remarks:", 32, remY, { size: 10.5, weight: "bold" });
@@ -5224,7 +5229,7 @@ function ManualPaymentModal({ transporter, updateTransporterManualPayments, onCl
       paymentThrough, referenceNo: referenceNo.trim(), attachment,
     };
     const nextPayments = [...(Array.isArray(transporter.manualPayments) ? transporter.manualPayments : []), entry];
-    await updateTransporterManualPayments(transporter.id, nextPayments);
+    await updateTransporterManualPayments(transporter.name, nextPayments);
     setBusy(false);
     onClose();
   }
@@ -5403,57 +5408,35 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
     ? frozenOrderIds.map((id) => sortedRows.find(({ container: c }) => c.id === id)).filter(Boolean)
     : sortedRows;
 
-  // Payment to Transporter — a separate view too, simpler than Statement: only bills that
-  // actually have a payment recorded (not every billed entry), since this is meant as a
-  // payments log/receipt view rather than a full account statement. Combines those bill-
-  // derived rows with manually-added entries (advances, adjustments - anything not tied to
-  // a specific bill) into one unified, sorted list.
+  // Payment to Transporter — manually-added entries only (advances, adjustments, or any
+  // payment you record here directly). Bill-derived rows used to be auto-included too, but
+  // that's been removed - this is now purely what's been entered through Add Payment.
   const currentTransporter = (data.transporters || []).find((t) => t.name === selectedTransporter);
   const manualPayments = Array.isArray(currentTransporter && currentTransporter.manualPayments) ? currentTransporter.manualPayments : [];
-  function paymentDescription(o, c) {
-    const route = [o.origin, c.destination || o.destination].filter(Boolean).join(" → ");
-    return [o.jobNumber, c.vehiclePlate, route].filter(Boolean).join(" · ") || "—";
-  }
-  const billPaymentRows = searchedRows
-    .filter(({ container: c }) => c.billReceived && Number(c.billPaidAmount) > 0)
-    .map(({ order: o, container: c }) => ({
-      kind: "bill", key: c.id, date: c.transporterBillDate || "",
-      description: paymentDescription(o, c), billAmount: containerTotalBillAmount(c),
-      paidAmount: Number(c.billPaidAmount) || 0, paymentThrough: "", referenceNo: "", attachment: c.billAttachment || "",
-    }));
-  const manualPaymentRows = manualPayments
+  const paymentRows = manualPayments
     .filter((p) => !q || `${p.description} ${p.referenceNo || ""}`.toLowerCase().includes(q.toLowerCase()))
     .map((p) => ({
       kind: "manual", key: p.id, date: p.date || "", description: p.description || "—",
       billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
       paymentThrough: p.paymentThrough || "", referenceNo: p.referenceNo || "", attachment: p.attachment || "",
-    }));
-  const paymentRows = [...billPaymentRows, ...manualPaymentRows].sort((a, b) => {
-    const cmp = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
-    return paySortDir === "desc" ? -cmp : cmp;
-  });
+    }))
+    .sort((a, b) => {
+      const cmp = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+      return paySortDir === "desc" ? -cmp : cmp;
+    });
 
   // Statement of Account — a separate view, not a stage filter. Same "has this transporter's
   // bill actually been received" scope as the Excel export, so the numbers always agree with
   // what you'd download, just with date-range filtering. Sorted/filtered by the Transporter
   // Bill Date ("Date" column) rather than Loading Date - the bill date is what this statement
-  // is actually organized around. Combines bill-derived rows with manually-added "Payment to
-  // Transporter" entries, same as that view does, so anything added there also shows up here.
-  const stmtBilledRows = searchedRows.filter(({ container: c }) => c.billReceived);
-  function statementDescription(o, c) {
-    return [o.jobNumber, c.containerNumber, c.vehiclePlate].filter(Boolean).join(" · ") || paymentDescription(o, c);
-  }
-  const stmtBillEntries = stmtBilledRows.map(({ order: o, container: c }) => ({
-    kind: "bill", key: c.id, type: o.shipmentType || "Import", description: statementDescription(o, c),
-    date: c.transporterBillDate || "", transporterBillNo: c.transporterBillNo || "", status: billStage(c),
-    billAmount: containerTotalBillAmount(c), paidAmount: Number(c.billPaidAmount) || 0,
-  }));
-  const stmtManualEntries = manualPayments.map((p) => ({
-    kind: "manual", key: p.id, type: "—", description: p.description || "—",
-    date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
-    billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
-  }));
-  const statementRows = [...stmtBillEntries, ...stmtManualEntries]
+  // is actually organized around. Manually-added "Payment to Transporter" entries only now -
+  // bill-derived rows used to be auto-included too, but that's been removed.
+  const statementRows = manualPayments
+    .map((p) => ({
+      kind: "manual", key: p.id, type: "—", description: p.description || "—",
+      date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
+      billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+    }))
     .filter((r) => {
       if (stmtFrom && r.date && r.date < stmtFrom) return false;
       if (stmtTo && r.date && r.date > stmtTo) return false;
@@ -5535,7 +5518,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
             )}
           >
             <div className="text-slate-500 text-xs font-medium mb-2 flex items-center gap-1.5"><Receipt size={13} /> Statement</div>
-            <div className="text-lg font-bold text-white">{stmtBilledRows.length}</div>
+            <div className="text-lg font-bold text-white">{statementRows.length}</div>
           </div>
         )}
       </div>
@@ -5605,9 +5588,9 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
           )}
         </div>
       )}
-      {showAddPayment && currentTransporter && (
+      {showAddPayment && (
         <ManualPaymentModal
-          transporter={currentTransporter}
+          transporter={currentTransporter || { id: null, name: selectedTransporter, manualPayments: [] }}
           updateTransporterManualPayments={updateTransporterManualPayments}
           onClose={() => setShowAddPayment(false)}
         />
@@ -9667,14 +9650,26 @@ function LogistixERP() {
   // (manualPayments, a JSON array) rather than on any specific order/container - some
   // payments (advances, adjustments) aren't tied to one bill. Same serialized-queue pattern
   // as updateContainerFields, for the same reason: two payments added close together must
-  // not race and silently drop one.
-  async function updateTransporterManualPayments(transporterId, nextPayments) {
+  // not race and silently drop one. Keyed by NAME rather than id, and creates a minimal
+  // transporter record on first use if one doesn't already exist - "transporter" here is
+  // often just free text typed into a container's Transporter field, with no formal record
+  // in the transporters table at all, which is exactly what made Add Payment silently do
+  // nothing before: it was looking up a record that was never there.
+  async function updateTransporterManualPayments(transporterName, nextPayments) {
     const run = async () => {
       const source = dataRef.current || data;
       if (!source) return;
-      const { error } = await supabaseClient.from("transporters").update({ manual_payments: nextPayments }).eq("id", transporterId);
+      let transporter = source.transporters.find((t) => t.name === transporterName);
+      let transportersList = source.transporters;
+      if (!transporter) {
+        transporter = { id: uid("transporter"), name: transporterName, email: "", phone: "", contact: "", addresses: [], manualPayments: [] };
+        const { error: insertError } = await supabaseClient.from("transporters").insert(toDbRow(transporter));
+        if (insertError) { window.alert("Couldn't create transporter record: " + insertError.message); return; }
+        transportersList = [...transportersList, transporter];
+      }
+      const { error } = await supabaseClient.from("transporters").update({ manual_payments: nextPayments }).eq("id", transporter.id);
       if (error) { window.alert("Couldn't save: " + error.message); return; }
-      const next = { ...source, transporters: source.transporters.map((t) => (t.id === transporterId ? { ...t, manualPayments: nextPayments } : t)) };
+      const next = { ...source, transporters: transportersList.map((t) => (t.id === transporter.id ? { ...t, manualPayments: nextPayments } : t)) };
       dataRef.current = next;
       setDataState(next);
     };
@@ -10615,32 +10610,15 @@ function LogistixERP() {
   // re-imported like the round-trip exports elsewhere.
   const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Description", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
   function handleTransporterStatementExport(transporterName, fromDate, toDate) {
-    const flatAll = [];
-    (data.orders || []).forEach((o) => {
-      orderContainers(o).forEach((c) => {
-        if (((c.transporter || "").trim() || "Unassigned") === transporterName) flatAll.push({ o, c });
-      });
-    });
-    // A raw Pending row has no bill on file yet - nothing to state, so only bills that have
-    // actually been received are worth including in an account statement. Date range (when
-    // given), sorting, and the "Date" column itself are all the Transporter Bill Date, same
-    // field the in-app Statement view uses, so the download always matches what was on screen.
-    // Also includes manually-added "Payment to Transporter" entries, same as that view does.
+    // Manually-added "Payment to Transporter" entries only, matching the in-app view -
+    // bill-derived rows used to be auto-included too, but that's been removed.
     const transporterRecord = (data.transporters || []).find((t) => t.name === transporterName);
     const manualPayments = Array.isArray(transporterRecord && transporterRecord.manualPayments) ? transporterRecord.manualPayments : [];
-    const billEntries = flatAll
-      .filter(({ c }) => c.billReceived)
-      .map(({ o, c }) => ({
-        type: o.shipmentType || "Import",
-        description: [o.jobNumber, c.containerNumber, c.vehiclePlate].filter(Boolean).join(" · ") || "-",
-        date: c.transporterBillDate || "", transporterBillNo: c.transporterBillNo || "", status: billStage(c),
-        billAmount: containerTotalBillAmount(c), paidAmount: Number(c.billPaidAmount) || 0,
-      }));
-    const manualEntries = manualPayments.map((p) => ({
-      type: "-", description: p.description || "-", date: p.date || "", transporterBillNo: p.referenceNo || "",
-      status: "-", billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
-    }));
-    const entries = [...billEntries, ...manualEntries]
+    const entries = manualPayments
+      .map((p) => ({
+        type: "-", description: p.description || "-", date: p.date || "", transporterBillNo: p.referenceNo || "",
+        status: "-", billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+      }))
       .filter((r) => {
         if (!fromDate && !toDate) return true;
         if (fromDate && r.date && r.date < fromDate) return false;
