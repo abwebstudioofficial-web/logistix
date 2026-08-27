@@ -5427,14 +5427,24 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
   // bill actually been received" scope as the Excel export, so the numbers always agree with
   // what you'd download, just with date-range filtering. Sorted/filtered by the Transporter
   // Bill Date ("Date" column) rather than Loading Date - the bill date is what this statement
-  // is actually organized around. Manually-added "Payment to Transporter" entries only now -
-  // bill-derived rows used to be auto-included too, but that's been removed.
-  const statementRows = manualPayments
-    .map((p) => ({
-      kind: "manual", key: p.id, type: "—", description: p.description || "—",
-      date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
-      billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
-    }))
+  // is actually organized around. Combines bill-derived rows with manually-added "Payment to
+  // Transporter" entries, so anything added there also shows up here (Payment to Transporter
+  // itself stays manual-only - this merge is specific to Statement).
+  const stmtBilledRows = searchedRows.filter(({ container: c }) => c.billReceived);
+  function statementDescription(o, c) {
+    return [o.jobNumber, c.containerNumber, c.vehiclePlate].filter(Boolean).join(" · ") || "—";
+  }
+  const stmtBillEntries = stmtBilledRows.map(({ order: o, container: c }) => ({
+    kind: "bill", key: c.id, type: o.shipmentType || "Import", description: statementDescription(o, c),
+    date: c.transporterBillDate || "", transporterBillNo: c.transporterBillNo || "", status: billStage(c),
+    billAmount: containerTotalBillAmount(c), paidAmount: Number(c.billPaidAmount) || 0,
+  }));
+  const stmtManualEntries = manualPayments.map((p) => ({
+    kind: "manual", key: p.id, type: "—", description: p.description || "—",
+    date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
+    billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+  }));
+  const statementRows = [...stmtBillEntries, ...stmtManualEntries]
     .filter((r) => {
       if (stmtFrom && r.date && r.date < stmtFrom) return false;
       if (stmtTo && r.date && r.date > stmtTo) return false;
@@ -10619,15 +10629,29 @@ function LogistixERP() {
   // re-imported like the round-trip exports elsewhere.
   const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Description", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
   function handleTransporterStatementExport(transporterName, fromDate, toDate) {
-    // Manually-added "Payment to Transporter" entries only, matching the in-app view -
-    // bill-derived rows used to be auto-included too, but that's been removed.
+    // Bill-derived rows merged with manually-added "Payment to Transporter" entries, matching
+    // the in-app Statement view.
+    const flatAll = [];
+    (data.orders || []).forEach((o) => {
+      orderContainers(o).forEach((c) => {
+        if (((c.transporter || "").trim() || "Unassigned") === transporterName) flatAll.push({ o, c });
+      });
+    });
     const transporterRecord = (data.transporters || []).find((t) => t.name === transporterName);
     const manualPayments = Array.isArray(transporterRecord && transporterRecord.manualPayments) ? transporterRecord.manualPayments : [];
-    const entries = manualPayments
-      .map((p) => ({
-        type: "-", description: p.description || "-", date: p.date || "", transporterBillNo: p.referenceNo || "",
-        status: "-", billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
-      }))
+    const billEntries = flatAll
+      .filter(({ c }) => c.billReceived)
+      .map(({ o, c }) => ({
+        type: o.shipmentType || "Import",
+        description: [o.jobNumber, c.containerNumber, c.vehiclePlate].filter(Boolean).join(" · ") || "-",
+        date: c.transporterBillDate || "", transporterBillNo: c.transporterBillNo || "", status: billStage(c),
+        billAmount: containerTotalBillAmount(c), paidAmount: Number(c.billPaidAmount) || 0,
+      }));
+    const manualEntries = manualPayments.map((p) => ({
+      type: "-", description: p.description || "-", date: p.date || "", transporterBillNo: p.referenceNo || "",
+      status: "-", billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
+    }));
+    const entries = [...billEntries, ...manualEntries]
       .filter((r) => {
         if (!fromDate && !toDate) return true;
         if (fromDate && r.date && r.date < fromDate) return false;
