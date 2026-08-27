@@ -5653,11 +5653,25 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
           </div>
           {stmtError && <p className="text-amber-400 text-sm">{stmtError}</p>}
           {stmtDisplayed && statementRows.length > 0 && (
-            <div className="inline-flex items-center gap-2 bg-slate-900/60 border border-slate-800 rounded-lg px-4 py-2">
-              <span className="text-slate-500 text-sm">Total Outstanding</span>
-              <span className="text-white font-semibold text-lg">
-                {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0))}
-              </span>
+            <div className="inline-flex items-stretch divide-x divide-slate-800 bg-slate-900/60 border border-slate-800 rounded-lg overflow-hidden">
+              <div className="px-4 py-2">
+                <div className="text-slate-500 text-xs mb-0.5">Total Bill Amount</div>
+                <div className="text-white font-semibold text-lg">
+                  {formatPKR(statementRows.reduce((sum, r) => sum + r.billAmount, 0))}
+                </div>
+              </div>
+              <div className="px-4 py-2">
+                <div className="text-slate-500 text-xs mb-0.5">Total Paid Amount</div>
+                <div className="text-white font-semibold text-lg">
+                  {formatPKR(statementRows.reduce((sum, r) => sum + r.paidAmount, 0))}
+                </div>
+              </div>
+              <div className="px-4 py-2">
+                <div className="text-slate-500 text-xs mb-0.5">Total Outstanding</div>
+                <div className="text-white font-semibold text-lg">
+                  {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0))}
+                </div>
+              </div>
             </div>
           )}
           {!stmtDisplayed ? (
