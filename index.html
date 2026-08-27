@@ -5605,75 +5605,77 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
       )}
       {(showStatement || showPayments) && canExportStatement ? (showStatement ? (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="text-slate-500 text-xs block mb-1">From</label>
-              <input
-                type="date" className={inputCls} value={stmtFrom}
-                onChange={(e) => { setStmtFrom(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
-              />
-            </div>
-            <div>
-              <label className="text-slate-500 text-xs block mb-1">To</label>
-              <input
-                type="date" className={inputCls} value={stmtTo}
-                onChange={(e) => { setStmtTo(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
-                setStmtError(""); setStmtDisplayed(true);
-              }}
-              className={btnSecondary}
-            >
-              Display Statement
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
-                setStmtError(""); onStatementExport(selectedTransporter, stmtFrom, stmtTo);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all duration-150 active:scale-[0.97]"
-              title="Download this transporter's Statement of Account as Excel, for the selected date range"
-            >
-              <Download size={14} /> Download Statement
-            </button>
-            {(stmtFrom || stmtTo) && (
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="text-slate-500 text-xs block mb-1">From</label>
+                <input
+                  type="date" className={inputCls} value={stmtFrom}
+                  onChange={(e) => { setStmtFrom(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
+                />
+              </div>
+              <div>
+                <label className="text-slate-500 text-xs block mb-1">To</label>
+                <input
+                  type="date" className={inputCls} value={stmtTo}
+                  onChange={(e) => { setStmtTo(e.target.value); setStmtDisplayed(false); setStmtError(""); }}
+                />
+              </div>
               <button
                 type="button"
-                onClick={() => { setStmtFrom(""); setStmtTo(""); setStmtDisplayed(false); setStmtError(""); }}
-                className="text-slate-400 hover:text-white text-xs underline decoration-dotted underline-offset-4 mb-2"
+                onClick={() => {
+                  if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
+                  setStmtError(""); setStmtDisplayed(true);
+                }}
+                className={btnSecondary}
               >
-                Clear filters
+                Display Statement
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!stmtFrom || !stmtTo) { setStmtError("Select both a From and To date first."); return; }
+                  setStmtError(""); onStatementExport(selectedTransporter, stmtFrom, stmtTo);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-all duration-150 active:scale-[0.97]"
+                title="Download this transporter's Statement of Account as Excel, for the selected date range"
+              >
+                <Download size={14} /> Download Statement
+              </button>
+              {(stmtFrom || stmtTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setStmtFrom(""); setStmtTo(""); setStmtDisplayed(false); setStmtError(""); }}
+                  className="text-slate-400 hover:text-white text-xs underline decoration-dotted underline-offset-4 mb-2"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+            {stmtDisplayed && statementRows.length > 0 && (
+              <div className="inline-flex items-stretch divide-x divide-slate-800 bg-slate-900/60 border border-slate-800 rounded-lg overflow-hidden">
+                <div className="px-4 py-2">
+                  <div className="text-slate-500 text-xs mb-0.5">Total Bill Amount</div>
+                  <div className="text-white font-semibold text-lg">
+                    {formatPKR(statementRows.reduce((sum, r) => sum + r.billAmount, 0))}
+                  </div>
+                </div>
+                <div className="px-4 py-2">
+                  <div className="text-slate-500 text-xs mb-0.5">Total Paid Amount</div>
+                  <div className="text-white font-semibold text-lg">
+                    {formatPKR(statementRows.reduce((sum, r) => sum + r.paidAmount, 0))}
+                  </div>
+                </div>
+                <div className="px-4 py-2">
+                  <div className="text-slate-500 text-xs mb-0.5">Total Outstanding</div>
+                  <div className="text-white font-semibold text-lg">
+                    {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0))}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
           {stmtError && <p className="text-amber-400 text-sm">{stmtError}</p>}
-          {stmtDisplayed && statementRows.length > 0 && (
-            <div className="inline-flex items-stretch divide-x divide-slate-800 bg-slate-900/60 border border-slate-800 rounded-lg overflow-hidden">
-              <div className="px-4 py-2">
-                <div className="text-slate-500 text-xs mb-0.5">Total Bill Amount</div>
-                <div className="text-white font-semibold text-lg">
-                  {formatPKR(statementRows.reduce((sum, r) => sum + r.billAmount, 0))}
-                </div>
-              </div>
-              <div className="px-4 py-2">
-                <div className="text-slate-500 text-xs mb-0.5">Total Paid Amount</div>
-                <div className="text-white font-semibold text-lg">
-                  {formatPKR(statementRows.reduce((sum, r) => sum + r.paidAmount, 0))}
-                </div>
-              </div>
-              <div className="px-4 py-2">
-                <div className="text-slate-500 text-xs mb-0.5">Total Outstanding</div>
-                <div className="text-white font-semibold text-lg">
-                  {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0))}
-                </div>
-              </div>
-            </div>
-          )}
           {!stmtDisplayed ? (
             <EmptyState icon={Receipt} text="Select a From and To date, then click Display Statement to see entries." />
           ) : statementRows.length === 0 ? (
@@ -5701,7 +5703,9 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                     <th className={thCls}>Transporter Bill No.</th>
                     <th className={thCls}>Status</th>
                     <th className={thCls}>Total Bill Amount</th>
+                    <th className={cx(thCls, "text-center")} style={{ width: 28 }}>−</th>
                     <th className={thCls}>Paid Amount</th>
+                    <th className={cx(thCls, "text-center")} style={{ width: 28 }}>=</th>
                     <th className={thCls}>Outstanding</th>
                   </tr>
                 </thead>
@@ -5715,7 +5719,9 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                       <td className={tdCls}>{r.transporterBillNo || "—"}</td>
                       <td className={tdCls}>{r.status === "—" ? "—" : <Badge text={r.status} className={billStageColor[r.status]} />}</td>
                       <td className={tdCls}>{formatPKR(r.billAmount)}</td>
+                      <td className={cx(tdCls, "text-center text-slate-600")}>−</td>
                       <td className={tdCls}>{formatPKR(r.paidAmount)}</td>
+                      <td className={cx(tdCls, "text-center text-slate-600")}>=</td>
                       <td className={tdCls}>{formatPKR(r.billAmount - r.paidAmount)}</td>
                     </tr>
                   ))}
