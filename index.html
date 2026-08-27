@@ -5290,6 +5290,31 @@ function ManualPaymentModal({ transporter, updateTransporterManualPayments, onCl
   );
 }
 
+const TRANSPORTER_PAGE_SIZE = 25;
+function TransporterPagination({ page, setPage, totalItems }) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / TRANSPORTER_PAGE_SIZE));
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between text-sm text-slate-400 mt-2">
+      <span>Page {page} of {totalPages} · {totalItems} entries</span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}
+          className={cx(btnSecondary, "disabled:opacity-40 disabled:cursor-not-allowed")}
+        >
+          Previous
+        </button>
+        <button
+          type="button" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          className={cx(btnSecondary, "disabled:opacity-40 disabled:cursor-not-allowed")}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function TransporterBillsView({ data, updateContainerFields, updateTransporterManualPayments, isColVisible, onStatementExport, role }) {
   // Bill Checker's job ends once a bill is forwarded: Mark Bill Received and Forward for
   // Approval (Pending -> Bill Received -> Pending Approval) are both theirs to do. Everything
@@ -5306,15 +5331,22 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
   const [frozenOrderIds, setFrozenOrderIds] = useState(null);
+  const [mainPage, setMainPage] = useState(1);
   const [showPayments, setShowPayments] = useState(false);
   const [showAddPayment, setShowAddPayment] = useState(false);
   const [paySortDir, setPaySortDir] = useState("asc");
+  const [payPage, setPayPage] = useState(1);
   const [showStatement, setShowStatement] = useState(false);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
   const [stmtDisplayed, setStmtDisplayed] = useState(false);
   const [stmtError, setStmtError] = useState("");
   const [stmtSortDir, setStmtSortDir] = useState("asc");
+  const [stmtPage, setStmtPage] = useState(1);
+  useEffect(() => { setMainPage(1); }, [stageTab, sortKey, sortDir, q, selectedTransporter]);
+  useEffect(() => { setPayPage(1); }, [q, paySortDir, selectedTransporter]);
+  useEffect(() => { setStmtPage(1); }, [stmtFrom, stmtTo, stmtSortDir, stmtDisplayed, selectedTransporter]);
+
 
   const flat = [];
   data.orders.forEach((o) => {
@@ -5444,24 +5476,35 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
     date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
     billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
   }));
-  // Running balance, same convention as a bank/PD account statement: each row's balance is
-  // the previous row's balance plus that row's Bill Amount (a charge, increases what's owed)
-  // minus its Paid Amount (a payment, reduces what's owed). This has to accumulate forward in
+  // Running balance, bank/PD-statement style: Bill Amount is a charge (added to the balance),
+  // Paid Amount is a payment (subtracted from it) - each row's balance is the previous row's
+  // balance plus its own Bill Amount minus its own Paid Amount. Accumulates forward in
   // chronological order regardless of which direction the table is currently displayed in -
-  // sort direction only changes the viewing order, never the balance values themselves.
-  const statementRowsChrono = [...stmtBillEntries, ...stmtManualEntries]
-    .filter((r) => {
-      if (stmtFrom && r.date && r.date < stmtFrom) return false;
-      if (stmtTo && r.date && r.date > stmtTo) return false;
-      return true;
-    })
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  let runningBalance = 0;
+  // sort direction only changes viewing order, never the balance values themselves. When a
+  // From date is set, an Opening Balance row goes first (fixed at the top no matter the sort
+  // direction, same as a real statement) carrying forward everything before that date, so the
+  // running total picks up where the transporter's full history left off rather than
+  // restarting from zero at the edge of whatever date range happens to be selected.
+  const allEntriesChrono = [...stmtBillEntries, ...stmtManualEntries].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const openingBalance = allEntriesChrono
+    .filter((r) => stmtFrom && r.date && r.date < stmtFrom)
+    .reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0);
+  const statementRowsChrono = allEntriesChrono.filter((r) => {
+    if (stmtFrom && r.date && r.date < stmtFrom) return false;
+    if (stmtTo && r.date && r.date > stmtTo) return false;
+    return true;
+  });
+  let runningBalance = openingBalance;
   const statementRowsWithBalance = statementRowsChrono.map((r) => {
     runningBalance += r.billAmount - r.paidAmount;
     return { ...r, balance: runningBalance };
   });
-  const statementRows = stmtSortDir === "desc" ? [...statementRowsWithBalance].reverse() : statementRowsWithBalance;
+  const statementRowsSorted = stmtSortDir === "desc" ? [...statementRowsWithBalance].reverse() : statementRowsWithBalance;
+  const openingRow = {
+    kind: "opening", key: "opening-balance", type: "—", description: "Opening Balance",
+    date: "", transporterBillNo: "", status: "—", billAmount: null, paidAmount: null, balance: openingBalance,
+  };
+  const statementRows = stmtFrom ? [openingRow, ...statementRowsSorted] : statementRowsSorted;
 
   // Picker screen — choose a transporter before seeing any bills.
   if (!selectedTransporter) {
@@ -5573,7 +5616,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                   </tr>
                 </thead>
                 <tbody>
-                  {paymentRows.map((r) => (
+                  {paymentRows.slice((payPage - 1) * TRANSPORTER_PAGE_SIZE, payPage * TRANSPORTER_PAGE_SIZE).map((r) => (
                     <tr key={r.key} className={trCls}>
                       <td className={tdCls}>{r.date ? fmtDate(r.date) : "—"}</td>
                       <td className={tdCls}>{r.description}</td>
@@ -5602,6 +5645,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
               </table>
             </div>
           )}
+          <TransporterPagination page={payPage} setPage={setPayPage} totalItems={paymentRows.length} />
         </div>
       )}
       {showAddPayment && (
@@ -5711,29 +5755,35 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                     <th className={thCls}>Transporter Bill No.</th>
                     <th className={thCls}>Status</th>
                     <th className={thCls}>Total Bill Amount</th>
-                    <th className={cx(thCls, "text-center")} style={{ width: 28 }}>−</th>
                     <th className={thCls}>Paid Amount</th>
-                    <th className={thCls}>Balance</th>
+                    <th className={thCls}>Outstanding Balance</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {statementRows.map((r, i) => (
-                    <tr key={r.key} className={trCls}>
-                      <td className={tdCls}>{i + 1}</td>
-                      <td className={tdCls}>{r.type === "—" ? "—" : <Badge text={r.type} className={shipmentTypeColor[r.type] || priorityColor.Normal} />}</td>
-                      <td className={cx(tdCls, "font-mono text-slate-200")}>{r.description}</td>
-                      <td className={tdCls}>{r.date ? fmtDate(r.date) : "—"}</td>
-                      <td className={tdCls}>{r.transporterBillNo || "—"}</td>
-                      <td className={tdCls}>{r.status === "—" ? "—" : <Badge text={r.status} className={billStageColor[r.status]} />}</td>
-                      <td className={tdCls}>{formatPKR(r.billAmount)}</td>
-                      <td className={tdCls}>{formatPKR(r.paidAmount)}</td>
-                      <td className={cx(tdCls, "font-semibold")}>{formatPKR(r.balance)}</td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const realRows = statementRows.filter((r) => r.kind !== "opening");
+                    const openingRow = statementRows.find((r) => r.kind === "opening");
+                    const pageRows = realRows.slice((stmtPage - 1) * TRANSPORTER_PAGE_SIZE, stmtPage * TRANSPORTER_PAGE_SIZE);
+                    const rowsToShow = stmtPage === 1 && openingRow ? [openingRow, ...pageRows] : pageRows;
+                    return rowsToShow.map((r, i) => (
+                      <tr key={r.key} className={cx(trCls, r.kind === "opening" && "bg-slate-900/40")}>
+                        <td className={tdCls}>{r.kind === "opening" ? "—" : (stmtPage - 1) * TRANSPORTER_PAGE_SIZE + i + (openingRow && stmtPage === 1 ? 0 : 1)}</td>
+                        <td className={tdCls}>{r.type === "—" ? "—" : <Badge text={r.type} className={shipmentTypeColor[r.type] || priorityColor.Normal} />}</td>
+                        <td className={cx(tdCls, "font-mono text-slate-200", r.kind === "opening" && "font-semibold italic")}>{r.description}</td>
+                        <td className={tdCls}>{r.date ? fmtDate(r.date) : "—"}</td>
+                        <td className={tdCls}>{r.transporterBillNo || "—"}</td>
+                        <td className={tdCls}>{r.status === "—" ? "—" : <Badge text={r.status} className={billStageColor[r.status]} />}</td>
+                        <td className={tdCls}>{r.billAmount == null ? "—" : formatPKR(r.billAmount)}</td>
+                        <td className={tdCls}>{r.paidAmount == null ? "—" : formatPKR(r.paidAmount)}</td>
+                        <td className={cx(tdCls, "font-semibold")}>{formatPKR(r.balance)}</td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
           )}
+          <TransporterPagination page={stmtPage} setPage={setStmtPage} totalItems={statementRows.filter((r) => r.kind !== "opening").length} />
         </div>
       ) : null) : (
         <>
@@ -5767,7 +5817,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
               </tr>
             </thead>
             <tbody>
-              {displayRows.map(({ order: o, container: c }) => {
+              {displayRows.slice((mainPage - 1) * TRANSPORTER_PAGE_SIZE, mainPage * TRANSPORTER_PAGE_SIZE).map(({ order: o, container: c }) => {
                 const cust = getCustomer(data, o.customerId);
                 const shipType = o.shipmentType || "Import";
                 return (
@@ -5898,6 +5948,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
           </table>
         </div>
       )}
+      <TransporterPagination page={mainPage} setPage={setMainPage} totalItems={displayRows.length} />
         </>
       )}
       {editing && editing.modal === "post" && (
