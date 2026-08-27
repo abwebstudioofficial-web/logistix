@@ -5218,15 +5218,18 @@ function ManualPaymentModal({ transporter, updateTransporterManualPayments, onCl
       return;
     }
     setBusy(true);
-    const entry = {
-      id: uid("pay"), date, description: description.trim(),
-      billAmount: xnum(billAmount, 0), paidAmount: xnum(paidAmount, 0),
-      paymentThrough, referenceNo: referenceNo.trim(), attachment,
-    };
-    const nextPayments = [...(Array.isArray(transporter.manualPayments) ? transporter.manualPayments : []), entry];
-    await updateTransporterManualPayments(transporter.name, nextPayments);
-    setBusy(false);
-    onClose();
+    try {
+      const entry = {
+        id: uid("pay"), date, description: description.trim(),
+        billAmount: xnum(billAmount, 0), paidAmount: xnum(paidAmount, 0),
+        paymentThrough, referenceNo: referenceNo.trim(), attachment,
+      };
+      const nextPayments = [...(Array.isArray(transporter.manualPayments) ? transporter.manualPayments : []), entry];
+      const ok = await updateTransporterManualPayments(transporter.name, nextPayments);
+      if (ok) onClose();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -9652,21 +9655,32 @@ function LogistixERP() {
   // nothing before: it was looking up a record that was never there.
   async function updateTransporterManualPayments(transporterName, nextPayments) {
     const run = async () => {
-      const source = dataRef.current || data;
-      if (!source) return;
-      let transporter = source.transporters.find((t) => t.name === transporterName);
-      let transportersList = source.transporters;
-      if (!transporter) {
-        transporter = { id: uid("transporter"), name: transporterName, email: "", phone: "", contact: "", addresses: [], manualPayments: [] };
-        const { error: insertError } = await supabaseClient.from("transporters").insert(toDbRow(transporter));
-        if (insertError) { window.alert("Couldn't create transporter record: " + insertError.message); return; }
-        transportersList = [...transportersList, transporter];
+      try {
+        const source = dataRef.current || data;
+        if (!source) return false;
+        let transporter = source.transporters.find((t) => t.name === transporterName);
+        let transportersList = source.transporters;
+        if (!transporter) {
+          // This lite client has no .insert() - upsert is what's actually available for
+          // creating a new row. Using .insert() here previously threw a TypeError with
+          // nothing to catch it, which is exactly what left "Saving..." stuck forever.
+          transporter = { id: uid("transporter"), name: transporterName, email: "", phone: "", contact: "", addresses: [], manualPayments: [] };
+          const { error: insertError } = await supabaseClient.from("transporters").upsert(toDbRow(transporter));
+          if (insertError) { window.alert("Couldn't create transporter record: " + insertError.message); return false; }
+          transportersList = [...transportersList, transporter];
+        }
+        const { error } = await supabaseClient.from("transporters").update({ manual_payments: nextPayments }).eq("id", transporter.id);
+        if (error) { window.alert("Couldn't save: " + error.message); return false; }
+        const next = { ...source, transporters: transportersList.map((t) => (t.id === transporter.id ? { ...t, manualPayments: nextPayments } : t)) };
+        dataRef.current = next;
+        setDataState(next);
+        return true;
+      } catch (e) {
+        // Whatever else might go wrong here, it must never leave the caller's "Saving..."
+        // state stuck with no way out - always surface it and let the caller move on.
+        window.alert("Couldn't save: " + e.message);
+        return false;
       }
-      const { error } = await supabaseClient.from("transporters").update({ manual_payments: nextPayments }).eq("id", transporter.id);
-      if (error) { window.alert("Couldn't save: " + error.message); return; }
-      const next = { ...source, transporters: transportersList.map((t) => (t.id === transporter.id ? { ...t, manualPayments: nextPayments } : t)) };
-      dataRef.current = next;
-      setDataState(next);
     };
     const result = updateQueueRef.current.then(run, run);
     updateQueueRef.current = result.catch(() => {});
