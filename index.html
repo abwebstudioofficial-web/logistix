@@ -7962,6 +7962,11 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
               </select>
             </Field>
           </div>
+          <div className="grid grid-cols-3 gap-2">
+            <Field label="Quantity"><input className={inputCls} value={dc.qtyLabel || ""} onChange={(e) => setContainerField(dc.id, "qtyLabel", e.target.value)} placeholder="e.g. 500 cartons" /></Field>
+            <Field label="Weight (kg)"><input type="number" min="0" className={inputCls} value={dc.weight || ""} onChange={(e) => setContainerField(dc.id, "weight", e.target.value)} /></Field>
+            <Field label="Amount"><input type="number" min="0" className={inputCls} value={dc.amount || ""} onChange={(e) => setContainerField(dc.id, "amount", e.target.value)} /></Field>
+          </div>
           <Field label="Loading Point"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
           <Field label="Destination"><input className={inputCls} value={dc.destination} onChange={(e) => setContainerField(dc.id, "destination", e.target.value)} /></Field>
           {role !== "data_entry" && (
