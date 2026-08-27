@@ -2410,7 +2410,7 @@ async function downloadBiltyReceipt(order, data) {
       // apply to a domestic shipment. Shows Domestic Category, PO/SAP No., Movement
       // Through, Loading Date, Vehicle Size, Transporter, and Freight Amount instead.
       const W = 870;
-      const fieldRows = ["desc", "poSap", "movement", "loadingDate", "vehicleSize", "transporter", "freight", "qty", "weight", "amount"];
+      const fieldRows = ["desc", "poSap", "movement", "loadingDate", "vehicleSize", "transporter", "freight"];
       const pBodyH = 18 + fieldRows.length * 22 + 12;
       const srY = 150;
       const infoY = srY + 82;
@@ -2485,9 +2485,7 @@ async function downloadBiltyReceipt(order, data) {
       labelValue("Movement Through:  ", container.movementThrough || "—", infoCols[2] + 8);
       labelValue("Vehicle Size:  ", container.vehicleSize || "—", infoCols[3] + 8);
 
-      // particulars — simple field list (no container/seal line items, since Domestic has one
-      // vehicle per shipment rather than multiple containers), now including Quantity/Weight/
-      // Amount as their own rows
+      // particulars — simple field list, no container/seal line items, no QTY/Amount/Weight grid
       ctx.fillStyle = BAR; ctx.fillRect(32, pY, W - 64, 24);
       txt(ctx, "Particulars", (32 + W - 32) / 2, pY + 16, { size: 10.5, weight: "bold", color: "#ffffff", align: "center" });
       box(ctx, 32, pY, W - 64, 24 + pBodyH, { lw: 1.2 });
@@ -2506,9 +2504,6 @@ async function downloadBiltyReceipt(order, data) {
       pRow("Vehicle Size:", container.vehicleSize);
       pRow("Transporter:", container.transporter);
       pRow("Freight Amount:", container.freightAmount !== "" && container.freightAmount !== undefined && container.freightAmount !== null ? formatPKR(container.freightAmount) : "");
-      pRow("Quantity:", container.qtyLabel);
-      pRow("Weight:", container.weight);
-      pRow("Amount:", container.amount !== "" && container.amount !== undefined && container.amount !== null ? formatPKR(container.amount) : "");
 
       // remarks
       txt(ctx, "Remarks:", 32, remY, { size: 10.5, weight: "bold" });
@@ -7961,11 +7956,6 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
                 {CONTAINER_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Field label="Quantity"><input className={inputCls} value={dc.qtyLabel || ""} onChange={(e) => setContainerField(dc.id, "qtyLabel", e.target.value)} placeholder="e.g. 500 cartons" /></Field>
-            <Field label="Weight (kg)"><input type="number" min="0" className={inputCls} value={dc.weight || ""} onChange={(e) => setContainerField(dc.id, "weight", e.target.value)} /></Field>
-            <Field label="Amount"><input type="number" min="0" className={inputCls} value={dc.amount || ""} onChange={(e) => setContainerField(dc.id, "amount", e.target.value)} /></Field>
           </div>
           <Field label="Loading Point"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} placeholder="e.g. Karachi" /></Field>
           <Field label="Destination"><input className={inputCls} value={dc.destination} onChange={(e) => setContainerField(dc.id, "destination", e.target.value)} /></Field>
