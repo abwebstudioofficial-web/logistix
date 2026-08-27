@@ -5444,16 +5444,24 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
     date: p.date || "", transporterBillNo: p.referenceNo || "", status: "—",
     billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
   }));
-  const statementRows = [...stmtBillEntries, ...stmtManualEntries]
+  // Running balance, same convention as a bank/PD account statement: each row's balance is
+  // the previous row's balance plus that row's Bill Amount (a charge, increases what's owed)
+  // minus its Paid Amount (a payment, reduces what's owed). This has to accumulate forward in
+  // chronological order regardless of which direction the table is currently displayed in -
+  // sort direction only changes the viewing order, never the balance values themselves.
+  const statementRowsChrono = [...stmtBillEntries, ...stmtManualEntries]
     .filter((r) => {
       if (stmtFrom && r.date && r.date < stmtFrom) return false;
       if (stmtTo && r.date && r.date > stmtTo) return false;
       return true;
     })
-    .sort((a, b) => {
-      const cmp = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
-      return stmtSortDir === "desc" ? -cmp : cmp;
-    });
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  let runningBalance = 0;
+  const statementRowsWithBalance = statementRowsChrono.map((r) => {
+    runningBalance += r.billAmount - r.paidAmount;
+    return { ...r, balance: runningBalance };
+  });
+  const statementRows = stmtSortDir === "desc" ? [...statementRowsWithBalance].reverse() : statementRowsWithBalance;
 
   // Picker screen — choose a transporter before seeing any bills.
   if (!selectedTransporter) {
@@ -5667,9 +5675,9 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                   </div>
                 </div>
                 <div className="px-4 py-2">
-                  <div className="text-slate-500 text-xs mb-0.5">Total Outstanding</div>
+                  <div className="text-slate-500 text-xs mb-0.5">Closing Balance</div>
                   <div className="text-white font-semibold text-lg">
-                    {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0))}
+                    {formatPKR(statementRowsWithBalance[statementRowsWithBalance.length - 1].balance)}
                   </div>
                 </div>
               </div>
@@ -5705,8 +5713,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                     <th className={thCls}>Total Bill Amount</th>
                     <th className={cx(thCls, "text-center")} style={{ width: 28 }}>−</th>
                     <th className={thCls}>Paid Amount</th>
-                    <th className={cx(thCls, "text-center")} style={{ width: 28 }}>=</th>
-                    <th className={thCls}>Outstanding</th>
+                    <th className={thCls}>Balance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5719,10 +5726,8 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                       <td className={tdCls}>{r.transporterBillNo || "—"}</td>
                       <td className={tdCls}>{r.status === "—" ? "—" : <Badge text={r.status} className={billStageColor[r.status]} />}</td>
                       <td className={tdCls}>{formatPKR(r.billAmount)}</td>
-                      <td className={cx(tdCls, "text-center text-slate-600")}>−</td>
                       <td className={tdCls}>{formatPKR(r.paidAmount)}</td>
-                      <td className={cx(tdCls, "text-center text-slate-600")}>=</td>
-                      <td className={tdCls}>{formatPKR(r.billAmount - r.paidAmount)}</td>
+                      <td className={cx(tdCls, "font-semibold")}>{formatPKR(r.balance)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -10655,7 +10660,7 @@ function LogistixERP() {
   // Transporter Bills > Statement of Account — download only, no Attach, since this is a
   // read-only summary report (outstanding/paid/balance) rather than editable data meant to be
   // re-imported like the round-trip exports elsewhere.
-  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Description", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Outstanding (PKR)"];
+  const STATEMENT_HEADERS = ["Sr.", "Shipment Type", "Description", "Date", "Transporter Bill No.", "Status", "Total Bill Amount (PKR)", "Paid Amount (PKR)", "Balance (PKR)"];
   function handleTransporterStatementExport(transporterName, fromDate, toDate) {
     // Bill-derived rows merged with manually-added "Payment to Transporter" entries, matching
     // the in-app Statement view.
@@ -10687,10 +10692,14 @@ function LogistixERP() {
         return true;
       })
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-    const dataRows = entries.map((r, i) => [
-      i + 1, r.type, r.description, r.date ? fmtDate(r.date) : "", r.transporterBillNo,
-      r.status, r.billAmount, r.paidAmount, r.billAmount - r.paidAmount,
-    ]);
+    // Running balance, same convention as a bank/PD account statement: each row adds its Bill
+    // Amount (a charge) and subtracts its Paid Amount (a payment) from the previous row's
+    // balance, accumulating forward through the whole list in chronological order.
+    let runningBalance = 0;
+    const dataRows = entries.map((r, i) => {
+      runningBalance += r.billAmount - r.paidAmount;
+      return [i + 1, r.type, r.description, r.date ? fmtDate(r.date) : "", r.transporterBillNo, r.status, r.billAmount, r.paidAmount, runningBalance];
+    });
     const rows = [[transporterName || "Transporter"], STATEMENT_HEADERS, ...dataRows];
     const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
