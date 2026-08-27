@@ -5148,18 +5148,15 @@ const billStageTextColor = {
 // A bill's stage is driven by three manual flags, each set by its own click. billReceived is
 // set by the Mark-Bill-Received form (which is also where the transporter bill date/no,
 // charges, and attachment get entered - see TransporterBillModal). billApproved and billPosted
-// are each a single click with no form, advancing one stage at a time. Since charges are
-// already entered by the time billReceived is set, Posted/Paid can't be inferred from the
-// total being > 0 anymore (it already would be) - every step past Bill Received is purely an
-// explicit click, and only the final Posted -> Paid split still comes from actual data (the
-// paid amount).
+// are each a single click with no form, advancing one stage at a time. The final step (Posted
+// -> Paid) is driven by whether a Paid Amount has been recorded at all - once the Mark Paid
+// form has been saved once, the bill counts as Paid regardless of the actual amount entered
+// (0, partial, or in full) - there's no separate "partially paid" waiting state.
 function billStage(c) {
   if (!c.billReceived) return "Pending";
   if (!c.billApproved) return "Bill Received";
   if (!c.billPosted) return "Pending Approval";
-  const total = containerTotalBillAmount(c);
-  const paid = Number(c.billPaidAmount) || 0;
-  if (paid < total) return "Posted";
+  if (c.billPaidAmount === "" || c.billPaidAmount == null) return "Posted";
   return "Paid";
 }
 
@@ -5336,7 +5333,7 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
   const [showAddPayment, setShowAddPayment] = useState(false);
   const [paySortDir, setPaySortDir] = useState("asc");
   const [payPage, setPayPage] = useState(1);
-  const [showStatement, setShowStatement] = useState(false);
+  const [showStatement, setShowStatement] = useState(true);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");
   const [stmtDisplayed, setStmtDisplayed] = useState(false);
@@ -5704,28 +5701,6 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                 </button>
               )}
             </div>
-            {stmtDisplayed && statementRows.length > 0 && (
-              <div className="inline-flex items-stretch divide-x divide-slate-800 bg-slate-900/60 border border-slate-800 rounded-lg overflow-hidden">
-                <div className="px-4 py-2">
-                  <div className="text-slate-500 text-xs mb-0.5">Total Bill Amount</div>
-                  <div className="text-white font-semibold text-lg">
-                    {formatPKR(statementRows.reduce((sum, r) => sum + r.billAmount, 0))}
-                  </div>
-                </div>
-                <div className="px-4 py-2">
-                  <div className="text-slate-500 text-xs mb-0.5">Total Paid Amount</div>
-                  <div className="text-white font-semibold text-lg">
-                    {formatPKR(statementRows.reduce((sum, r) => sum + r.paidAmount, 0))}
-                  </div>
-                </div>
-                <div className="px-4 py-2">
-                  <div className="text-slate-500 text-xs mb-0.5">Closing Balance</div>
-                  <div className="text-white font-semibold text-lg">
-                    {formatPKR(statementRowsWithBalance[statementRowsWithBalance.length - 1].balance)}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
           {stmtError && <p className="text-amber-400 text-sm">{stmtError}</p>}
           {!stmtDisplayed ? (
@@ -5780,6 +5755,25 @@ function TransporterBillsView({ data, updateContainerFields, updateTransporterMa
                     ));
                   })()}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-slate-700 bg-slate-900/60">
+                    <td className={tdCls}></td>
+                    <td className={tdCls}></td>
+                    <td className={cx(tdCls, "font-semibold text-white")}>Total</td>
+                    <td className={tdCls}></td>
+                    <td className={tdCls}></td>
+                    <td className={tdCls}></td>
+                    <td className={cx(tdCls, "font-semibold text-white")}>
+                      {formatPKR(statementRows.reduce((sum, r) => sum + (r.billAmount || 0), 0))}
+                    </td>
+                    <td className={cx(tdCls, "font-semibold text-white")}>
+                      {formatPKR(statementRows.reduce((sum, r) => sum + (r.paidAmount || 0), 0))}
+                    </td>
+                    <td className={cx(tdCls, "font-semibold text-white")}>
+                      {formatPKR(statementRows[statementRows.length - 1].balance)}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}
