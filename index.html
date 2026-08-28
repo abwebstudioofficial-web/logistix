@@ -1561,7 +1561,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <border><left/><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="27">
+<cellXfs count="28">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
@@ -1569,7 +1569,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="5" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
@@ -1589,6 +1589,7 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="0" fontId="12" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="13" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="14" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 
@@ -1611,6 +1612,8 @@ const XLSX_STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 // 23=Bill stage: Pending (gray)     24=Bill stage: Bill Received (blue)
 // 25=Bill stage: Pending Approval (amber)   26=Bill stage: Posted (violet)
 // Bill stage "Paid" reuses style 10 (Cargo Type green) — same "complete/good" meaning.
+// 27=data LEFT-aligned wrap (Tahoma10) — for free-text columns like Description, where
+// centered text reads oddly once it wraps to more than one line.
 
 // Builds one <row> element. `values` is a plain array (1 per column). Every cell's style
 // comes from `cellStyleOverrides[col]` — the caller is expected to have already worked out
@@ -10734,18 +10737,19 @@ function LogistixERP() {
     const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
     const contentDefault = buildColStyleMap(STATEMENT_HEADERS.length, new Set([3]), 9, 8); // Description wraps
+    contentDefault[3] = 27; // Description — left-aligned (covers both bill-derived and manually-added rows, plus "Opening Balance")
     contentDefault[7] = 22; // Total Bill Amount — bold
     contentDefault[8] = 22; // Paid Amount — bold
     contentDefault[9] = 22; // Outstanding — bold
     const colWidths = colWidthsFor(STATEMENT_HEADERS);
     colWidths[0] = 6.29; // Sr.
-    colWidths[3] = 12; colWidths[4] = 12; // Date, Transporter Bill No. — narrower
-    colWidths[5] = 20; // Status — wider, "Pending Approval" is the longest label
-    colWidths[6] = 13; colWidths[7] = 13; colWidths[8] = 13; // amount columns after Status — narrower
+    colWidths[1] = 15; // Shipment Type
+    colWidths[2] = 33; // Description
+    colWidths[3] = 12; colWidths[4] = 12; // Date, Transporter Bill No.
+    colWidths[5] = 15; colWidths[6] = 15; colWidths[7] = 15; colWidths[8] = 15; // Status, Total Bill Amount, Paid Amount, Balance
     buildXlsxBuffer([{
       name: "Statement of Account", rows, headerRowIndex: 2, freezeRows: 2,
       colWidths, headerOverrides, contentDefaultCols: contentDefault, titleCell: { row: 1, col: 1 },
-      mergeCells: [{ row: 1, startCol: 1, endCol: STATEMENT_HEADERS.length }],
       conditionalCols: { 6: BILL_STATUS_COLOR_RULE }, // Status — same colors as the site's stage badges
     }]).then((buffer) => {
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
