@@ -8459,9 +8459,9 @@ function InvoiceForm({ initial, prefill, orders, customers, contracts, contractG
     const shipmentDate = container.loadingDate || container.dispatchAt || ord.createdDate || "";
     const matched = matchContractRateAnyCustomer(ord.customerId, ord.origin, container, contracts, contractGroups, shipmentDate);
     if (!matched) { setRateNote("No matching contract rate found for this order's route/vehicle."); return; }
-    const { general, fuelComponent } = contractRateComponents(matched);
-    const rateTotal = xnum(matched.rate, general + fuelComponent);
-    setRateNote(`Contract rate found: ${formatPKR(rateTotal)}`);
+    const { general } = contractRateComponents(matched);
+    const rateTotal = xnum(general, 0);
+    setRateNote(`Contract rate (fixed component) found: ${formatPKR(rateTotal)}`);
     if (!total || Number(total) === 0) setTotal(rateTotal);
   }
 
