@@ -10708,22 +10708,28 @@ function LogistixERP() {
       type: "-", description: p.description || "-", date: p.date || "", transporterBillNo: p.referenceNo || "",
       status: "-", billAmount: Number(p.billAmount) || 0, paidAmount: Number(p.paidAmount) || 0,
     }));
-    const entries = [...billEntries, ...manualEntries]
-      .filter((r) => {
-        if (!fromDate && !toDate) return true;
-        if (fromDate && r.date && r.date < fromDate) return false;
-        if (toDate && r.date && r.date > toDate) return false;
-        return true;
-      })
-      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const allEntriesChrono = [...billEntries, ...manualEntries].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const openingBalance = allEntriesChrono
+      .filter((r) => fromDate && r.date && r.date < fromDate)
+      .reduce((sum, r) => sum + (r.billAmount - r.paidAmount), 0);
+    const entries = allEntriesChrono.filter((r) => {
+      if (fromDate && r.date && r.date < fromDate) return false;
+      if (toDate && r.date && r.date > toDate) return false;
+      return true;
+    });
     // Running balance, same convention as a bank/PD account statement: each row adds its Bill
     // Amount (a charge) and subtracts its Paid Amount (a payment) from the previous row's
-    // balance, accumulating forward through the whole list in chronological order.
-    let runningBalance = 0;
+    // balance, accumulating forward through the whole list in chronological order. When a
+    // From date is set, an Opening Balance row goes first, carrying forward everything before
+    // that date so the running total picks up where the transporter's full history left off.
+    let runningBalance = openingBalance;
     const dataRows = entries.map((r, i) => {
       runningBalance += r.billAmount - r.paidAmount;
       return [i + 1, r.type, r.description, r.date ? fmtDate(r.date) : "", r.transporterBillNo, r.status, r.billAmount, r.paidAmount, runningBalance];
     });
+    if (fromDate) {
+      dataRows.unshift(["", "-", "Opening Balance", "", "-", "-", "", "", openingBalance]);
+    }
     const rows = [[transporterName || "Transporter"], STATEMENT_HEADERS, ...dataRows];
     const headerWrap = new Set([2, 3, 4, 5, 6, 7, 8, 9]); // every column except Sr.
     const headerOverrides = buildColStyleMap(STATEMENT_HEADERS.length, headerWrap, 5, 6);
