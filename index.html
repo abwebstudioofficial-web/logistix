@@ -6230,6 +6230,8 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
 
 function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack, isColVisible }) {
   const [q, setQ] = useState("");
+  const [qLoading, setQLoading] = useState("");
+  const [qDestination, setQDestination] = useState("");
   const [calcDate, setCalcDate] = useState("");
   const [rateSortCol, setRateSortCol] = useState("loading");
   const [rateSortDir, setRateSortDir] = useState("asc");
@@ -6245,7 +6247,10 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
   const rows = allRows
     .filter((k) => {
       const text = `${k.loadingPoint} ${k.destination} ${k.movementThrough || ""} ${k.vehicleSize || ""} ${k.weightCategory || ""} ${k.axleLoadCategory || ""}`.toLowerCase();
-      return !q || text.includes(q.toLowerCase());
+      if (q && !text.includes(q.toLowerCase())) return false;
+      if (qLoading && !(k.loadingPoint || "").toLowerCase().includes(qLoading.toLowerCase())) return false;
+      if (qDestination && !(k.destination || "").toLowerCase().includes(qDestination.toLowerCase())) return false;
+      return true;
     })
     .sort((a, b) => {
       const cmp = rateComparators[rateSortCol](a, b);
@@ -6307,6 +6312,12 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
       <div className="flex gap-3 flex-wrap items-start">
         <Field label="Search">
           <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
+        </Field>
+        <Field label="Loading Point">
+          <SearchBox value={qLoading} onChange={setQLoading} placeholder="Search loading point..." />
+        </Field>
+        <Field label="Destination">
+          <SearchBox value={qDestination} onChange={setQDestination} placeholder="Search destination..." />
         </Field>
         {group && (
           <Field label="Calculate rate as of date">
