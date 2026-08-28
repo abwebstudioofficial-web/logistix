@@ -6229,7 +6229,6 @@ function CustomerContractsDetail({ customer, data, openModal, askDelete, role, c
 }
 
 function ContractDetail({ customer, group, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack, isColVisible }) {
-  const [q, setQ] = useState("");
   const [qLoading, setQLoading] = useState("");
   const [qDestination, setQDestination] = useState("");
   const [calcDate, setCalcDate] = useState("");
@@ -6246,8 +6245,6 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
   function sortRate(col, dir) { setRateSortCol(col); setRateSortDir(dir); }
   const rows = allRows
     .filter((k) => {
-      const text = `${k.loadingPoint} ${k.destination} ${k.movementThrough || ""} ${k.vehicleSize || ""} ${k.weightCategory || ""} ${k.axleLoadCategory || ""}`.toLowerCase();
-      if (q && !text.includes(q.toLowerCase())) return false;
       if (qLoading && !(k.loadingPoint || "").toLowerCase().includes(qLoading.toLowerCase())) return false;
       if (qDestination && !(k.destination || "").toLowerCase().includes(qDestination.toLowerCase())) return false;
       return true;
@@ -6310,9 +6307,6 @@ function ContractDetail({ customer, group, data, openModal, askDelete, role, con
         onRevert={() => onContractRatesRevert(group ? group.id : "")}
       />
       <div className="flex gap-3 flex-wrap items-start">
-        <Field label="Search">
-          <SearchBox value={q} onChange={setQ} placeholder="Search loading point, destination, vehicle size..." />
-        </Field>
         <Field label="Loading Point">
           <SearchBox value={qLoading} onChange={setQLoading} placeholder="Search loading point..." />
         </Field>
@@ -8441,7 +8435,7 @@ function RouteForm({ initial, drivers, vehicles, orders, onSave, onCancel }) {
   );
 }
 
-function InvoiceForm({ initial, prefill, orders, customers, onSave, onCancel }) {
+function InvoiceForm({ initial, prefill, orders, customers, contracts, contractGroups, onSave, onCancel }) {
   const isEdit = !!initial;
   const inv = initial || prefill || {};
   const [orderId, setOrderId] = useState(inv.orderId || "");
@@ -8451,12 +8445,44 @@ function InvoiceForm({ initial, prefill, orders, customers, onSave, onCancel }) 
   const [due, setDue] = useState(inv.due || "");
   const [total, setTotal] = useState(inv.total ?? "");
   const [status, setStatus] = useState(inv.status || "Draft");
+  const [rateNote, setRateNote] = useState("");
+
+  // Pulls the customer's agreed contract rate for this order's route/vehicle/date and fills
+  // Total with it, same rate-matching logic used to auto-fill Freight Amount on order forms.
+  // Only overwrites Total when it's still blank/zero - never clobbers an amount someone's
+  // already typed in, whether that's a manual entry or a value carried in from prefill/edit.
+  function applyContractRate(ord) {
+    if (!ord) { setRateNote(""); return; }
+    const containers = orderContainers(ord);
+    const container = containers.find((c) => c.id === containerId) || containers[0];
+    if (!container) { setRateNote(""); return; }
+    const shipmentDate = container.loadingDate || container.dispatchAt || ord.createdDate || "";
+    const matched = matchContractRateAnyCustomer(ord.customerId, ord.origin, container, contracts, contractGroups, shipmentDate);
+    if (!matched) { setRateNote("No matching contract rate found for this order's route/vehicle."); return; }
+    const { general, fuelComponent } = contractRateComponents(matched);
+    const rateTotal = xnum(matched.rate, general + fuelComponent);
+    setRateNote(`Contract rate found: ${formatPKR(rateTotal)}`);
+    if (!total || Number(total) === 0) setTotal(rateTotal);
+  }
+
+  useEffect(() => {
+    if (orderId) {
+      const ord = orders.find((o) => o.id === orderId);
+      applyContractRate(ord);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleOrderChange(id) {
     setOrderId(id);
     setContainerId("");
     const ord = orders.find((o) => o.id === id);
-    if (ord) setCustomerId(ord.customerId);
+    if (ord) {
+      setCustomerId(ord.customerId);
+      applyContractRate(ord);
+    } else {
+      setRateNote("");
+    }
   }
 
   function submit(e) {
@@ -8481,6 +8507,7 @@ function InvoiceForm({ initial, prefill, orders, customers, onSave, onCancel }) 
           {orders.map((o) => <option key={o.id} value={o.id}>{o.orderNumber}</option>)}
         </select>
       </Field>
+      {rateNote && <p className="text-xs text-slate-500 -mt-2 mb-2">{rateNote}</p>}
       <Field label="Customer">
         <select className={inputCls} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
           <option value="">Select customer</option>
@@ -8896,7 +8923,7 @@ function EntityModal({ modal, data, onClose, onSave, role }) {
       {type === "driver" && <DriverForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("drivers", i)} onCancel={onClose} />}
       {type === "invoice" && (mode === "view"
         ? <InvoiceDetail invoice={item} data={data} />
-        : <InvoiceForm initial={mode === "edit" ? item : null} prefill={modal.prefill} orders={data.orders} customers={data.customers} onSave={(i) => onSave("invoices", i)} onCancel={onClose} />)}
+        : <InvoiceForm initial={mode === "edit" ? item : null} prefill={modal.prefill} orders={data.orders} customers={data.customers} contracts={data.contracts} contractGroups={data.contract_groups} onSave={(i) => onSave("invoices", i)} onCancel={onClose} />)}
       {type === "customer" && <CustomerForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("customers", i)} onCancel={onClose} />}
       {type === "sender" && <SenderForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("senders", i)} onCancel={onClose} />}
       {type === "transporter" && <TransporterForm initial={mode === "edit" ? item : null} onSave={(i) => onSave("transporters", i)} onCancel={onClose} />}
