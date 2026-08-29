@@ -2818,18 +2818,18 @@ async function downloadInvoicePDF(invoice, data) {
       pdf.save(`Invoice-${invoice.invoiceNumber}.pdf`);
     }
 
-    const W = 850;
-    const billToY = 190;
-    const orderInfoY = billToY + 88;
+    const W = 700;
+    const billToY = 210;
+    const orderInfoY = billToY + 100;
     const hasOrderInfo = !!ord;
-    const tableY = orderInfoY + (hasOrderInfo ? 46 : 16);
-    const rowH = 26;
+    const tableY = orderInfoY + (hasOrderInfo ? 54 : 18);
+    const rowH = 34;
     const lineItemLabel = ord
       ? `Freight & Logistics Services — ${ord.orderNumber}${container && container.destination ? ` (${ord.origin || "—"} → ${container.destination})` : ""}`
       : "Freight & Logistics Services";
     const tableBodyH = rowH * 2; // one line item + total row
-    const notesY = tableY + 30 + tableBodyH + 30;
-    const H = notesY + 130;
+    const notesY = tableY + 38 + tableBodyH + 40;
+    const H = notesY + 150;
 
     const canvas = document.createElement("canvas");
     canvas.width = W * SCALE; canvas.height = H * SCALE;
@@ -2841,77 +2841,77 @@ async function downloadInvoicePDF(invoice, data) {
     box(ctx, 14, 14, W - 28, H - 28, { lw: 1.5 });
 
     // header: logo + company block (left), INVOICE title + status (right)
-    if (logoImg) ctx.drawImage(logoImg, 30, 26, 50, 44);
-    txt(ctx, COMPANY_PROFILE.name, 90, 46, { size: 15.5, weight: "bold" });
-    txt(ctx, COMPANY_PROFILE.tagline, 90, 60, { size: 8.5, color: SUB });
-    txt(ctx, COMPANY_PROFILE.addressLine1, 90, 72, { size: 8, color: SUB });
-    txt(ctx, COMPANY_PROFILE.addressLine2, 90, 83, { size: 8, color: SUB });
-    txt(ctx, COMPANY_PROFILE.phone, 90, 94, { size: 8, color: SUB });
-    txt(ctx, COMPANY_PROFILE.email, 90, 105, { size: 8, color: SUB });
+    if (logoImg) ctx.drawImage(logoImg, 30, 26, 58, 51);
+    txt(ctx, COMPANY_PROFILE.name, 100, 50, { size: 18, weight: "bold" });
+    txt(ctx, COMPANY_PROFILE.tagline, 100, 66, { size: 10, color: SUB });
+    txt(ctx, COMPANY_PROFILE.addressLine1, 100, 80, { size: 9.5, color: SUB });
+    txt(ctx, COMPANY_PROFILE.addressLine2, 100, 93, { size: 9.5, color: SUB });
+    txt(ctx, COMPANY_PROFILE.phone, 100, 106, { size: 9.5, color: SUB });
+    txt(ctx, COMPANY_PROFILE.email, 100, 119, { size: 9.5, color: SUB });
 
-    txt(ctx, "INVOICE", W - 32, 46, { size: 22, weight: "bold", align: "right" });
+    txt(ctx, "INVOICE", W - 32, 50, { size: 26, weight: "bold", align: "right" });
     const statusColor = invoiceStatusInk[status] || SUB;
-    ctx.font = "bold 10px Arial";
-    const statusW = ctx.measureText(status.toUpperCase()).width + 20;
-    ctx.fillStyle = statusColor; ctx.fillRect(W - 32 - statusW, 56, statusW, 18);
-    txt(ctx, status.toUpperCase(), W - 32 - statusW / 2, 68.5, { size: 10, weight: "bold", color: "#ffffff", align: "center" });
+    ctx.font = "bold 12px Arial";
+    const statusW = ctx.measureText(status.toUpperCase()).width + 26;
+    ctx.fillStyle = statusColor; ctx.fillRect(W - 32 - statusW, 62, statusW, 22);
+    txt(ctx, status.toUpperCase(), W - 32 - statusW / 2, 77, { size: 12, weight: "bold", color: "#ffffff", align: "center" });
 
     // right info box: Invoice No / Issued / Due
-    const rbX = W - 200, rbW = 168, rbY = 84;
-    box(ctx, rbX, rbY, rbW, 90, { lw: 1.2 });
-    line(ctx, rbX, rbY + 34, rbX + rbW, rbY + 34);
-    line(ctx, rbX + rbW / 2, rbY + 34, rbX + rbW / 2, rbY + 90);
-    txt(ctx, "INVOICE NO.", rbX + 8, rbY + 15, { size: 8, weight: "bold", color: SUB });
-    txt(ctx, invoice.invoiceNumber || "—", rbX + 8, rbY + 29, { size: 13, weight: "bold" });
-    txt(ctx, "ISSUED", rbX + 8, rbY + 50, { size: 8, weight: "bold", color: SUB });
-    txt(ctx, invoice.issued ? fmtDate(invoice.issued) : "—", rbX + 8, rbY + 75, { size: 11 });
-    txt(ctx, "DUE", rbX + rbW / 2 + 8, rbY + 50, { size: 8, weight: "bold", color: SUB });
-    txt(ctx, invoice.due ? fmtDate(invoice.due) : "—", rbX + rbW / 2 + 8, rbY + 75, { size: 11 });
+    const rbX = W - 232, rbW = 200, rbY = 96;
+    box(ctx, rbX, rbY, rbW, 104, { lw: 1.2 });
+    line(ctx, rbX, rbY + 40, rbX + rbW, rbY + 40);
+    line(ctx, rbX + rbW / 2, rbY + 40, rbX + rbW / 2, rbY + 104);
+    txt(ctx, "INVOICE NO.", rbX + 10, rbY + 17, { size: 9, weight: "bold", color: SUB });
+    txt(ctx, invoice.invoiceNumber || "—", rbX + 10, rbY + 34, { size: 15, weight: "bold" });
+    txt(ctx, "ISSUED", rbX + 10, rbY + 58, { size: 9, weight: "bold", color: SUB });
+    txt(ctx, invoice.issued ? fmtDate(invoice.issued) : "—", rbX + 10, rbY + 87, { size: 13 });
+    txt(ctx, "DUE", rbX + rbW / 2 + 10, rbY + 58, { size: 9, weight: "bold", color: SUB });
+    txt(ctx, invoice.due ? fmtDate(invoice.due) : "—", rbX + rbW / 2 + 10, rbY + 87, { size: 13 });
 
     // bill to
-    box(ctx, 32, billToY, W - 64, 76, { lw: 1.2 });
-    ctx.fillStyle = BAR; ctx.fillRect(32, billToY, W - 64, 20);
-    txt(ctx, "BILL TO", 42, billToY + 14, { size: 10, weight: "bold", color: "#ffffff" });
-    txt(ctx, cust ? cust.name : "Unknown Customer", 42, billToY + 40, { size: 13, weight: "bold" });
-    txt(ctx, cust ? (cust.location || cust.email || "") : "", 42, billToY + 56, { size: 9.5, color: SUB });
-    txt(ctx, cust && cust.phone ? `Contact# ${cust.phone}` : "", 42, billToY + 69, { size: 9.5, color: SUB });
+    box(ctx, 32, billToY, W - 64, 88, { lw: 1.2 });
+    ctx.fillStyle = BAR; ctx.fillRect(32, billToY, W - 64, 24);
+    txt(ctx, "BILL TO", 44, billToY + 17, { size: 11.5, weight: "bold", color: "#ffffff" });
+    txt(ctx, cust ? cust.name : "Unknown Customer", 44, billToY + 48, { size: 15.5, weight: "bold" });
+    txt(ctx, cust ? (cust.location || cust.email || "") : "", 44, billToY + 66, { size: 11, color: SUB });
+    txt(ctx, cust && cust.phone ? `Contact# ${cust.phone}` : "", 44, billToY + 81, { size: 11, color: SUB });
 
     // linked order info (only if one exists)
     if (hasOrderInfo) {
-      box(ctx, 32, orderInfoY, W - 64, 26, { lw: 1.2 });
+      box(ctx, 32, orderInfoY, W - 64, 32, { lw: 1.2 });
       const cols = [32, 32 + (W - 64) * 0.4, 32 + (W - 64) * 0.7, W - 32];
-      line(ctx, cols[1], orderInfoY, cols[1], orderInfoY + 26);
-      line(ctx, cols[2], orderInfoY, cols[2], orderInfoY + 26);
+      line(ctx, cols[1], orderInfoY, cols[1], orderInfoY + 32);
+      line(ctx, cols[2], orderInfoY, cols[2], orderInfoY + 32);
       function labelValue(label, value, x) {
-        txt(ctx, label, x, orderInfoY + 17, { size: 9, weight: "bold" });
-        ctx.font = "bold 9px Arial";
+        txt(ctx, label, x, orderInfoY + 20, { size: 10.5, weight: "bold" });
+        ctx.font = "bold 10.5px Arial";
         const lw = ctx.measureText(label).width;
-        txt(ctx, value, x + lw, orderInfoY + 17, { size: 9 });
+        txt(ctx, value, x + lw, orderInfoY + 20, { size: 10.5 });
       }
-      labelValue("Order No.:  ", ord.orderNumber || "—", cols[0] + 8);
-      labelValue("Route:  ", `${ord.origin || "—"} → ${(container && container.destination) || "—"}`, cols[1] + 8);
-      labelValue("Vehicle:  ", (container && (container.vehiclePlate || container.containerNumber)) || "—", cols[2] + 8);
+      labelValue("Order No.:  ", ord.orderNumber || "—", cols[0] + 10);
+      labelValue("Route:  ", `${ord.origin || "—"} → ${(container && container.destination) || "—"}`, cols[1] + 10);
+      labelValue("Vehicle:  ", (container && (container.vehiclePlate || container.containerNumber)) || "—", cols[2] + 10);
     }
 
     // line item table
-    const tCols = [32, W - 150, W - 32];
-    ctx.fillStyle = BAR; ctx.fillRect(32, tableY, W - 64, 22);
-    txt(ctx, "DESCRIPTION", tCols[0] + 8, tableY + 15, { size: 9.5, weight: "bold", color: "#ffffff" });
-    txt(ctx, "AMOUNT (PKR)", tCols[2] - 8, tableY + 15, { size: 9.5, weight: "bold", color: "#ffffff", align: "right" });
-    box(ctx, 32, tableY, W - 64, 22 + tableBodyH, { lw: 1.2 });
-    line(ctx, tCols[1], tableY, tCols[1], tableY + 22 + tableBodyH);
-    line(ctx, 32, tableY + 22 + rowH, W - 32, tableY + 22 + rowH);
-    txt(ctx, lineItemLabel, tCols[0] + 8, tableY + 22 + rowH / 2 + 4, { size: 10 });
-    txt(ctx, formatPKR(invoice.total), tCols[2] - 8, tableY + 22 + rowH / 2 + 4, { size: 10, align: "right" });
-    txt(ctx, "TOTAL", tCols[0] + 8, tableY + 22 + rowH + rowH / 2 + 4, { size: 11.5, weight: "bold" });
-    txt(ctx, formatPKR(invoice.total), tCols[2] - 8, tableY + 22 + rowH + rowH / 2 + 4, { size: 12.5, weight: "bold", align: "right" });
+    const tCols = [32, W - 180, W - 32];
+    ctx.fillStyle = BAR; ctx.fillRect(32, tableY, W - 64, 28);
+    txt(ctx, "DESCRIPTION", tCols[0] + 10, tableY + 19, { size: 11, weight: "bold", color: "#ffffff" });
+    txt(ctx, "AMOUNT (PKR)", tCols[2] - 10, tableY + 19, { size: 11, weight: "bold", color: "#ffffff", align: "right" });
+    box(ctx, 32, tableY, W - 64, 28 + tableBodyH, { lw: 1.2 });
+    line(ctx, tCols[1], tableY, tCols[1], tableY + 28 + tableBodyH);
+    line(ctx, 32, tableY + 28 + rowH, W - 32, tableY + 28 + rowH);
+    txt(ctx, lineItemLabel, tCols[0] + 10, tableY + 28 + rowH / 2 + 5, { size: 11.5 });
+    txt(ctx, formatPKR(invoice.total), tCols[2] - 10, tableY + 28 + rowH / 2 + 5, { size: 11.5, align: "right" });
+    txt(ctx, "TOTAL", tCols[0] + 10, tableY + 28 + rowH + rowH / 2 + 5, { size: 14, weight: "bold" });
+    txt(ctx, formatPKR(invoice.total), tCols[2] - 10, tableY + 28 + rowH + rowH / 2 + 5, { size: 15.5, weight: "bold", align: "right" });
 
     // notes / terms / signature
-    txt(ctx, "Notes:", 32, notesY, { size: 9.5, weight: "bold" });
-    txt(ctx, "Payment is due by the date shown above. Please quote the invoice number with your remittance.", 32, notesY + 16, { size: 9, color: SUB });
-    line(ctx, 32, notesY + 70, 32 + 180, notesY + 70);
-    txt(ctx, "Authorized Signatory", 32, notesY + 84, { size: 9, color: SUB });
-    txt(ctx, "Thank you for your business.", W - 32, notesY + 84, { size: 9, color: SUB, align: "right" });
+    txt(ctx, "Notes:", 32, notesY, { size: 11, weight: "bold" });
+    txt(ctx, "Payment is due by the date shown above. Please quote the invoice number with your remittance.", 32, notesY + 18, { size: 10.5, color: SUB });
+    line(ctx, 32, notesY + 80, 32 + 200, notesY + 80);
+    txt(ctx, "Authorized Signatory", 32, notesY + 96, { size: 10.5, color: SUB });
+    txt(ctx, "Thank you for your business.", W - 32, notesY + 96, { size: 10.5, color: SUB, align: "right" });
 
     finish(canvas, W, H);
   } catch (err) {
