@@ -2906,14 +2906,33 @@ async function downloadInvoicePDF(invoice, data) {
     }
 
     // line item table
-    const tCols = [M, W - M - 190, W - M];
+    const tCols = [M, W - M - 150, W - M];
     ctx.fillStyle = BAR; ctx.fillRect(M, tableY, W - M * 2, 34);
     txt(ctx, "DESCRIPTION", tCols[0] + 14, tableY + 23, { size: 15, weight: "bold", color: "#ffffff" });
     txt(ctx, "AMOUNT (PKR)", tCols[2] - 14, tableY + 23, { size: 15, weight: "bold", color: "#ffffff", align: "right" });
     box(ctx, M, tableY, W - M * 2, 34 + tableBodyH, { lw: 1.2 });
     line(ctx, tCols[1], tableY, tCols[1], tableY + 34 + tableBodyH);
     line(ctx, M, tableY + 34 + rowH, W - M, tableY + 34 + rowH);
-    txt(ctx, lineItemLabel, tCols[0] + 14, tableY + 34 + rowH / 2 + 6, { size: 16 });
+    // Description auto-shrinks to fit its column — never overflows into Amount regardless of
+    // how long the order number/route text ends up being.
+    (function fitDescription() {
+      const avail = (tCols[1] - tCols[0]) - 14 - 10;
+      let size = 16;
+      while (size > 8) {
+        ctx.font = `${size}px Arial`;
+        if (ctx.measureText(lineItemLabel).width <= avail) break;
+        size -= 0.5;
+      }
+      let display = lineItemLabel;
+      ctx.font = `${size}px Arial`;
+      if (ctx.measureText(display).width > avail) {
+        while (display.length > 1 && ctx.measureText(display + "…").width > avail) {
+          display = display.slice(0, -1);
+        }
+        display += "…";
+      }
+      txt(ctx, display, tCols[0] + 14, tableY + 34 + rowH / 2 + 6, { size });
+    })();
     txt(ctx, formatPKR(invoice.total), tCols[2] - 14, tableY + 34 + rowH / 2 + 6, { size: 16, align: "right" });
     txt(ctx, "TOTAL", tCols[0] + 14, tableY + 34 + rowH + rowH / 2 + 6, { size: 19, weight: "bold" });
     txt(ctx, formatPKR(invoice.total), tCols[2] - 14, tableY + 34 + rowH + rowH / 2 + 6, { size: 22, weight: "bold", align: "right" });
