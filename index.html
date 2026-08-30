@@ -2820,17 +2820,17 @@ async function downloadInvoicePDF(invoice, data) {
 
     const W = 780;
     const M = 20; // outer content margin
-    const billToY = 230;
-    const orderInfoY = billToY + 120;
+    const billToY = 270;
+    const orderInfoY = billToY + 150;
     const hasOrderInfo = !!ord;
-    const tableY = orderInfoY + (hasOrderInfo ? 58 : 18);
-    const rowH = 44;
+    const tableY = orderInfoY + (hasOrderInfo ? 80 : 30);
+    const rowH = 56;
     const lineItemLabel = ord
       ? `Freight & Logistics Services — ${ord.orderNumber}${container && container.destination ? ` (${ord.origin || "—"} → ${container.destination})` : ""}`
       : "Freight & Logistics Services";
     const tableBodyH = rowH * 2; // one line item + total row
-    const notesY = tableY + 44 + tableBodyH + 46;
-    const H = notesY + 165;
+    const notesY = tableY + 44 + tableBodyH + 80;
+    const H = notesY + 240;
 
     const canvas = document.createElement("canvas");
     canvas.width = W * SCALE; canvas.height = H * SCALE;
@@ -2870,22 +2870,22 @@ async function downloadInvoicePDF(invoice, data) {
     txt(ctx, invoice.due ? fmtDate(invoice.due) : "—", rbX + rbW / 2 + 14, rbY + 104, { size: 16 });
 
     // bill to
-    box(ctx, M, billToY, W - M * 2, 104, { lw: 1.2 });
-    ctx.fillStyle = BAR; ctx.fillRect(M, billToY, W - M * 2, 30);
-    txt(ctx, "BILL TO", M + 14, billToY + 21, { size: 15, weight: "bold", color: "#ffffff" });
-    txt(ctx, cust ? cust.name : "Unknown Customer", M + 14, billToY + 58, { size: 21, weight: "bold" });
-    txt(ctx, cust ? (cust.location || cust.email || "") : "", M + 14, billToY + 78, { size: 14, color: SUB });
-    txt(ctx, cust && cust.phone ? `Contact# ${cust.phone}` : "", M + 14, billToY + 95, { size: 14, color: SUB });
+    box(ctx, M, billToY, W - M * 2, 124, { lw: 1.2 });
+    ctx.fillStyle = BAR; ctx.fillRect(M, billToY, W - M * 2, 34);
+    txt(ctx, "BILL TO", M + 14, billToY + 23, { size: 15, weight: "bold", color: "#ffffff" });
+    txt(ctx, cust ? cust.name : "Unknown Customer", M + 14, billToY + 68, { size: 21, weight: "bold" });
+    txt(ctx, cust ? (cust.location || cust.email || "") : "", M + 14, billToY + 92, { size: 14, color: SUB });
+    txt(ctx, cust && cust.phone ? `Contact# ${cust.phone}` : "", M + 14, billToY + 112, { size: 14, color: SUB });
 
     // linked order info (only if one exists)
     if (hasOrderInfo) {
-      box(ctx, M, orderInfoY, W - M * 2, 40, { lw: 1.2 });
+      box(ctx, M, orderInfoY, W - M * 2, 50, { lw: 1.2 });
       // Order No. ("Order No.: ORD-XXXXXXXX-XXX") and Route (origin -> destination) are both
       // often long; Vehicle is a short, fixed-format plate/container number, so it gets the
       // smallest share.
       const cols = [M, M + (W - M * 2) * 0.32, M + (W - M * 2) * 0.76, W - M];
-      line(ctx, cols[1], orderInfoY, cols[1], orderInfoY + 40);
-      line(ctx, cols[2], orderInfoY, cols[2], orderInfoY + 40);
+      line(ctx, cols[1], orderInfoY, cols[1], orderInfoY + 50);
+      line(ctx, cols[2], orderInfoY, cols[2], orderInfoY + 50);
       function labelValue(label, value, x, colWidth) {
         const pad = 14;
         const avail = colWidth - pad - 6;
@@ -2896,10 +2896,10 @@ async function downloadInvoicePDF(invoice, data) {
           if (totalW <= avail) break;
           size -= 0.5;
         }
-        txt(ctx, label, x, orderInfoY + 25, { size, weight: "bold" });
+        txt(ctx, label, x, orderInfoY + 31, { size, weight: "bold" });
         ctx.font = `bold ${size}px Arial`;
         const lw = ctx.measureText(label).width;
-        txt(ctx, value, x + lw, orderInfoY + 25, { size });
+        txt(ctx, value, x + lw, orderInfoY + 31, { size });
       }
       labelValue("Order No.:  ", ord.orderNumber || "—", cols[0] + 14, cols[1] - cols[0]);
       labelValue("Route:  ", `${ord.origin || "—"} → ${(container && container.destination) || "—"}`, cols[1] + 14, cols[2] - cols[1]);
