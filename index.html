@@ -2818,7 +2818,7 @@ async function downloadInvoicePDF(invoice, data) {
       pdf.save(`Invoice-${invoice.invoiceNumber}.pdf`);
     }
 
-    const W = 700;
+    const W = 780;
     const M = 20; // outer content margin
     const billToY = 230;
     const orderInfoY = billToY + 120;
@@ -2880,18 +2880,29 @@ async function downloadInvoicePDF(invoice, data) {
     // linked order info (only if one exists)
     if (hasOrderInfo) {
       box(ctx, M, orderInfoY, W - M * 2, 40, { lw: 1.2 });
-      const cols = [M, M + (W - M * 2) * 0.38, M + (W - M * 2) * 0.7, W - M];
+      // Route is almost always the longest value (origin -> destination), so it gets the
+      // biggest share of the row; Order No. and Vehicle are short, fixed-format codes.
+      const cols = [M, M + (W - M * 2) * 0.24, M + (W - M * 2) * 0.64, W - M];
       line(ctx, cols[1], orderInfoY, cols[1], orderInfoY + 40);
       line(ctx, cols[2], orderInfoY, cols[2], orderInfoY + 40);
-      function labelValue(label, value, x) {
-        txt(ctx, label, x, orderInfoY + 25, { size: 14, weight: "bold" });
-        ctx.font = "bold 14px Arial";
+      function labelValue(label, value, x, colWidth) {
+        const pad = 14;
+        const avail = colWidth - pad - 6;
+        let size = 14;
+        while (size > 8) {
+          ctx.font = `bold ${size}px Arial`;
+          const totalW = ctx.measureText(label + value).width;
+          if (totalW <= avail) break;
+          size -= 0.5;
+        }
+        txt(ctx, label, x, orderInfoY + 25, { size, weight: "bold" });
+        ctx.font = `bold ${size}px Arial`;
         const lw = ctx.measureText(label).width;
-        txt(ctx, value, x + lw, orderInfoY + 25, { size: 14 });
+        txt(ctx, value, x + lw, orderInfoY + 25, { size });
       }
-      labelValue("Order No.:  ", ord.orderNumber || "—", cols[0] + 14);
-      labelValue("Route:  ", `${ord.origin || "—"} → ${(container && container.destination) || "—"}`, cols[1] + 14);
-      labelValue("Vehicle:  ", (container && (container.vehiclePlate || container.containerNumber)) || "—", cols[2] + 14);
+      labelValue("Order No.:  ", ord.orderNumber || "—", cols[0] + 14, cols[1] - cols[0]);
+      labelValue("Route:  ", `${ord.origin || "—"} → ${(container && container.destination) || "—"}`, cols[1] + 14, cols[2] - cols[1]);
+      labelValue("Vehicle:  ", (container && (container.vehiclePlate || container.containerNumber)) || "—", cols[2] + 14, cols[3] - cols[2]);
     }
 
     // line item table
