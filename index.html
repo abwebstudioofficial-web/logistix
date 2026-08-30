@@ -2880,16 +2880,17 @@ async function downloadInvoicePDF(invoice, data) {
     // linked order info (only if one exists)
     if (hasOrderInfo) {
       box(ctx, M, orderInfoY, W - M * 2, 40, { lw: 1.2 });
-      // Route is almost always the longest value (origin -> destination), so it gets the
-      // biggest share of the row; Order No. and Vehicle are short, fixed-format codes.
-      const cols = [M, M + (W - M * 2) * 0.24, M + (W - M * 2) * 0.64, W - M];
+      // Order No. ("Order No.: ORD-XXXXXXXX-XXX") and Route (origin -> destination) are both
+      // often long; Vehicle is a short, fixed-format plate/container number, so it gets the
+      // smallest share.
+      const cols = [M, M + (W - M * 2) * 0.32, M + (W - M * 2) * 0.76, W - M];
       line(ctx, cols[1], orderInfoY, cols[1], orderInfoY + 40);
       line(ctx, cols[2], orderInfoY, cols[2], orderInfoY + 40);
       function labelValue(label, value, x, colWidth) {
         const pad = 14;
         const avail = colWidth - pad - 6;
-        let size = 14;
-        while (size > 8) {
+        let size = 13;
+        while (size > 10.5) {
           ctx.font = `bold ${size}px Arial`;
           const totalW = ctx.measureText(label + value).width;
           if (totalW <= avail) break;
