@@ -24,8 +24,14 @@ message.
    maintenance agent to deploy it. **Merging the code doesn't change the live
    function**: until it's redeployed, Supabase keeps running the previous version.
 
-Optional: add a `GEMINI_MODEL` secret to use a different model. The default is
-`gemini-2.5-flash`.
+You don't need to choose a model. The function asks Google which models the key
+can use, and picks the best available Flash model. To force a specific one,
+add a `GEMINI_MODEL` secret, for example `gemini-3.5-flash`.
+
+**To check it's working, type `/check` in the panel.** It lists the Flash models
+your key can use, tests Google Search on up to three of them with your real key,
+and reports any limits Google returns. It uses one free request per model tested.
+The same report goes to the function's logs in Supabase.
 
 ## How it works
 
@@ -36,8 +42,18 @@ Optional: add a `GEMINI_MODEL` secret to use a different model. The default is
   `[[open:invoices]]`, or `[[open:invoices:now]]` when the user asked to go
   there. The function strips the marker, checks the key against `SECTIONS`, and
   tells the panel. The user never sees the marker.
-- When `gemini-2.5-flash` hits its daily limit, the question is retried once on
-  `gemini-2.5-flash-lite`, which has its own daily limit.
+- **Picking a model:** Google retires models regularly (`gemini-2.5-flash` was
+  due to shut down in October 2026, and some keys lost it earlier). So the
+  function lists the key's models once an hour and tries them in this order:
+  1. the `GEMINI_MODEL` secret, if set;
+  2. `gemini-2.5-flash`, `gemini-3.5-flash`, `gemini-flash-latest` and
+     `gemini-3-flash`, then any newer stable Flash model;
+  3. the matching Flash-Lite models.
+- **Falling back:** if a model is missing, isn't free on the key, or has hit its
+  daily limit, the question moves to the next one. Each model has its own
+  daily limit. Up to four models are tried.
+- **Logs:** Google's error for every failed attempt is written to the function's
+  logs in Supabase. The key never is.
 - Google's terms for grounded answers require showing Google's **Search
   Suggestions** with them. The panel shows them under each answer, in a
   sandboxed frame.
@@ -46,9 +62,13 @@ Optional: add a `GEMINI_MODEL` secret to use a different model. The default is
 
 Google no longer publishes a fixed free-tier table, and the limits have changed
 several times. Reports from 2026 say:
-- Free Google Search grounding is available on `gemini-2.5-flash` and
-  `gemini-2.5-flash-lite`, about 500 grounded requests a day, shared between them.
+- Free Google Search grounding is available on the 2.5 Flash models, about 500
+  grounded requests a day, shared between them.
+- On Gemini 3.x models, grounding is free only for a limited number of
+  questions a month.
 - Request limits per model per day have been as low as about 20.
+
+Type `/check` in the panel to see what your key actually gets.
 
 The live numbers for your key are shown in Google AI Studio. To measure them, run:
 
@@ -72,6 +92,7 @@ Pakistan.
 | Too many questions in a minute | "Too many questions in the last minute… wait about N seconds" |
 | Invalid key | "The Gemini API key is invalid. Check the GEMINI_API_KEY secret in Supabase…" |
 | Key blocked or not a Gemini key | "Google rejected the Gemini API key: …" |
+| No usable Flash model on the free tier | "None of the Gemini Flash models this key can use are available on its free tier right now. Type /check…" |
 | No key set | "The research assistant isn't set up yet: add the GEMINI_API_KEY secret…" |
 | Safety filter | "Gemini declined to answer that. Try rephrasing the question." |
 | Gemini overloaded | "Gemini is busy or having a problem right now…" |

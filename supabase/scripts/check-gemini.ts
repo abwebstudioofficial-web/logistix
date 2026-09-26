@@ -1,8 +1,9 @@
 // Checks what a Gemini API key's free tier really allows the research assistant to do.
 //
 //   GEMINI_API_KEY=... deno run --allow-net --allow-env supabase/scripts/check-gemini.ts
-//       Lists the Flash models the key can use, then asks each one grounded question and
-//       reports whether Google Search grounding actually ran. Uses one request per model.
+//       Lists the Flash models the key can use, then asks each stable one a grounded question
+//       and reports whether Google Search grounding actually ran. Uses one request per model.
+//       (Admins can get the same report from the live function by typing /check in the panel.)
 //
 //   GEMINI_API_KEY=... deno run --allow-net --allow-env supabase/scripts/check-gemini.ts --until-limit gemini-2.5-flash
 //       Keeps asking grounded questions until Google refuses, then prints the per-minute and
@@ -110,7 +111,9 @@ if (limitAt >= 0) {
 } else {
   const models = await listFlashModels();
   console.log(`Flash models this key can use: ${models.join(", ") || "none"}\n`);
-  const toTry = [...new Set(["gemini-2.5-flash", "gemini-2.5-flash-lite", ...models.filter((m) => /^gemini-3/.test(m))])];
+  // The stable Flash and Flash-Lite models (and the -latest aliases) the key lists, which is
+  // what the research assistant picks from.
+  const toTry = models.filter((m) => /^gemini-[\d.]+-flash(-lite)?$/.test(m) || /^gemini-flash(-lite)?-latest$/.test(m));
   console.log(`Asking one grounded question on: ${toTry.join(", ")}`);
   for (const model of toTry) describe(model, await ask(model));
 }
