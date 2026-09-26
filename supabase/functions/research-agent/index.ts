@@ -14,9 +14,12 @@
 //
 // Secrets (Supabase dashboard > Edge Functions > Secrets):
 //   GEMINI_API_KEY  required, a Gemini API key from Google AI Studio
-//   GEMINI_MODEL    optional, defaults to gemini-2.5-flash
+//   GEMINI_MODEL    optional; otherwise the best Flash model the key can use is picked
+//
+// Typing /check in the panel reports which Flash models the key can use and whether
+// Google Search grounding runs on them.
 
-import { answer, type Content, parseBody, type Send, TIME_LIMIT_MS, UserError } from "./gemini.ts";
+import { answer, type Content, diagnose, parseBody, type Send, TIME_LIMIT_MS, UserError } from "./gemini.ts";
 
 const ALLOWED_ORIGINS = ["https://abwebstudioofficial-web.github.io"];
 
@@ -68,8 +71,11 @@ Deno.serve(async (req) => {
   }
 
   let contents: Content[] | string;
+  let isCheck = false;
   try {
-    contents = parseBody(await req.json());
+    const body = await req.json();
+    contents = parseBody(body);
+    isCheck = String((body as { message?: unknown })?.message ?? "").trim().toLowerCase() === "/check";
   } catch {
     contents = "Send JSON.";
   }
@@ -86,7 +92,7 @@ Deno.serve(async (req) => {
 
   const work = (async () => {
     try {
-      send("done", await answer(key, contents, send, signal));
+      send("done", await (isCheck ? diagnose(key, send, signal) : answer(key, contents, send, signal)));
     } catch (err) {
       if (err instanceof UserError) {
         send("error", { code: err.code, message: err.message });

@@ -2,10 +2,14 @@
 // explanations, and turning the streamed reply into panel events. Used by index.ts.
 
 const API_BASE = Deno.env.get("GEMINI_API_BASE") ?? "https://generativelanguage.googleapis.com/v1beta";
-const PRIMARY_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
-// Each model has its own free daily request limit, so when the primary model's is used up,
-// the question is retried once on this one.
-const BACKUP_MODEL = "gemini-2.5-flash-lite";
+const MODEL_OVERRIDE = Deno.env.get("GEMINI_MODEL") || "";
+// Google retires models regularly, so the function asks which models the key can use and
+// tries them in this order. Each model has its own free daily limit, so when one is used
+// up (or missing, or not free on this key) the question moves on to the next.
+const PREFERRED_FLASH = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3-flash"];
+const PREFERRED_LITE = ["gemini-2.5-flash-lite", "gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite"];
+const MAX_MODEL_TRIES = 4;
+const MODEL_LIST_TTL_MS = 60 * 60 * 1000;
 // Supabase stops a function after 150 s on the free plan; leave room to report back.
 export const TIME_LIMIT_MS = 110_000;
 const MAX_MESSAGE_CHARS = 4000;
@@ -95,14 +99,13 @@ export class UserError extends Error {
 // -- talking to Gemini ------------------------------------------------------------------
 
 /** Explains a failed Gemini API response in terms the user can act on. */
-export function explainGeminiError(status: number, body: unknown, model = PRIMARY_MODEL): UserError {
+export function explainGeminiError(status: number, body: unknown, model = "the model"): UserError {
   const error = (body as { error?: { message?: string; status?: string; details?: unknown[] } })?.error ?? {};
   const message = String(error.message ?? "");
   const details = Array.isArray(error.details) ? error.details as Record<string, unknown>[] : [];
   const reasons = details.map((d) => String(d.reason ?? ""));
-  const quotaIds = details.flatMap((d) =>
-    Array.isArray(d.violations) ? (d.violations as Record<string, unknown>[]).map((v) => String(v.quotaId ?? "")) : []
-  );
+  const violations = details.flatMap((d) => Array.isArray(d.violations) ? d.violations as Record<string, unknown>[] : []);
+  const quotaIds = violations.map((v) => String(v.quotaId ?? ""));
   const retryDelay = details.map((d) => String(d.retryDelay ?? "")).find((r) => r) ?? "";
 
   if (reasons.includes("API_KEY_INVALID") || /API key not valid/i.test(message)) {
@@ -113,6 +116,9 @@ export function explainGeminiError(status: number, body: unknown, model = PRIMAR
     return new UserError("invalid_key", `Google rejected the Gemini API key: ${why}, then update the GEMINI_API_KEY secret in Supabase.`);
   }
   if (status === 429) {
+    if (violations.some((v) => String(v.quotaValue ?? "") === "0") || /limit: 0\b/.test(message)) {
+      return new UserError("not_free", `The Gemini model "${model}" isn't included in this key's free tier.`);
+    }
     if (quotaIds.some((id) => /PerDay/i.test(id)) || /per ?day|daily/i.test(message)) {
       return new UserError(
         "daily_limit",
@@ -125,8 +131,8 @@ export function explainGeminiError(status: number, body: unknown, model = PRIMAR
   if (status === 400 && /location is not supported/i.test(message)) {
     return new UserError("region", "Google's Gemini API isn't available from the region this Supabase function runs in.");
   }
-  if (status === 404) {
-    return new UserError("error", `The Gemini model "${model}" isn't available to this key. Check the GEMINI_MODEL secret, or remove it to use the default.`);
+  if (status === 404 || /no longer available|is not found for API version/i.test(message)) {
+    return new UserError("model_missing", `The Gemini model "${model}" isn't available to this key.`);
   }
   if (status >= 500) {
     return new UserError("busy", "Gemini is busy or having a problem right now. Please try again in a moment.");
@@ -146,8 +152,136 @@ async function streamGemini(model: string, key: string, contents: Content[], sig
     }),
     signal,
   });
-  if (!res.ok) throw explainGeminiError(res.status, await res.json().catch(() => ({})), model);
+  if (!res.ok) throw logged(model, res.status, await res.json().catch(() => ({})));
   return res;
+}
+
+/** Logs Google's error for the Supabase function logs, and returns the user-facing version. */
+function logged(model: string, status: number, body: unknown): UserError {
+  const error = (body as { error?: Record<string, unknown> })?.error ?? {};
+  console.warn(`Gemini ${model}: HTTP ${status} ${error.status ?? ""} ${String(error.message ?? "").slice(0, 300)} ${JSON.stringify(error.details ?? []).slice(0, 600)}`);
+  return explainGeminiError(status, body, model);
+}
+
+let modelList: { at: number; names: string[] } | null = null;
+// Models that refused as missing or not free, skipped until the time stored (per worker).
+const unusable = new Map<string, number>();
+
+/** The models this key can generate content with, cached for an hour per worker. */
+async function availableModels(key: string, signal: AbortSignal): Promise<string[]> {
+  if (modelList && Date.now() - modelList.at < MODEL_LIST_TTL_MS) return modelList.names;
+  const res = await fetch(`${API_BASE}/models?pageSize=1000`, { headers: { "x-goog-api-key": key }, signal });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw logged("model list", res.status, body);
+  const names = ((body as { models?: { name?: string; supportedGenerationMethods?: string[] }[] }).models ?? [])
+    .filter((m) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+    .map((m) => String(m.name).replace(/^models\//, ""));
+  modelList = { at: Date.now(), names };
+  return names;
+}
+
+function version(name: string): number[] {
+  return (name.match(/^gemini-([\d.]+)-/)?.[1] ?? "0").split(".").map(Number);
+}
+function newestFirst(a: string, b: string): number {
+  const [x, y] = [version(a), version(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((y[i] ?? 0) !== (x[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0);
+  return 0;
+}
+
+/** Models to try, best first: GEMINI_MODEL if set, then Flash, then Flash-Lite models the key has. */
+export function chooseModels(available: string[], override = MODEL_OVERRIDE): string[] {
+  const has = new Set(available);
+  const stable = (re: RegExp, preferred: string[]) => [
+    ...preferred.filter((m) => has.has(m)),
+    ...available.filter((m) => re.test(m) && !preferred.includes(m)).sort(newestFirst),
+  ];
+  const flash = stable(/^gemini-\d+(\.\d+)?-flash$/, PREFERRED_FLASH);
+  const lite = stable(/^gemini-\d+(\.\d+)?-flash-lite$/, PREFERRED_LITE);
+  return [...new Set([...(override ? [override] : []), ...flash, ...lite])];
+}
+
+// Worth moving on to the next model for these; anything else (bad key, safety, overload) isn't.
+const TRY_NEXT_MODEL = new Set(["model_missing", "not_free", "daily_limit"]);
+
+/** Starts the reply on the first model that accepts it. */
+async function openStream(key: string, contents: Content[], send: Send, signal: AbortSignal) {
+  const now = Date.now();
+  const candidates = chooseModels(await availableModels(key, signal))
+    .filter((m) => (unusable.get(m) ?? 0) < now)
+    .slice(0, MAX_MODEL_TRIES);
+  if (!candidates.length) throw new UserError("model_missing", "This Gemini key has no Gemini Flash model available. Check the key in Google AI Studio.");
+  let daily: UserError | null = null;
+  let last: UserError | null = null;
+  for (const model of candidates) {
+    try {
+      return { model, res: await streamGemini(model, key, contents, signal) };
+    } catch (err) {
+      if (!(err instanceof UserError) || !TRY_NEXT_MODEL.has(err.code)) throw err;
+      if (err.code === "model_missing" || err.code === "not_free") unusable.set(model, Date.now() + MODEL_LIST_TTL_MS);
+      if (err.code === "daily_limit") daily = err;
+      last = err;
+      send("status", { kind: "fallback", text: "Trying another Gemini model…" });
+    }
+  }
+  // Every model refused. If any hit its daily limit, that's what the user needs to know.
+  if (daily) throw daily;
+  if (candidates.length > 1) {
+    throw new UserError(last!.code, "None of the Gemini Flash models this key can use are available on its free tier right now. Type /check in the panel for details.");
+  }
+  throw last!;
+}
+
+/**
+ * The /check command: which Flash models this key can use, and whether Google Search
+ * grounding really runs on each. Uses one request per model tested (at most three).
+ */
+export async function diagnose(key: string, send: Send, signal: AbortSignal) {
+  send("status", { kind: "thinking", text: "Checking which Gemini models this key can use…" });
+  modelList = null;
+  unusable.clear();
+  const available = await availableModels(key, signal);
+  const flashModels = chooseModels(available, "");
+  const candidates = chooseModels(available).slice(0, 3);
+  const lines = [
+    `**Gemini check** (${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC)`,
+    "",
+    `Flash models this key can use: ${flashModels.join(", ") || "none"}`,
+    MODEL_OVERRIDE ? `GEMINI_MODEL secret: ${MODEL_OVERRIDE}` : "GEMINI_MODEL secret: not set",
+    "",
+  ];
+  const report: Record<string, unknown>[] = [];
+  for (const model of candidates) {
+    send("status", { kind: "search", text: `Testing ${model} with Google Search…` });
+    const started = Date.now();
+    const res = await fetch(`${API_BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "What is the latest PSO petrol price in Pakistan? Answer in one sentence." }] }],
+        tools: [{ google_search: {} }],
+      }),
+      signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    const seconds = ((Date.now() - started) / 1000).toFixed(1);
+    if (res.ok) {
+      const grounding = body.candidates?.[0]?.groundingMetadata;
+      const searches = grounding?.webSearchQueries?.length ?? 0;
+      const found = grounding?.groundingChunks?.length ?? 0;
+      lines.push(`- **${model}**: works (${seconds}s). Google Search ${searches ? `ran: ${searches} searches, ${found} sources.` : "did not run."}`);
+      report.push({ model, ok: true, searches, sources: found, seconds });
+    } else {
+      const err = explainGeminiError(res.status, body, model);
+      const limits = (body.error?.details ?? []).flatMap((d: { violations?: { quotaId?: string; quotaValue?: string }[] }) => d.violations ?? [])
+        .map((v: { quotaId?: string; quotaValue?: string }) => `${v.quotaId} = ${v.quotaValue}`);
+      lines.push(`- **${model}**: HTTP ${res.status}. ${err.message}${limits.length ? ` Limits reported by Google: ${limits.join("; ")}.` : ""}`);
+      report.push({ model, ok: false, status: res.status, code: err.code, limits });
+    }
+  }
+  lines.push("", "Questions use the first model above that works.");
+  console.log(`research-agent /check ${JSON.stringify(report)}`);
+  return { answer: lines.join("\n"), sources: [], navigate: null, search_suggestions: null, truncated: false, model: candidates[0] ?? null };
 }
 
 /** Hides [[open:...]] markers while the reply streams, including markers split across chunks. */
@@ -170,16 +304,7 @@ export class MarkerFilter {
 
 export async function answer(key: string, contents: Content[], send: Send, signal: AbortSignal) {
   send("status", { kind: "thinking", text: "Thinking…" });
-  let model = PRIMARY_MODEL;
-  let res: Response;
-  try {
-    res = await streamGemini(model, key, contents, signal);
-  } catch (err) {
-    if (!(err instanceof UserError && err.code === "daily_limit") || model === BACKUP_MODEL) throw err;
-    model = BACKUP_MODEL;
-    send("status", { kind: "fallback", text: "Daily limit reached on the main model, switching to Gemini Flash-Lite…" });
-    res = await streamGemini(model, key, contents, signal);
-  }
+  const { model, res } = await openStream(key, contents, send, signal);
 
   const filter = new MarkerFilter();
   const sources = new Map<string, { url: string; title: string | null }>();
@@ -199,7 +324,7 @@ export async function answer(key: string, contents: Content[], send: Send, signa
     } catch {
       return; // not a complete event; Gemini sends one JSON object per data line
     }
-    if (chunk.error) throw explainGeminiError(chunk.error.code ?? 500, chunk, model);
+    if (chunk.error) throw logged(model, chunk.error.code ?? 500, chunk);
     if (chunk.promptFeedback?.blockReason) blockReason = chunk.promptFeedback.blockReason;
     const candidate = chunk.candidates?.[0];
     if (!candidate) return;
