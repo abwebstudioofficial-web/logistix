@@ -48,10 +48,20 @@ the function's logs in Supabase.
   it calls the `web_search` tool, which runs a Tavily search. It can search up to
   three times per question and then answers from what it read. The answer links
   the pages it used, and the panel lists them under **Sources**.
+- **Current prices:** fuel prices in Pakistan can change every few days. So for
+  prices and rates, the model is told to search recent news with today's date
+  (in Pakistan time) and to give the date each rate applies from. It prefers
+  official sources such as OGRA, the Petroleum Division and Radio Pakistan over
+  aggregator sites, and says so when its newest source is older than today.
 - To take the user to a part of Logistix, the model calls the `open_section`
   tool. The function checks the section against `SECTIONS`, then tells the panel
   to show an "Open … →" button, or to switch straight there when the user asked
-  to go.
+  to go. If the model doesn't pick a section, questions about topics in
+  `TOPIC_SECTIONS` still get a button: fuel prices go to Fuel Management, and
+  freight rates to Contracts.
+- **Tidying answers:** the model sometimes cites sources as `【url】` and uses
+  unusual space characters. The function turns those citations into normal links
+  and the spaces into ordinary ones.
 - **Backup model:** each Groq model has its own daily limits. When
   `openai/gpt-oss-120b` reaches its limit or is retired, the question moves to
   `openai/gpt-oss-20b`.
@@ -117,6 +127,7 @@ into the assistant.
 
 - **Sections it can open:** edit `SECTIONS` in `research.ts`. Each `view` must
   match a `key` in `NAV_ITEMS` in `index.html`.
+- **Which topics always get a section button:** edit `TOPIC_SECTIONS` in `research.ts`.
 - **What it researches and how it answers:** edit `systemPrompt()` in `research.ts`.
 - **Who can use it:** the role check is in `requireAdmin()` in `index.ts` and in
   the `enabled:` line of the effect in `index.html`. Change both.

@@ -49,8 +49,25 @@ export const SECTIONS = [
   { view: "users", title: "Manage Users", about: "assign roles to team accounts" },
 ];
 
+// Where the user would act on answers about these topics. When the model doesn't pick a
+// section itself, the question is matched against these to offer the button anyway.
+export const TOPIC_SECTIONS = [
+  { view: "fuel_management", topic: "fuel, diesel, petrol or other POL prices", pattern: /\b(diesel|petrol|fuel|hsd|kerosene|mogas|pol prices?)\b/i },
+  { view: "contracts", topic: "freight, haulage or transport rates", pattern: /\b(freight|haulage|transport(ation)?|trucking|container) (rates?|tariffs?|charges)\b/i },
+];
+
+/** Today's date and time in Pakistan, where the company is and where prices change at midnight. */
+export function pakistanNow(date = new Date()): string {
+  const f = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Karachi", ...o }).format(date);
+  return `${f({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${f({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })} Pakistan time (PKT)`;
+}
+
 export function systemPrompt(): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = pakistanNow();
+  const topics = TOPIC_SECTIONS.map((t) => {
+    const section = SECTIONS.find((s) => s.view === t.view)!;
+    return `${t.topic} → ${section.view} (${section.title})`;
+  }).join("; ");
   const sections = SECTIONS.map((s) => `- ${s.view}: ${s.title} (${s.about})`).join("\n");
   return `You are the research assistant inside Logistix, the transport ERP of a logistics \
 company in Pakistan that runs domestic, import and export container and truck movements \
@@ -68,20 +85,29 @@ How to research:
 - Use web_search for anything current (prices, news, schedules, rules that may have changed). \
 Do not answer those from memory. Use topic "news" for recent events.
 - You have at most ${MAX_SEARCHES} searches per question, so make each query specific.
-- Prefer primary sources: regulators (OGRA, FBR, NHA), port authorities, shipping lines and \
-official notifications.
+- Prices and rates change often (Pakistan's fuel prices can change every few days). For these, \
+search with topic "news" and time_range "week", and put today's date in the query. Give the \
+rate in effect today, with the date it applies from (and until, if known). If the newest source \
+you found is older than today, say so rather than presenting it as today's rate.
+- Prefer primary and established sources: regulators and ministries (OGRA, Petroleum Division, \
+FBR, NHA), port authorities, shipping lines, official notifications, Radio Pakistan and major \
+newspapers. Treat aggregator and SEO pages as a last resort. When sources disagree, go with the \
+newest official one.
 - Skip searching when the user only wants to open a section or asks how to use Logistix.
 
 Opening sections:
 - Call open_section when the user asks to go to a section, or when one section is clearly \
 where they would act on your answer. Set go_now to true only when they asked to be taken there.
+- Topics and their sections: ${topics}. For these, call open_section with go_now false \
+(you can call it together with web_search).
 - You cannot look up individual orders, invoices or other records. If asked about one, open the \
 section where they can find it and say so.
 
 How to answer:
 - The chat panel is narrow. Open with the answer in a sentence or two, then key details as a \
 short list. Stay under about 250 words unless the user asks for more depth.
-- Cite sources inline as Markdown links, using only URLs from your search results.
+- Cite sources inline as Markdown links with the site's name, like [Business Recorder](https://...), \
+using only URLs from your search results. Never use 【】 citation marks or bare URLs.
 - Say plainly when sources disagree or information may be out of date. Do not guess.
 - Stay focused on transportation, logistics and using Logistix. If asked about something \
 unrelated, say briefly that you are set up for transportation and logistics research.
@@ -89,7 +115,7 @@ unrelated, say briefly that you are set up for transportation and logistics rese
 Logistix sections:
 ${sections}
 
-Today's date is ${today}.`;
+It is now ${now}.`;
 }
 
 const TOOLS = [
@@ -105,6 +131,11 @@ const TOOLS = [
         properties: {
           query: { type: "string", description: "A specific search query, e.g. \"PSO high speed diesel price September 2026\"." },
           topic: { type: "string", enum: ["general", "news"], description: "\"news\" for recent events and announcements." },
+          time_range: {
+            type: "string",
+            enum: ["day", "week", "month", "year"],
+            description: "Only return pages from this recent period. Use \"week\" for current prices and rates.",
+          },
         },
         required: ["query"],
         additionalProperties: false,
@@ -252,11 +283,15 @@ async function chat(keys: Keys, model: string, messages: Message[], signal: Abor
   return { message: choice.message as { content: string | null; tool_calls?: ToolCall[] }, finish: choice.finish_reason ?? "" };
 }
 
-async function search(keys: Keys, query: string, topic: string, signal: AbortSignal) {
+const TIME_RANGES = ["day", "week", "month", "year"];
+
+async function search(keys: Keys, query: string, topic: string, timeRange: string, signal: AbortSignal) {
+  const request: Record<string, unknown> = { query, topic: topic === "news" ? "news" : "general", search_depth: "basic", max_results: 5 };
+  if (TIME_RANGES.includes(timeRange)) request.time_range = timeRange;
   const res = await fetch(`${TAVILY_BASE}/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${keys.tavily}` },
-    body: JSON.stringify({ query, topic: topic === "news" ? "news" : "general", search_depth: "basic", max_results: 5 }),
+    body: JSON.stringify(request),
     signal,
   });
   const body = await res.json().catch(() => ({}));
@@ -282,10 +317,33 @@ function parseArgs(call: ToolCall): Record<string, unknown> | null {
 
 function hostname(url: string): string {
   try {
-    return new URL(url).hostname;
+    return new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return url;
   }
+}
+
+/**
+ * Cleans up habits of the gpt-oss models that the panel can't show: 【url】 citation marks
+ * become Markdown links (marks without a URL are dropped), and narrow or non-breaking spaces
+ * become normal ones.
+ */
+export function tidy(text: string): string {
+  return text
+    .replace(/[ \t]*【([^】]*)】/g, (_, inside: string) => {
+      const url = inside.match(/https?:\/\/[^\s†】\])]+/)?.[0];
+      return url ? ` ([${hostname(url)}](${url}))` : "";
+    })
+    .replace(/[\u00a0\u2007\u2009\u202f]/g, " ");
+}
+
+const sameUrl = (a: string, b: string) => a.replace(/\/+$/, "").toLowerCase() === b.replace(/\/+$/, "").toLowerCase();
+
+/** The section for the question's topic, used when the model didn't choose one. */
+export function topicSection(question: string): Destination | null {
+  const match = TOPIC_SECTIONS.find((t) => t.pattern.test(question));
+  const section = match && SECTIONS.find((s) => s.view === match.view);
+  return section ? { view: section.view, title: section.title, go_now: false } : null;
 }
 
 export async function answer(keys: Keys, history: Message[], send: Send, signal: AbortSignal) {
@@ -327,15 +385,17 @@ export async function answer(keys: Keys, history: Message[], send: Send, signal:
 
     const calls = reply.message.tool_calls ?? [];
     if (!calls.length) {
-      const text = (reply.message.content ?? "").trim();
+      const text = tidy(reply.message.content ?? "").trim();
       if (text) send("text", { delta: text });
       // List the pages the answer links to; if it links none, list everything that was read.
       const all = [...sources.values()];
-      const cited = all.filter((s) => text.includes(s.url));
+      const linked = [...text.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g)].map((m) => m[1]);
+      const cited = all.filter((s) => linked.some((url) => sameUrl(url, s.url)));
+      const question = history.findLast((m) => m.role === "user")?.content ?? "";
       return {
         answer: text,
         sources: cited.length ? cited : all,
-        navigate: destination,
+        navigate: destination ?? topicSection(String(question)),
         search_suggestions: null,
         truncated: reply.finish === "length",
         model,
@@ -357,7 +417,7 @@ export async function answer(keys: Keys, history: Message[], send: Send, signal:
         } else {
           searches++;
           send("status", { kind: "search", text: `Searching the web: ${query}` });
-          const results = await search(keys, query, String(args.topic ?? ""), signal);
+          const results = await search(keys, query, String(args.topic ?? ""), String(args.time_range ?? ""), signal);
           for (const r of results) if (!sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title ?? hostname(r.url) });
           result = JSON.stringify(results.length ? results : { results: [], note: "No results. Try a different query." });
         }
