@@ -2,8 +2,8 @@
  * Logistix research assistant: chat panel.
  *
  * Talks to the `research-agent` Supabase Edge Function (supabase/functions/research-agent),
- * which researches transportation and logistics topics with Gemini and Google Search and can
- * open Logistix sections. The app turns it on for admins by calling:
+ * which researches transportation and logistics topics on the web and can open Logistix
+ * sections. The app turns it on for admins by calling:
  *
  *   window.ResearchAgent.configure({
  *     enabled: true,                       // false hides the panel and clears the chat
