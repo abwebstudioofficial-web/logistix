@@ -13,6 +13,7 @@
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="research-agent.js" defer></script>
 <style>
   html, body { margin: 0; height: 100%; background: #020617; }
   #root { min-height: 100vh; }
@@ -9683,6 +9684,25 @@ function LogistixERP() {
     else { setProfile(null); setDataState(null); }
     // eslint-disable-next-line
   }, [authSession]);
+
+  // Research assistant chat panel (research-agent.js + the research-agent Edge Function).
+  // Admins only for now; the Edge Function checks the role again on every message.
+  useEffect(() => {
+    const cfg = {
+      enabled: !!(authSession && profile && profile.role === "admin"),
+      endpoint: `${SUPABASE_URL}/functions/v1/research-agent`,
+      apiKey: SUPABASE_ANON_KEY,
+      getToken: async () => {
+        const { data: d } = await supabaseClient.auth.getSession();
+        return d.session ? d.session.access_token : null;
+      },
+      navigate: (key) => { setView(key); setMobileNavOpen(false); },
+      theme,
+      userId: authSession && authSession.user ? authSession.user.id : null,
+    };
+    window.ResearchAgentConfig = cfg;
+    if (window.ResearchAgent) window.ResearchAgent.configure(cfg);
+  }, [authSession, profile, theme]);
 
   // Live updates: quietly re-fetch in the background so changes made by other people show
   // up without anyone needing to reload the page. Skipped while a modal is open (someone's
