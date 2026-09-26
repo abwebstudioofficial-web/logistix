@@ -1,25 +1,22 @@
 // Logistix research assistant: an admin-only chat that researches transportation and
-// logistics topics on the web and can open sections of Logistix. Runs on the Gemini API
-// free tier with Grounding with Google Search.
+// logistics topics on the web and can open sections of Logistix. Uses a free chat model on
+// Groq and free web search from Tavily (see research.ts).
 //
 // POST with the signed-in user's access token (Authorization: Bearer ...) and JSON
 //   {"message": "...", "history": [{"role": "user" | "assistant", "text": "..."}]}
 // and it streams back server-sent events:
-//   status {kind, text}   what it's doing right now ("Thinking…", "Searched: ...")
-//   text   {delta}        reply text as it's written
+//   status {kind, text}   what it's doing right now ("Searching the web: ...")
+//   text   {delta}        the reply text
 //   done   {answer, sources: [{url, title}], navigate: {view, title, go_now} | null,
-//           search_suggestions: html | null, truncated, model}
-//   error  {code, message}  code is one of daily_limit, minute_limit, invalid_key, not_set_up,
-//                           region, blocked, busy, timeout, error; message is safe to show
+//           search_suggestions: null, truncated, model}
+//   error  {code, message}  code is one of daily_limit, minute_limit, search_limit, invalid_key,
+//                           not_set_up, model_missing, too_long, busy, timeout, error;
+//                           message is safe to show
 //
-// Secrets (Supabase dashboard > Edge Functions > Secrets):
-//   GEMINI_API_KEY  required, a Gemini API key from Google AI Studio
-//   GEMINI_MODEL    optional; otherwise the best Flash model the key can use is picked
-//
-// Typing /check in the panel reports which Flash models the key can use and whether
-// Google Search grounding runs on them.
+// Secrets (Supabase dashboard > Edge Functions > Secrets): GROQ_API_KEY and TAVILY_API_KEY.
+// Typing /check in the panel tests both keys and shows the real free limits.
 
-import { answer, type Content, diagnose, parseBody, type Send, TIME_LIMIT_MS, UserError } from "./gemini.ts";
+import { answer, diagnose, type Keys, type Message, parseBody, type Send, TIME_LIMIT_MS, UserError } from "./research.ts";
 
 const ALLOWED_ORIGINS = ["https://abwebstudioofficial-web.github.io"];
 
@@ -65,12 +62,19 @@ Deno.serve(async (req) => {
 
   const denied = await requireAdmin(req);
   if (denied) return denied;
-  const key = Deno.env.get("GEMINI_API_KEY");
-  if (!key) {
-    return json(req, 503, { code: "not_set_up", error: "The research assistant isn't set up yet: add the GEMINI_API_KEY secret in Supabase (Edge Functions → Secrets)." });
+  const keys: Keys = {
+    llm: Deno.env.get("LLM_API_KEY") || Deno.env.get("GROQ_API_KEY") || "",
+    tavily: Deno.env.get("TAVILY_API_KEY") || "",
+  };
+  const missing = [!keys.llm && "GROQ_API_KEY", !keys.tavily && "TAVILY_API_KEY"].filter(Boolean);
+  if (missing.length) {
+    return json(req, 503, {
+      code: "not_set_up",
+      error: `The research assistant isn't set up yet: add the ${missing.join(" and ")} secret${missing.length > 1 ? "s" : ""} in Supabase (Edge Functions → Secrets).`,
+    });
   }
 
-  let contents: Content[] | string;
+  let contents: Message[] | string;
   let isCheck = false;
   try {
     const body = await req.json();
@@ -92,7 +96,7 @@ Deno.serve(async (req) => {
 
   const work = (async () => {
     try {
-      send("done", await (isCheck ? diagnose(key, send, signal) : answer(key, contents, send, signal)));
+      send("done", await (isCheck ? diagnose(keys, send, signal) : answer(keys, contents, send, signal)));
     } catch (err) {
       if (err instanceof UserError) {
         send("error", { code: err.code, message: err.message });
@@ -100,7 +104,7 @@ Deno.serve(async (req) => {
         send("error", { code: "timeout", message: "That took too long for one reply. Try a narrower question." });
       } else {
         if (!req.signal.aborted) console.error("research-agent turn failed", err);
-        send("error", { code: "error", message: "The assistant couldn't reach Gemini. Please try again." });
+        send("error", { code: "error", message: "The assistant couldn't reach its AI service. Please try again." });
       }
     } finally {
       await writer.close().catch(() => {});

@@ -1,8 +1,12 @@
 # Research assistant (Edge Function)
 
 The server side of the **✦ Research** chat panel in Logistix. It researches
-transportation and logistics topics with Google's Gemini API and Grounding with
-Google Search, on the free tier, and it can open Logistix sections for the user.
+transportation and logistics topics on the web, and it can open Logistix sections
+for the user. It runs on two free services, and neither needs a card:
+
+- **[Groq](https://console.groq.com)** runs the AI model (`openai/gpt-oss-120b`).
+- **[Tavily](https://app.tavily.com)** does the web searches.
+
 Only signed-in users whose profile role is `admin` can use it: `index.html` shows
 the panel only to admins, and this function checks the role again on every
 message.
@@ -12,103 +16,107 @@ message.
 | Chat panel | `research-agent.js`, loaded by `index.html` |
 | Turning it on for admins | the "Research assistant chat panel" `useEffect` in `LogistixERP` (`index.html`) |
 | Request handling and the admin check | `supabase/functions/research-agent/index.ts` |
-| Gemini request, prompt, sections and error messages | `supabase/functions/research-agent/gemini.ts` |
-| Free-tier check | `supabase/scripts/check-gemini.ts` |
+| Model requests, web search, prompt, sections and error messages | `supabase/functions/research-agent/research.ts` |
 
 ## Setup
 
-1. Create a free API key in [Google AI Studio](https://aistudio.google.com/apikey).
-2. In the Supabase dashboard, open **Edge Functions → Secrets** and add a secret
-   named **`GEMINI_API_KEY`** with that key as its value.
-3. Deploy the function: `supabase functions deploy research-agent`, or ask the
+1. Create a free Groq API key at [console.groq.com/keys](https://console.groq.com/keys).
+2. Create a free Tavily API key at [app.tavily.com](https://app.tavily.com).
+3. In the Supabase dashboard, open **Edge Functions → Secrets** and add two secrets:
+   - **`GROQ_API_KEY`**: the Groq key;
+   - **`TAVILY_API_KEY`**: the Tavily key.
+4. Deploy the function: `supabase functions deploy research-agent`, or ask the
    maintenance agent to deploy it. **Merging the code doesn't change the live
    function**: until it's redeployed, Supabase keeps running the previous version.
 
-You don't need to choose a model. The function asks Google which models the key
-can use, and picks the best available Flash model. To force a specific one,
-add a `GEMINI_MODEL` secret, for example `gemini-3.5-flash`.
+The old `GEMINI_API_KEY` secret isn't used any more and can be deleted.
 
-**To check it's working, type `/check` in the panel.** It lists the Flash models
-your key can use, tests Google Search on up to three of them with your real key,
-and reports any limits Google returns. It uses one free request per model tested.
-The same report goes to the function's logs in Supabase.
+Optional secrets:
+- `LLM_MODEL` chooses another Groq model instead of `openai/gpt-oss-120b`.
+- `LLM_BASE_URL` switches to another OpenAI-compatible provider. Put that
+  provider's key in `LLM_API_KEY`.
+
+**To check it's working, type `/check` in the panel.** It tests both Groq models
+with your real key and shows the limits Groq reports for them: requests per day,
+requests left today, and tokens per minute. It also runs one Tavily search. The
+check uses two small Groq requests and one Tavily credit. The same report goes to
+the function's logs in Supabase.
 
 ## How it works
 
-- Each question is **one** Gemini request with the `google_search` tool, so the
-  free daily limit goes as far as possible.
-- Gemini 2.5 models can't combine Google Search with custom functions in one
-  request. So to open a section, the reply ends with a marker line such as
-  `[[open:invoices]]`, or `[[open:invoices:now]]` when the user asked to go
-  there. The function strips the marker, checks the key against `SECTIONS`, and
-  tells the panel. The user never sees the marker.
-- **Picking a model:** Google retires models regularly (`gemini-2.5-flash` was
-  due to shut down in October 2026, and some keys lost it earlier). So the
-  function lists the key's models once an hour and tries them in this order:
-  1. the `GEMINI_MODEL` secret, if set;
-  2. `gemini-2.5-flash`, `gemini-3.5-flash`, `gemini-flash-latest` and
-     `gemini-3-flash`, then any newer stable Flash model;
-  3. the matching Flash-Lite models.
-- **Falling back:** if a model is missing, isn't free on the key, or has hit its
-  daily limit, the question moves to the next one. Each model has its own
-  daily limit. Up to four models are tried.
-- **Logs:** Google's error for every failed attempt is written to the function's
-  logs in Supabase. The key never is.
-- Google's terms for grounded answers require showing Google's **Search
-  Suggestions** with them. The panel shows them under each answer, in a
-  sandboxed frame.
+- For each question, the model decides whether it needs to search. If it does,
+  it calls the `web_search` tool, which runs a Tavily search. It can search up to
+  three times per question and then answers from what it read. The answer links
+  the pages it used, and the panel lists them under **Sources**.
+- To take the user to a part of Logistix, the model calls the `open_section`
+  tool. The function checks the section against `SECTIONS`, then tells the panel
+  to show an "Open … →" button, or to switch straight there when the user asked
+  to go.
+- **Backup model:** each Groq model has its own daily limits. When
+  `openai/gpt-oss-120b` reaches its limit or is retired, the question moves to
+  `openai/gpt-oss-20b`.
+- **Keeping within the per-minute limit:** Groq's free plan allows 8,000 tokens a
+  minute, and each step of a question resends the conversation. So the function
+  asks for low reasoning effort, keeps about 700 characters of each search result,
+  and sends at most 6,000 characters of earlier chat. If Groq asks it to wait 20
+  seconds or less, it waits and carries on.
+- **Logs:** every error from Groq or Tavily is written to the function's logs in
+  Supabase. The keys never are.
 
-## Free-tier limits
+## Free limits
 
-Google no longer publishes a fixed free-tier table, and the limits have changed
-several times. Reports from 2026 say:
-- Free Google Search grounding is available on the 2.5 Flash models, about 500
-  grounded requests a day, shared between them.
-- On Gemini 3.x models, grounding is free only for a limited number of
-  questions a month.
-- Request limits per model per day have been as low as about 20.
+Free-plan limits published for September 2026. Type `/check` to see what your
+own keys actually get.
 
-Type `/check` in the panel to see what your key actually gets.
+| Service | Limit |
+| --- | --- |
+| Groq `openai/gpt-oss-120b` | 30 requests a minute, 1,000 requests a day, 8,000 tokens a minute, 200,000 tokens a day |
+| Groq `openai/gpt-oss-20b` (backup) | its own, similar daily limits |
+| Tavily | 1,000 credits a month, reset on the 1st of each month; each search uses 1 credit |
 
-The live numbers for your key are shown in Google AI Studio. To measure them, run:
+Groq's limits apply to the whole Groq organization, so extra keys don't add to
+them. The live numbers are at
+[console.groq.com/settings/limits](https://console.groq.com/settings/limits), and
+Tavily usage is on the [Tavily dashboard](https://app.tavily.com).
 
-```bash
-# One grounded question per Flash model: does grounding actually work on this key?
-GEMINI_API_KEY=... deno run --allow-net --allow-env supabase/scripts/check-gemini.ts
-
-# Ask until Google refuses, then print the real per-minute and per-day limits.
-# This uses up the day's free quota for that model.
-GEMINI_API_KEY=... deno run --allow-net --allow-env supabase/scripts/check-gemini.ts --until-limit gemini-2.5-flash
-```
-
-Daily limits reset at midnight Pacific time, which is around 12:00–1:00 pm in
-Pakistan.
+In practice, the **daily token limit** is the one you reach first. A question
+without a search uses about 2,000 tokens, and one with searches about
+5,000–8,000. That's roughly 30–100 questions a day on the main model, depending
+on how many need a search, and about as many again on the backup. Tavily's 1,000
+credits cover about 500 searching questions a month.
 
 ## Messages users see
 
 | Situation | Message |
 | --- | --- |
-| Daily free limit used up | "Today's free Gemini limit has been reached. It resets at midnight Pacific time (about 12:00–1:00 pm in Pakistan)…" |
-| Too many questions in a minute | "Too many questions in the last minute… wait about N seconds" |
-| Invalid key | "The Gemini API key is invalid. Check the GEMINI_API_KEY secret in Supabase…" |
-| Key blocked or not a Gemini key | "Google rejected the Gemini API key: …" |
-| No usable Flash model on the free tier | "None of the Gemini Flash models this key can use are available on its free tier right now. Type /check…" |
-| No key set | "The research assistant isn't set up yet: add the GEMINI_API_KEY secret…" |
-| Safety filter | "Gemini declined to answer that. Try rephrasing the question." |
-| Gemini overloaded | "Gemini is busy or having a problem right now…" |
+| Daily free limit used up (both models) | "Today's free Groq limit for the assistant has been reached. Please try again in about N minutes." |
+| Too many questions in a minute | "Too many questions in the last minute for the free Groq limit. Please wait about N seconds and try again." |
+| Question too big for the per-minute limit | "This question needs more text than Groq's free per-minute limit allows…" |
+| Monthly searches used up | "This month's free web searches (1,000 Tavily credits) are used up. They reset on the 1st of next month." |
+| Invalid Groq key | "The Groq API key is invalid. Check the GROQ_API_KEY secret in Supabase (Edge Functions → Secrets)." |
+| Groq account blocked | "Groq refused the request: <Groq's reason>…" |
+| Invalid Tavily key | "The Tavily API key is invalid. Check the TAVILY_API_KEY secret in Supabase (Edge Functions → Secrets)." |
+| A key isn't set | "The research assistant isn't set up yet: add the GROQ_API_KEY and TAVILY_API_KEY secret(s)…" |
+| Groq or Tavily down | "Groq is busy or having a problem right now…" / "Web search failed…" |
+| Conversation too long | "This conversation has grown too long. Click "New chat" and ask again." |
 
 ## Privacy
 
-Google's terms for the free (unpaid) Gemini API allow Google to use prompts and
-answers to improve its products, and people may review them. Don't type
-confidential business details, such as customer names, rates or contract terms,
-into the assistant. The function only sends the user's questions and earlier
-answers from the same chat, never Logistix data.
+Questions and earlier answers from the same chat go to Groq. The model's search
+queries go to Tavily. The function never sends Logistix data.
+
+Groq's terms say it doesn't train models on API inputs or outputs, and it doesn't
+keep them by default. It may log them for up to 30 days when it's troubleshooting
+errors or investigating abuse. You can turn that logging off with the zero data
+retention setting in the Groq console
+([Your data in GroqCloud](https://console.groq.com/docs/your-data)). Even so,
+don't type confidential details such as customer names, rates or contract terms
+into the assistant.
 
 ## Changing it
 
-- **Sections it can open:** edit `SECTIONS` in `gemini.ts`. Each `view` must match
-  a `key` in `NAV_ITEMS` in `index.html`.
-- **What it researches and how it answers:** edit `systemPrompt()` in `gemini.ts`.
+- **Sections it can open:** edit `SECTIONS` in `research.ts`. Each `view` must
+  match a `key` in `NAV_ITEMS` in `index.html`.
+- **What it researches and how it answers:** edit `systemPrompt()` in `research.ts`.
 - **Who can use it:** the role check is in `requireAdmin()` in `index.ts` and in
   the `enabled:` line of the effect in `index.html`. Change both.
