@@ -2,8 +2,8 @@
  * Logistix research assistant: chat panel.
  *
  * Talks to the `research-agent` Supabase Edge Function (supabase/functions/research-agent),
- * which researches transportation and logistics topics on the web and can open Logistix
- * sections. The app turns it on for admins by calling:
+ * which researches transportation and logistics topics with Gemini and Google Search and can
+ * open Logistix sections. The app turns it on for admins by calling:
  *
  *   window.ResearchAgent.configure({
  *     enabled: true,                       // false hides the panel and clears the chat
@@ -160,6 +160,7 @@
     ".bot table{border-collapse:collapse;margin:0 0 8px;font-size:13px}.bot td,.bot th{border:1px solid var(--line);padding:3px 6px;text-align:left}" +
     ".error{color:#f87171}:host([data-theme=light]) .error{color:#b91c1c}" +
     "details{margin-top:8px;font-size:12px;color:var(--muted)}details ol{margin:4px 0 0;padding-left:18px}" +
+    ".suggestions{display:block;width:100%;height:60px;margin-top:8px;border:0;border-radius:8px;background:#fff;color-scheme:light}" +
     ".go{display:block;margin-top:10px;border:0;border-radius:8px;padding:7px 12px;background:var(--accent);color:var(--accent-fg);font:600 13px/1.2 inherit;font-family:inherit;cursor:pointer}" +
     ".status{font-size:12px;color:var(--muted);padding:0 14px 8px;min-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
     ".status.on::before{content:'';display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;background:var(--accent);animation:p 1s infinite alternate}" +
@@ -209,6 +210,16 @@
           return url ? '<li><a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.title || s.url) + "</a></li>" : "";
         }).join("") + "</ol>";
       el.appendChild(details);
+    }
+    if (msg.suggestions) {
+      // Google requires showing its Search Suggestions with answers grounded in Google Search.
+      // They're rendered as sent, isolated in a sandboxed frame with scripts disabled.
+      var frame = document.createElement("iframe");
+      frame.className = "suggestions";
+      frame.title = "Google Search suggestions";
+      frame.setAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox");
+      frame.srcdoc = '<!doctype html><base target="_blank"><style>html,body{margin:0;background:#fff}</style>' + msg.suggestions;
+      el.appendChild(frame);
     }
     if (msg.navigate) {
       var go = document.createElement("button");
@@ -345,6 +356,7 @@
               text: data.answer || streamed.trim() || "Done.",
               sources: data.sources || [],
               navigate: data.navigate || null,
+              suggestions: data.search_suggestions || null,
             };
             if (data.truncated) result.text += "\n\n*(This answer was cut short.)*";
           } else if (event === "error") {
