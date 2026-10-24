@@ -1,0 +1,39 @@
+# Runs the site check (see .github/site-check/check.mjs) on every pull request to main:
+# compiles the app, opens every page in a real browser with FAKE data (the live database
+# is never contacted) and compares browser errors with main. Site Agent only merges its
+# automatic fixes when this check passes.
+name: site-check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-check-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the browser test tools (not part of the site)
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix .github/site-check playwright@1.56.1 @babel/standalone@7.23.10
+          .github/site-check/node_modules/.bin/playwright install --with-deps chromium
+      - name: Check the site
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/site-check/check.mjs .

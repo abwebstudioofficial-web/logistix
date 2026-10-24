@@ -4,10 +4,59 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Logistix — Fleet &amp; Drivers</title>
+<script>
+/* Site Agent error catcher: reports browser errors (no personal data, no typed values) to
+   Supabase so broken buttons/inputs/pages are noticed without waiting for someone to report them. */
+(function () {
+  var ENDPOINT = "https://zonuxfqvyxhfkimdahkb.supabase.co/functions/v1/site-agent-errors";
+  var IGNORE = /^Script error\.?$|ResizeObserver loop|^\[BABEL\] Note:/;
+  var sid = Math.random().toString(36).slice(2, 10), seen = {}, queue = [], count = 0, timer = null;
+  function clean(s, n) { return String(s == null ? "" : s).replace(/[?#][^\s)'"]*/g, "").slice(0, n); }
+  function currentPage() {
+    try { var b = document.querySelector("nav button.bg-blue-600"); return b ? b.innerText.trim().slice(0, 40) : ""; } catch (e) { return ""; }
+  }
+  function report(kind, message, source, line, col, stack) {
+    message = clean(message, 500);
+    if (!message || IGNORE.test(message) || /-extension:\/\//.test(String(source) + String(stack))) return;
+    var key = kind + "|" + message + "|" + line;
+    if (seen[key] || count >= 20) return;
+    seen[key] = 1; count++;
+    queue.push({ kind: kind, message: message, source: clean(source, 300), line: line || null, col: col || null,
+                 stack: clean(stack, 2000), page: location.pathname, view: currentPage() });
+    if (!timer) timer = setTimeout(flush, 1500);
+  }
+  function flush() {
+    timer = null;
+    if (!queue.length) return;
+    var body = JSON.stringify({ session: sid, loaded: Math.round(performance.timeOrigin || Date.now()), errors: queue.splice(0, 10) });
+    try {
+      if (!(navigator.sendBeacon && navigator.sendBeacon(ENDPOINT, body))) fetch(ENDPOINT, { method: "POST", body: body, keepalive: true, mode: "no-cors" });
+    } catch (e) { /* never break the page */ }
+  }
+  window.addEventListener("error", function (e) {
+    var t = e.target;
+    if (t && t !== window && (t.src || t.href)) { report("resource", "Failed to load " + String(t.tagName).toLowerCase() + ": " + clean(t.src || t.href, 300), t.src || t.href, 0, 0, ""); return; }
+    report("error", e.message, e.filename, e.lineno, e.colno, e.error && e.error.stack);
+  }, true);
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e.reason || {};
+    report("unhandledrejection", r.message || r, "", 0, 0, r.stack);
+  });
+  var origError = console.error;
+  console.error = function () {
+    try {
+      var a = arguments[0];
+      report("console.error", a && a.message ? a.message : Array.prototype.slice.call(arguments, 0, 3).map(function (x) { return x && x.message ? x.message : String(x); }).join(" "), "", 0, 0, a && a.stack);
+    } catch (x) { /* ignore */ }
+    return origError.apply(console, arguments);
+  };
+  window.addEventListener("pagehide", flush);
+})();
+</script>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js" crossorigin="anonymous"></script>
 <style>
   body { background: #020617; }
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
