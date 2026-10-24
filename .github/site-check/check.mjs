@@ -197,7 +197,11 @@ async function runSite(dir, steps, mockData) {
 const report = [];
 const say = (s) => { report.push(s); console.log(s); };
 let failed = false;
-const fail = (s) => { failed = true; say(`❌ ${s}`); };
+// Failures are also GitHub annotations, so they show on the pull request (and through the API).
+const annotate = (level, s) => {
+  if (process.env.GITHUB_ACTIONS) console.log(`::${level} title=site-check::${String(s).slice(0, 3000).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A")}`);
+};
+const fail = (s) => { failed = true; say(`❌ ${s}`); annotate("error", s); };
 
 say("## Site check (fake data, never touches the live database)");
 if (spec?.invalid) fail(`The site-check block in the PR description is not valid JSON: ${spec.invalid}`);
@@ -234,5 +238,6 @@ if (head) {
 }
 
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, report.join("\n\n") + "\n");
+if (!failed) annotate("notice", report.filter((l) => l.startsWith("✅")).join("\n"));
 say(failed ? "RESULT: FAIL" : "RESULT: PASS");
 process.exit(failed ? 1 : 0);
