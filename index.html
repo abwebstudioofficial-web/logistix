@@ -104,6 +104,9 @@
   .light-theme .hover\:bg-slate-800\/60:hover,
   .light-theme .hover\:bg-slate-800\/70:hover { background-color: #e2e8f0 !important; }
   .light-theme .hover\:text-white:hover { color: #0f172a !important; }
+  /* Keep white text/icons white on solid coloured buttons, badges and icon tiles. */
+  .light-theme :is(.bg-blue-400,.bg-blue-500,.bg-blue-600,.bg-emerald-500,.bg-emerald-600,.bg-indigo-600,.bg-violet-600,.bg-purple-600,.bg-teal-600,.bg-red-500,.bg-red-600,.bg-amber-600).text-white,
+  .light-theme :is(.bg-blue-400,.bg-blue-500,.bg-blue-600,.bg-emerald-500,.bg-emerald-600,.bg-indigo-600,.bg-violet-600,.bg-purple-600,.bg-teal-600,.bg-red-500,.bg-red-600,.bg-amber-600) .text-white { color: #ffffff !important; }
 
   /* Colored left-accent stripes (status border on Tracking cards, grouped-table row accents).
      Placed after the generic .border-slate-800 rule above so these win the cascade for
