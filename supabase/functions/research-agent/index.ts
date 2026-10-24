@@ -1,6 +1,7 @@
 // Logistix research assistant: an admin-only chat that researches transportation and
-// logistics topics on the web and can open sections of Logistix. Uses a free chat model on
-// Groq and free web search from Tavily (see research.ts).
+// logistics topics on the web, finds Logistix records and can open sections of Logistix. Uses a
+// free chat model on Groq and free web search from Tavily (see research.ts). Record searches
+// (records.ts) run in the database with the user's own access token, read-only.
 //
 // POST with the signed-in user's access token (Authorization: Bearer ...) and JSON
 //   {"message": "...", "history": [{"role": "user" | "assistant", "text": "..."}]}
@@ -8,15 +9,19 @@
 //   status {kind, text}   what it's doing right now ("Searching the web: ...")
 //   text   {delta}        the reply text
 //   done   {answer, sources: [{url, title}], navigate: {view, title, go_now} | null,
+//           records: [{kind, id, label, detail, matched}], not_found: [query],
 //           search_suggestions: null, truncated, model}
+//           records are buttons to open Logistix records; kind is order, invoice, transporter
+//           or contract, and id is the record's id. not_found lists searches with no match.
 //   error  {code, message}  code is one of daily_limit, minute_limit, search_limit, invalid_key,
-//                           not_set_up, model_missing, too_long, busy, timeout, error;
-//                           message is safe to show
+//                           not_set_up, model_missing, too_long, busy, timeout, signed_out,
+//                           records_failed, error; message is safe to show
 //
 // Secrets (Supabase dashboard > Edge Functions > Secrets): GROQ_API_KEY and TAVILY_API_KEY.
 // Typing /check in the panel tests both keys and shows the real free limits.
 
 import { answer, diagnose, type Keys, type Message, parseBody, type Send, TIME_LIMIT_MS, UserError } from "./research.ts";
+import type { Db } from "./records.ts";
 
 const ALLOWED_ORIGINS = ["https://abwebstudioofficial-web.github.io"];
 
@@ -74,6 +79,13 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Record searches use the user's own token, so the database's row-level security applies.
+  const db: Db = {
+    url: Deno.env.get("SUPABASE_URL") ?? "",
+    anonKey: Deno.env.get("SUPABASE_ANON_KEY") ?? req.headers.get("apikey") ?? "",
+    token: (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, ""),
+  };
+
   let contents: Message[] | string;
   let isCheck = false;
   try {
@@ -96,7 +108,7 @@ Deno.serve(async (req) => {
 
   const work = (async () => {
     try {
-      send("done", await (isCheck ? diagnose(keys, send, signal) : answer(keys, contents, send, signal)));
+      send("done", await (isCheck ? diagnose(keys, send, signal) : answer(keys, contents, send, signal, db)));
     } catch (err) {
       if (err instanceof UserError) {
         send("error", { code: err.code, message: err.message });
