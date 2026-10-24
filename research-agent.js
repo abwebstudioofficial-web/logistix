@@ -143,8 +143,9 @@
     ":host{--bg:#0f172a;--fg:#e2e8f0;--muted:#94a3b8;--line:#1e293b;--accent:#2563eb;--accent-fg:#fff;--bubble:#1e293b;--code:#334155;" +
     "all:initial;font:14px/1.5 ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:var(--fg)}" +
     ":host([data-theme=light]){--bg:#ffffff;--fg:#0f172a;--muted:#64748b;--line:#e2e8f0;--bubble:#f1f5f9;--code:#e2e8f0}" +
-    ".fab{position:fixed;right:20px;bottom:20px;z-index:45;display:flex;align-items:center;gap:8px;border:0;border-radius:999px;" +
-    "padding:11px 16px;background:var(--accent);color:var(--accent-fg);font:600 14px/1 inherit;font-family:inherit;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.35)}" +
+    ".fab{position:fixed;right:16px;bottom:16px;z-index:45;display:flex;align-items:center;justify-content:center;width:36px;height:36px;" +
+    "padding:0;border:0;border-radius:50%;background:var(--accent);color:var(--accent-fg);font:16px/1 inherit;font-family:inherit;cursor:pointer;" +
+    "box-shadow:0 4px 14px rgba(0,0,0,.35)}" +
     ".fab:hover{filter:brightness(1.1)}" +
     ".panel{position:fixed;right:20px;bottom:20px;z-index:45;width:400px;max-width:calc(100vw - 32px);height:600px;max-height:calc(100vh - 40px);" +
     "display:none;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.45);overflow:hidden}" +
@@ -184,7 +185,7 @@
     "form button:disabled{opacity:.5;cursor:default}" +
     "@media (max-width:480px){.panel{right:0;bottom:0;width:100vw;max-width:100vw;height:100vh;max-height:100vh;border-radius:0}}" +
     "</style>" +
-    '<button class="fab" type="button" aria-label="Open ' + TITLE + '">✦ Research</button>' +
+    '<button class="fab" type="button" aria-label="Open ' + TITLE + '" title="' + TITLE + '">✦</button>' +
     '<section class="panel" role="dialog" aria-label="' + TITLE + '">' +
     "<header><span>" + TITLE + '</span><button type="button" class="new">New chat</button>' +
     '<button type="button" class="close" aria-label="Close">✕</button></header>' +
