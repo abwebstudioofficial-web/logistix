@@ -1,5 +1,6 @@
 // The research assistant's brain: a free chat model on Groq (any OpenAI-compatible API works)
-// that can search the web with Tavily and open Logistix sections. Used by index.ts.
+// that can search the web with Tavily, find Logistix records (records.ts) and open Logistix
+// sections. Used by index.ts.
 //
 // Secrets (Supabase dashboard > Edge Functions > Secrets):
 //   GROQ_API_KEY    required, from console.groq.com (free, no card)
@@ -7,6 +8,8 @@
 //   LLM_MODEL       optional, defaults to openai/gpt-oss-120b
 //   LLM_BASE_URL    optional, to use another OpenAI-compatible provider instead of Groq
 //                   (its key then goes in GROQ_API_KEY, or in LLM_API_KEY)
+
+import { type Db, findRecords, type FoundRecord, MAX_RECORDS, RECORD_KINDS, RecordsError } from "./records.ts";
 
 const LLM_BASE = (Deno.env.get("LLM_BASE_URL") || "https://api.groq.com/openai/v1").replace(/\/$/, "");
 const TAVILY_BASE = Deno.env.get("TAVILY_API_BASE") || "https://api.tavily.com";
@@ -18,6 +21,7 @@ const BACKUP_MODEL = "openai/gpt-oss-20b";
 export const TIME_LIMIT_MS = 110_000;
 const MAX_STEPS = 6;
 const MAX_SEARCHES = 3; // per question; each search uses one of Tavily's free monthly credits
+const MAX_RECORD_SEARCHES = 3; // Logistix record searches per question
 const MAX_MESSAGE_CHARS = 4000;
 // Groq's free plan allows about 8,000 tokens a minute, and every step of a question resends the
 // whole conversation, so earlier turns and search results are kept short.
@@ -79,7 +83,8 @@ prices (PSO, OGRA notifications), freight and container rates, shipping lines an
 schedules, Karachi Port and Port Qasim terminals, customs and FBR/WeBOC procedures, NHA rules \
 such as axle-load limits and tolls, motorway and GT Road conditions, weather and disruptions, \
 regulations, and industry news in Pakistan and worldwide.
-2. Finding their way around Logistix by opening the right section with open_section.
+2. Finding records in Logistix itself with find_records, and finding their way around \
+Logistix by opening the right section with open_section.
 
 How to research:
 - Use web_search for anything current (prices, news, schedules, rules that may have changed). \
@@ -94,6 +99,16 @@ FBR, NHA), port authorities, shipping lines, official notifications, Radio Pakis
 newspapers. Treat aggregator and SEO pages as a last resort. When sources disagree, go with the \
 newest official one.
 - Skip searching when the user only wants to open a section or asks how to use Logistix.
+
+Finding records in Logistix:
+- When the user asks to find, show or open something stored in Logistix (an order, job, \
+container, vehicle, bilty, invoice, transporter or contract, or a customer's orders), call \
+find_records with just the number or name, e.g. "TLE911" or "INV-2026-5922". Never use \
+web_search for these, and don't call open_section as well.
+- The user sees a button under your reply to open each match, so don't repeat ids or numbers \
+at length: say in a sentence or two what was found (e.g. which order a vehicle is on).
+- If find_records finds nothing, say plainly that it isn't in Logistix. Only mention records \
+that find_records returned. Never guess or invent a record.
 
 Opening sections:
 - Call open_section when the user asks to go to a section, or when one section is clearly \
@@ -135,6 +150,29 @@ const TOOLS = [
             type: "string",
             enum: ["day", "week", "month", "year"],
             description: "Only return pages from this recent period. Use \"week\" for current prices and rates.",
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_records",
+      description:
+        "Search Logistix's own records: orders (by order, job, container, vehicle or bilty number, or customer name), " +
+        "invoices, transporters and contracts. Returns at most " + MAX_RECORDS + " matches, newest first; the user gets " +
+        "a button to open each one.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Just the number or name to look for, e.g. \"MSKU1234567\", \"TLE911\" or a customer name." },
+          kind: {
+            type: "string",
+            enum: RECORD_KINDS,
+            description: "Limit the search to one kind of record, or \"any\". Vehicle, container and bilty numbers are on orders.",
           },
         },
         required: ["query"],
@@ -346,12 +384,19 @@ export function topicSection(question: string): Destination | null {
   return section ? { view: section.view, title: section.title, go_now: false } : null;
 }
 
-export async function answer(keys: Keys, history: Message[], send: Send, signal: AbortSignal) {
+/**
+ * Answers one question. `db` is how to reach Logistix's database as the signed-in user, for
+ * find_records; without it, record searches are refused.
+ */
+export async function answer(keys: Keys, history: Message[], send: Send, signal: AbortSignal, db: Db | null = null) {
   send("status", { kind: "thinking", text: "Thinking…" });
   const messages: Message[] = [{ role: "system", content: systemPrompt() }, ...history];
   const sources = new Map<string, Source>();
   let destination: Destination | null = null;
   let searches = 0;
+  let recordSearches = 0;
+  const records = new Map<string, FoundRecord>(); // buttons, straight from the database rows
+  const notFound: string[] = [];
   let model = PRIMARY_MODEL;
   let toolRetries = 0;
   let waits = 0;
@@ -395,7 +440,9 @@ export async function answer(keys: Keys, history: Message[], send: Send, signal:
       return {
         answer: text,
         sources: cited.length ? cited : all,
-        navigate: destination ?? topicSection(String(question)),
+        navigate: destination ?? (recordSearches ? null : topicSection(String(question))),
+        records: [...records.values()],
+        not_found: notFound,
         search_suggestions: null,
         truncated: reply.finish === "length",
         model,
@@ -420,6 +467,39 @@ export async function answer(keys: Keys, history: Message[], send: Send, signal:
           const results = await search(keys, query, String(args.topic ?? ""), String(args.time_range ?? ""), signal);
           for (const r of results) if (!sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title ?? hostname(r.url) });
           result = JSON.stringify(results.length ? results : { results: [], note: "No results. Try a different query." });
+        }
+      } else if (call.function.name === "find_records") {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        const kind = RECORD_KINDS.includes(String(args.kind)) ? String(args.kind) : "any";
+        if (!db) {
+          result = JSON.stringify({ error: "Record search isn't available." });
+        } else if (!query) {
+          result = JSON.stringify({ error: "query is required." });
+        } else if (recordSearches >= MAX_RECORD_SEARCHES) {
+          result = JSON.stringify({ error: `Record search limit for this question reached (${MAX_RECORD_SEARCHES}). Answer with what you have.` });
+        } else {
+          recordSearches++;
+          send("status", { kind: "records", text: `Searching Logistix: ${query.slice(0, 60)}` });
+          try {
+            const found = await findRecords(db, query, kind, signal);
+            for (const r of found.records) {
+              if (records.size < MAX_RECORDS) records.set(`${r.kind}:${r.id}`, r);
+            }
+            if (!found.records.length) notFound.push(found.query);
+            // Only these few matches go to the model, never the records themselves.
+            result = JSON.stringify(found.records.length
+              ? {
+                query: found.query,
+                found: found.records.length,
+                ...(found.more ? { more_exist: true, about_total: found.total, shown: "the closest matches, newest first" } : {}),
+                matches: found.records.map((r) => ({ type: r.kind, label: r.label, matched_on: r.matched, details: r.detail })),
+              }
+              : { query: found.query, found: 0, note: "Nothing in Logistix matches this. Tell the user it isn't in Logistix; don't guess." });
+          } catch (err) {
+            if (!(err instanceof RecordsError)) throw err;
+            if (err.code !== "too_short") throw new UserError(err.code, err.message);
+            result = JSON.stringify({ error: err.message });
+          }
         }
       } else if (call.function.name === "open_section") {
         const section = SECTIONS.find((s) => s.view === args.view);

@@ -5262,8 +5262,8 @@ function SendersView({ data, openModal, askDelete }) {
 
 /* ==================== Transporters ==================== */
 
-function TransportersView({ data, openModal, askDelete }) {
-  const [q, setQ] = useState("");
+function TransportersView({ data, openModal, askDelete, initialQuery }) {
+  const [q, setQ] = useState(initialQuery || "");
   const rows = (data.transporters || []).filter((s) => `${s.name} ${s.email} ${s.contact}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <div className="space-y-5">
@@ -6285,8 +6285,9 @@ function PaidAmountModal({ order, container, updateContainerFields, onClose }) {
 
 /* ==================== Contracts (Finance Manager + Admin) ==================== */
 
-function ContractsView({ data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, isColVisible }) {
-  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
+function ContractsView({ data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, isColVisible, initialCustomerId, initialGroupId }) {
+  const [selectedCustomerId, setSelectedCustomerId] = useState(initialCustomerId || null);
+  const [pendingGroupId, setPendingGroupId] = useState(initialGroupId || null); // used once, then cleared
   const [q, setQ] = useState("");
 
   if (selectedCustomerId) {
@@ -6296,8 +6297,9 @@ function ContractsView({ data, openModal, askDelete, role, contractExcel, onCont
         customer={cust} data={data} openModal={openModal} askDelete={askDelete} role={role}
         contractExcel={contractExcel} onContractRatesExport={onContractRatesExport}
         onContractRatesAttach={onContractRatesAttach} onContractRatesRevert={onContractRatesRevert}
-        onBack={() => setSelectedCustomerId(null)}
+        onBack={() => { setSelectedCustomerId(null); setPendingGroupId(null); }}
         isColVisible={isColVisible}
+        initialGroupId={pendingGroupId}
       />
     );
   }
@@ -6335,8 +6337,8 @@ function ContractsView({ data, openModal, askDelete, role, contractExcel, onCont
   );
 }
 
-function CustomerContractsDetail({ customer, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack, isColVisible }) {
-  const [selectedGroupId, setSelectedGroupId] = useState(null);
+function CustomerContractsDetail({ customer, data, openModal, askDelete, role, contractExcel, onContractRatesExport, onContractRatesAttach, onContractRatesRevert, onBack, isColVisible, initialGroupId }) {
+  const [selectedGroupId, setSelectedGroupId] = useState(initialGroupId || null);
   const groups = (data.contract_groups || []).filter((g) => g.customerId === customer.id);
   const allRates = (data.contracts || []).filter((k) => k.customerId === customer.id);
   const groupIds = new Set(groups.map((g) => g.id));
@@ -9633,6 +9635,10 @@ function LogistixERP() {
   // export/attach to just that one, instead of always covering all three categories.
   const [domesticCategory, setDomesticCategory] = useState(null);
   const [modal, setModal] = useState(null);
+  // Set when a research-assistant record button opens a page focused on one record (a
+  // transporter or a contract, which have no view popup); cleared once the user moves on.
+  const [assistantFocus, setAssistantFocus] = useState(null);
+  useEffect(() => { setAssistantFocus((f) => (f && f.view !== view ? null : f)); }, [view]);
   const [confirm, setConfirm] = useState(null);
   const [viewSession, setViewSession] = useState({ role: "admin", customerId: null });
   const [excelMeta, setExcelMeta] = useState({ attached: false, filename: null, snapshot: null });
@@ -9685,6 +9691,44 @@ function LogistixERP() {
     // eslint-disable-next-line
   }, [authSession]);
 
+  // Opens a record found by the research assistant: the existing view popup for orders and
+  // invoices, and the existing page for a transporter or contract. Never an edit form. Returns
+  // false when the record isn't in the loaded data (deleted since, or still loading).
+  function openAssistantRecord(rec) {
+    const d = dataRef.current;
+    const find = (table) => (d && rec ? (d[table] || []).find((x) => x.id === rec.id) : null);
+    if (rec && rec.kind === "order") {
+      const o = find("orders");
+      if (!o) return false;
+      const type = o.shipmentType || "Import";
+      const key = type === "Domestic" ? "orders_domestic" : type === "Export" ? "orders_export" : "orders_import";
+      setView(key);
+      if (key === "orders_domestic") setDomesticCategory(o.domesticCategory || DOMESTIC_CATEGORIES[0]);
+      setModal({ type: "order", mode: "view", item: o });
+    } else if (rec && rec.kind === "invoice") {
+      const inv = find("invoices");
+      if (!inv) return false;
+      setView("invoices");
+      setModal({ type: "invoice", mode: "view", item: inv });
+    } else if (rec && rec.kind === "transporter") {
+      const t = find("transporters");
+      if (!t) return false;
+      setModal(null);
+      setView("transporters");
+      setAssistantFocus({ view: "transporters", query: t.name || "", n: Date.now() });
+    } else if (rec && rec.kind === "contract") {
+      const g = find("contract_groups");
+      if (!g) return false;
+      setModal(null);
+      setView("contracts");
+      setAssistantFocus({ view: "contracts", customerId: g.customerId, groupId: g.id, n: Date.now() });
+    } else {
+      return false;
+    }
+    setMobileNavOpen(false);
+    return true;
+  }
+
   // Research assistant chat panel (research-agent.js + the research-agent Edge Function).
   // Admins only for now; the Edge Function checks the role again on every message.
   useEffect(() => {
@@ -9697,6 +9741,7 @@ function LogistixERP() {
         return d.session ? d.session.access_token : null;
       },
       navigate: (key) => { setView(key); setMobileNavOpen(false); },
+      openRecord: (rec) => openAssistantRecord(rec),
       theme,
       userId: authSession && authSession.user ? authSession.user.id : null,
     };
@@ -11320,6 +11365,9 @@ function LogistixERP() {
               {view === "tracking_export" && <TrackingView data={data} updateContainerStage={updateContainerStage} updateContainerFields={updateContainerFields} role={viewSession.role} shipmentTypeFilter="Export" />}
               {view === "contracts" && (
                 <ContractsView
+                  key={assistantFocus && assistantFocus.view === "contracts" ? assistantFocus.n : "contracts"}
+                  initialCustomerId={assistantFocus && assistantFocus.view === "contracts" ? assistantFocus.customerId : null}
+                  initialGroupId={assistantFocus && assistantFocus.view === "contracts" ? assistantFocus.groupId : null}
                   data={data} openModal={setModal} askDelete={setConfirm} role={viewSession.role}
                   contractExcel={contractExcel}
                   onContractRatesExport={handleContractRatesExport}
@@ -11343,7 +11391,7 @@ function LogistixERP() {
               )}
               {view === "customers" && <CustomersView data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "senders" && <SendersView data={data} openModal={setModal} askDelete={setConfirm} />}
-              {view === "transporters" && <TransportersView data={data} openModal={setModal} askDelete={setConfirm} />}
+              {view === "transporters" && <TransportersView key={assistantFocus && assistantFocus.view === "transporters" ? assistantFocus.n : "transporters"} initialQuery={assistantFocus && assistantFocus.view === "transporters" ? assistantFocus.query : ""} data={data} openModal={setModal} askDelete={setConfirm} />}
               {view === "analytics" && <AnalyticsView data={data} />}
               {view === "bill_checker" && <TransporterBillsView data={data} updateContainerFields={updateContainerFields} updateTransporterManualPayments={updateTransporterManualPayments} isColVisible={isColVisible} onStatementExport={handleTransporterStatementExport} role={viewSession.role} />}
               {view === "activity_log" && viewSession.role === "admin" && <ActivityLogView data={data} />}

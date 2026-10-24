@@ -2,8 +2,8 @@
  * Logistix research assistant: chat panel.
  *
  * Talks to the `research-agent` Supabase Edge Function (supabase/functions/research-agent),
- * which researches transportation and logistics topics on the web and can open Logistix
- * sections. The app turns it on for admins by calling:
+ * which researches transportation and logistics topics on the web, finds Logistix records and
+ * can open Logistix sections. The app turns it on for admins by calling:
  *
  *   window.ResearchAgent.configure({
  *     enabled: true,                       // false hides the panel and clears the chat
@@ -11,6 +11,8 @@
  *     apiKey: SUPABASE_ANON_KEY,           // public anon key, required by Supabase's gateway
  *     getToken: async () => accessToken,   // the signed-in user's access token
  *     navigate: (view) => setView(view),   // open a Logistix section
+ *     openRecord: (record) => true,        // open a found record ({kind, id, label}; kind is order,
+ *                                          // invoice, transporter or contract); false if it can't
  *     theme: "dark" | "light",
  *     userId: "...",                       // keeps one user's chat from showing for another
  *   });
@@ -25,7 +27,8 @@
   var TITLE = "Research Assistant";
   var GREETING =
     "Hi! Ask me to research anything about transport and logistics, like diesel prices, freight " +
-    "rates, customs or port updates, or tell me which section of Logistix to open.";
+    "rates, customs or port updates. I can also find an order, container, vehicle, bilty, invoice, " +
+    "transporter or contract in Logistix, or open any section.";
   var MAX_HISTORY_TURNS = 20;
 
   var config = { enabled: false, theme: "dark" };
@@ -161,6 +164,13 @@
     ".error{color:#f87171}:host([data-theme=light]) .error{color:#b91c1c}" +
     "details{margin-top:8px;font-size:12px;color:var(--muted)}details ol{margin:4px 0 0;padding-left:18px}" +
     ".suggestions{display:block;width:100%;height:60px;margin-top:8px;border:0;border-radius:8px;background:#fff;color-scheme:light}" +
+    ".recs{display:flex;flex-direction:column;gap:6px;margin-top:10px}" +
+    ".rec{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:var(--bg);" +
+    "color:var(--fg);font:13px/1.35 inherit;font-family:inherit;cursor:pointer}" +
+    ".rec:hover,.rec:focus-visible{border-color:var(--accent);outline:0}" +
+    ".rec b{display:block;font-weight:600;color:#60a5fa}:host([data-theme=light]) .rec b{color:var(--accent)}" +
+    ".rec small{display:block;color:var(--muted);font-size:12px}" +
+    ".rec-note,.notfound{font-size:12px;color:var(--muted);margin-top:6px}" +
     ".go{display:block;margin-top:10px;border:0;border-radius:8px;padding:7px 12px;background:var(--accent);color:var(--accent-fg);font:600 13px/1.2 inherit;font-family:inherit;cursor:pointer}" +
     ".status{font-size:12px;color:var(--muted);padding:0 14px 8px;min-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
     ".status.on::before{content:'';display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;background:var(--accent);animation:p 1s infinite alternate}" +
@@ -221,6 +231,35 @@
       frame.srcdoc = '<!doctype html><base target="_blank"><style>html,body{margin:0;background:#fff}</style>' + msg.suggestions;
       el.appendChild(frame);
     }
+    if (msg.records && msg.records.length) {
+      // Buttons for the Logistix records the search found (built from the database rows,
+      // never from the answer text). Text goes in with textContent only.
+      var recs = document.createElement("div");
+      recs.className = "recs";
+      msg.records.slice(0, 10).forEach(function (rec) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "rec";
+        var title = document.createElement("b");
+        title.textContent = rec.label + " →";
+        b.appendChild(title);
+        [rec.matched ? "Matched " + rec.matched : "", rec.detail].forEach(function (line) {
+          if (!line) return;
+          var small = document.createElement("small");
+          small.textContent = line;
+          b.appendChild(small);
+        });
+        b.addEventListener("click", function () { openRecord(rec, recs); });
+        recs.appendChild(b);
+      });
+      el.appendChild(recs);
+    }
+    if (msg.notFound && msg.notFound.length) {
+      var nf = document.createElement("div");
+      nf.className = "notfound";
+      nf.textContent = "Not in Logistix: " + msg.notFound.map(function (q) { return "“" + q + "”"; }).join(", ");
+      el.appendChild(nf);
+    }
     if (msg.navigate) {
       var go = document.createElement("button");
       go.type = "button";
@@ -255,6 +294,18 @@
       render();
       input.focus();
     }
+  }
+  function openRecord(rec, container) {
+    var ok = typeof config.openRecord === "function" ? config.openRecord({ kind: rec.kind, id: rec.id, label: rec.label }) : false;
+    if (ok === false) {
+      // The app couldn't find it in what it has loaded (deleted since, or not loaded yet).
+      var note = container.querySelector(".rec-note") || document.createElement("div");
+      note.className = "rec-note";
+      note.textContent = "Couldn't open " + rec.label + " here. It may have been deleted; try reloading the page.";
+      container.appendChild(note);
+      return;
+    }
+    if (window.matchMedia && window.matchMedia("(max-width: 480px)").matches) setOpen(false);
   }
   function openSection(view) {
     if (typeof config.navigate === "function") config.navigate(view);
@@ -357,6 +408,8 @@
               sources: data.sources || [],
               navigate: data.navigate || null,
               suggestions: data.search_suggestions || null,
+              records: data.records || [],
+              notFound: data.not_found || [],
             };
             if (data.truncated) result.text += "\n\n*(This answer was cut short.)*";
           } else if (event === "error") {
