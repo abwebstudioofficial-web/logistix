@@ -42,7 +42,8 @@ if (!baseDir && process.env.BASE_SHA) {
 }
 
 function parseSpec(body) {
-  const m = /<!--\s*site-check\s*([\s\S]*?)-->/.exec(body || "");
+  // The block must start on its own line ("<!-- site-check" + newline), so a mention of it in prose is ignored.
+  const m = /<!--[ \t]*site-check[ \t]*\r?\n([\s\S]*?)-->/.exec(body || "");
   if (!m) return null;
   try {
     const spec = JSON.parse(m[1]);
