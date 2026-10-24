@@ -13,6 +13,8 @@
  *     navigate: (view) => setView(view),   // open a Logistix section
  *     openRecord: (record) => true,        // open a found record ({kind, id, label}; kind is order,
  *                                          // invoice, transporter or contract); false if it can't
+ *     hidden: false,                       // true keeps the panel out of sight (e.g. while the app
+ *                                          // is loading) without clearing the chat
  *     theme: "dark" | "light",
  *     userId: "...",                       // keeps one user's chat from showing for another
  *   });
@@ -485,6 +487,7 @@
       mounted = true;
       setOpen(!!state.open);
     }
+    host.style.display = config.hidden ? "none" : "";
   }
 
   window.ResearchAgent = {
