@@ -9686,11 +9686,24 @@ function LogistixERP() {
   const dataRef = useRef(null);
   useEffect(() => { dataRef.current = data; }, [data]);
   const [dataLoading, setDataLoading] = useState(false);
-  const [view, setView] = useState("dashboard");
+  // Remember the open page (and Domestic category) for this browser tab, so a refresh comes
+  // back to the same page instead of the Dashboard.
+  const [view, setView] = useState(() => {
+    try { const v = sessionStorage.getItem("logistix-view"); return v && NAV_ITEMS.some((n) => n.key === v) ? v : "dashboard"; } catch (e) { return "dashboard"; }
+  });
+  useEffect(() => { try { sessionStorage.setItem("logistix-view", view); } catch (e) { /* ignore */ } }, [view]);
   // Lifted out of OrdersView so the Export/Attach bar (rendered at this level, above the tab
   // content) can know which Domestic category is currently open and scope the Excel
   // export/attach to just that one, instead of always covering all three categories.
-  const [domesticCategory, setDomesticCategory] = useState(null);
+  const [domesticCategory, setDomesticCategory] = useState(() => {
+    try { const c = sessionStorage.getItem("logistix-domestic-category"); return c && DOMESTIC_CATEGORIES.includes(c) ? c : null; } catch (e) { return null; }
+  });
+  useEffect(() => {
+    try {
+      if (domesticCategory) sessionStorage.setItem("logistix-domestic-category", domesticCategory);
+      else sessionStorage.removeItem("logistix-domestic-category");
+    } catch (e) { /* ignore */ }
+  }, [domesticCategory]);
   const [modal, setModal] = useState(null);
   // Set when a research-assistant record button opens a page focused on one record (a
   // transporter or a contract, which have no view popup); cleared once the user moves on.
@@ -9962,7 +9975,8 @@ function LogistixERP() {
     setProfile(prof);
     setViewSession(prof.role === "customer" ? { role: "customer", customerId: prof.customerId } : { role: prof.role || "admin", customerId: null });
     const allowed = allowedViewsForRole(prof.role);
-    if (allowed && allowed.length) setView(allowed[0]);
+    // Keep the page restored after a refresh if this role may see it; otherwise its first page.
+    if (allowed && allowed.length) setView((v) => (allowed.includes(v) ? v : allowed[0]));
 
     await refreshData();
     setDataLoading(false);
