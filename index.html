@@ -70,6 +70,7 @@
 <script src="research-agent.js" defer></script>
 <style>
   html, body { margin: 0; height: 100%; background: #020617; }
+  html.lx-light, html.lx-light body { background: #f8fafc; }
   #root { min-height: 100vh; }
   .sidebar-scroll { scrollbar-width: none; -ms-overflow-style: none; }
   .sidebar-scroll::-webkit-scrollbar { display: none; }
@@ -208,6 +209,7 @@
     .animate-pulse-ring::after, .animate-progress-shimmer::after { animation: none; display: none; }
   }
 </style>
+<script>try { if (localStorage.getItem("logistix-theme") === "light") document.documentElement.classList.add("lx-light"); } catch (e) {}</script>
 </head>
 <body>
 <div id="root"></div>
@@ -9733,6 +9735,10 @@ function LogistixERP() {
   }
 
   useEffect(() => {
+    document.documentElement.classList.toggle("lx-light", theme === "light");
+  }, [theme]);
+
+  useEffect(() => {
     supabaseClient.auth.getSession().then(({ data }) => setAuthSession(data.session || null));
     const { data: sub } = supabaseClient.auth.onAuthStateChange((_event, sess) => setAuthSession(sess));
     try { setFleetUrl(localStorage.getItem(FLEET_LINK_KEY) || null); } catch (e) { /* ignore */ }
@@ -11342,7 +11348,7 @@ function LogistixERP() {
 
   if (authSession === undefined) {
     return (
-      <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center">
+      <div className={cx("min-h-screen w-full bg-slate-950 flex items-center justify-center", theme === "light" && "light-theme")}>
         <div className="w-8 h-8 rounded-full border-4 border-slate-800 border-t-blue-500 animate-spin" />
       </div>
     );
@@ -11355,7 +11361,7 @@ function LogistixERP() {
 
   if (dataLoading || !data || !profile) {
     return (
-      <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center">
+      <div className={cx("min-h-screen w-full bg-slate-950 flex items-center justify-center", theme === "light" && "light-theme")}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 rounded-full border-4 border-slate-800 border-t-blue-500 animate-spin" />
           <div className="text-slate-500 text-sm">Loading Logistix...</div>
