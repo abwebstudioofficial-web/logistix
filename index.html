@@ -3027,22 +3027,6 @@ async function downloadInvoicePDF(invoice, data) {
   }
 }
 
-function getWeekData(orders) {
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const now = new Date();
-  const dayIdx = (now.getDay() + 6) % 7;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - dayIdx);
-  return days.map((label, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    const iso = toLocalDateStr(d);
-    const total = orders.filter((o) => o.createdDate === iso).length;
-    const delivered = orders.filter((o) => o.deliveredDate === iso).length;
-    return { day: label, total, delivered };
-  });
-}
-
 function getStatusMix(orders) {
   const colors = { Confirmed: "#38bdf8", "Picked Up": "#818cf8", "In Transit": "#3b82f6", Delivered: "#22c55e", Completed: "#a78bfa", Cancelled: "#64748b" };
   const counts = {};
@@ -3986,16 +3970,60 @@ function TopBar({ title, onExportTemplate, onOpenMobileNav, excelBusy }) {
 
 /* ==================== Dashboard ==================== */
 
-function Dashboard({ data }) {
-  const { orders, vehicles, drivers, invoices } = data;
-  const activeVehicles = vehicles.filter((v) => v.status === "active").length;
-  const maintenanceVehicles = vehicles.filter((v) => v.status === "maintenance").length;
+// Transporter-bill figures for the Dashboard, on the same basis as each transporter's Statement
+// of Account (received bills plus manual payment entries; Bill Amount adds, Paid Amount subtracts).
+function dashboardFinance(data) {
+  const today = todayISO();
+  const stageCounts = Object.fromEntries(BILL_STAGES.map((st) => [st, 0]));
+  const balances = new Map();
+  const addBalance = (name, amount) => balances.set(name, (balances.get(name) || 0) + amount);
+  const now = new Date();
+  const months = [5, 4, 3, 2, 1, 0].map((back) => {
+    const m = new Date(now.getFullYear(), now.getMonth() - back, 1);
+    return { key: toLocalDateStr(m).slice(0, 7), month: m.toLocaleString("en-US", { month: "short" }), billed: 0, paid: 0 };
+  });
+  const monthOf = (iso) => months.find((m) => iso && String(iso).startsWith(m.key));
+  data.orders.forEach((o) => orderContainers(o).forEach((c) => {
+    stageCounts[billStage(c)] += 1;
+    if (!c.billReceived) return;
+    const billed = containerTotalBillAmount(c), paid = Number(c.billPaidAmount) || 0;
+    addBalance((c.transporter || "").trim() || "Unassigned", billed - paid);
+    const m = monthOf(c.transporterBillDate);
+    if (m) { m.billed += billed; m.paid += paid; }
+  }));
+  (data.transporters || []).forEach((t) => (Array.isArray(t.manualPayments) ? t.manualPayments : []).forEach((pay) => {
+    const billed = Number(pay.billAmount) || 0, paid = Number(pay.paidAmount) || 0;
+    addBalance((t.name || "").trim(), billed - paid);
+    const m = monthOf(pay.date);
+    if (m) { m.billed += billed; m.paid += paid; }
+  }));
+  const owing = Array.from(balances, ([name, balance]) => ({ name, balance })).filter((b) => b.balance > 0).sort((a, b) => b.balance - a.balance);
+  let fuel = null;
+  (data.fuel_prices || []).forEach((fp) => { if (fp.effectiveDate && fp.effectiveDate <= today && (!fuel || fp.effectiveDate > fuel.effectiveDate)) fuel = fp; });
+  const overdueInvoices = (data.invoices || []).filter((i) => !["Paid", "Cancelled", "Draft"].includes(i.status) && i.due && i.due < today).length;
+  const staleCutoff = addDaysISO(today, -30);
+  const staleConfirmed = data.orders.filter((o) => orderAggregateStatus(o) === "Confirmed" && o.createdDate && o.createdDate < staleCutoff).length;
+  const attention = [
+    { label: "Overdue customer invoices", count: overdueInvoices, view: "invoices" },
+    { label: "Bills received, not yet forwarded for approval", count: stageCounts["Bill Received"], view: "bill_checker" },
+    { label: "Bills pending approval / posting", count: stageCounts["Pending Approval"], view: "bill_checker" },
+    { label: "Bills posted but not paid", count: stageCounts.Posted, view: "bill_checker" },
+    { label: "Orders still Confirmed after 30+ days", count: staleConfirmed, view: null },
+  ].filter((a) => a.count > 0);
+  return {
+    stageCounts, months, fuel, attention, topOwing: owing.slice(0, 5),
+    totalOwed: owing.reduce((sum, b) => sum + b.balance, 0), owingCount: owing.length,
+  };
+}
+
+function Dashboard({ data, onNavigate }) {
+  const { orders, invoices } = data;
   const inTransit = orders.filter((o) => orderAggregateStatus(o) === "In Transit").length;
   const revenue = invoices.filter((i) => i.status === "Paid").reduce((s, i) => s + i.total, 0);
   const outstanding = invoices.filter((i) => i.status === "Sent" || i.status === "Overdue").reduce((s, i) => s + i.total, 0);
 
-  const weekData = useMemo(() => getWeekData(orders), [orders]);
   const statusMix = useMemo(() => getStatusMix(orders), [orders]);
+  const fin = useMemo(() => dashboardFinance(data), [data]);
 
   return (
     <div className="space-y-6">
@@ -4003,53 +4031,39 @@ function Dashboard({ data }) {
         <h2 className="text-2xl font-bold text-white">Overview</h2>
         <p className="text-slate-500 text-sm mt-1">Your logistics operations at a glance</p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Package} iconBg="bg-blue-600" label="Total Orders" value={orders.length} sub={`${inTransit} in transit`} />
-        <StatCard icon={Truck} iconBg="bg-indigo-600" label="Active Vehicles" value={activeVehicles} sub={`${maintenanceVehicles} in maintenance`} />
+        <StatCard icon={Receipt} iconBg="bg-amber-600" label="Owed to Transporters" value={formatPKR(fin.totalOwed)} sub={`${fin.owingCount} transporter${fin.owingCount === 1 ? "" : "s"} with a balance`} />
         <StatCard icon={Banknote} iconBg="bg-emerald-600" label="Revenue" value={formatPKR(revenue)} sub={`${formatPKR(outstanding)} outstanding`} />
+        <StatCard icon={Fuel} iconBg="bg-teal-600" label="Fuel Price Today" value={fin.fuel ? `Rs ${(Number(fin.fuel.pricePerLiter) || 0).toFixed(2)}/L` : "—"} sub={fin.fuel ? `Hi-Cetane, since ${fmtDate(fin.fuel.effectiveDate)}` : "No price on file"} />
+      </div>
+      <div>
+        <h3 className="text-white font-semibold mb-3">Transporter Bills</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          {BILL_STAGES.map((st) => (
+            <button key={st} type="button" onClick={() => onNavigate && onNavigate("bill_checker")} className={cx(cardCls, "p-4 text-left")}>
+              <div className="text-slate-500 text-xs">{st}</div>
+              <div className={cx("text-2xl font-bold mt-1", billStageTextColor[st])}>{fin.stageCounts[st]}</div>
+            </button>
+          ))}
+        </div>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className={cx(chartCardCls, "p-5 lg:col-span-2")}>
-          <h3 className="text-white font-semibold flex items-center gap-2 mb-4"><TrendingUp size={16} className="text-blue-500" />Weekly Order Activity</h3>
+          <h3 className="text-white font-semibold flex items-center gap-2 mb-4"><TrendingUp size={16} className="text-blue-500" />Transporter Bills — Billed vs Paid (last 6 months)</h3>
           <ResponsiveContainer width="100%" height={260} debounce={1}>
-            <AreaChart data={weekData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="totalGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="delGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                </linearGradient>
-              </defs>
+            <BarChart data={fin.months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="#1e293b" vertical={false} />
-              <XAxis dataKey="day" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-              <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
+              <XAxis dataKey="month" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
+              <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
               <Tooltip
-                cursor={{ stroke: "#475569", strokeWidth: 1, strokeDasharray: "3 3" }}
-                content={({ active, payload, label }) => {
-                  if (!active || !payload || !payload.length) return null;
-                  const total = payload.find((p) => p.dataKey === "total")?.value ?? 0;
-                  const delivered = payload.find((p) => p.dataKey === "delivered")?.value ?? 0;
-                  return (
-                    <div className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs shadow-xl">
-                      <div className="text-white font-semibold mb-1.5">{label}</div>
-                      <div className="flex items-center justify-between gap-4 text-slate-300">
-                        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" />Total Orders</span>
-                        <span className="text-white font-medium">{total}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4 text-slate-300 mt-1">
-                        <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" />Delivered</span>
-                        <span className="text-white font-medium">{delivered}</span>
-                      </div>
-                    </div>
-                  );
-                }}
+                cursor={{ fill: "#1e293b", opacity: 0.5 }}
+                formatter={(v) => formatPKR(v)}
+                contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12, color: "#fff" }}
               />
-              <Area type="monotone" dataKey="total" name="Total" stroke="#3b82f6" fill="url(#totalGrad)" strokeWidth={2} activeDot={{ r: 5, strokeWidth: 2, stroke: "#0f172a" }} />
-              <Area type="monotone" dataKey="delivered" name="Delivered" stroke="#22c55e" fill="url(#delGrad)" strokeWidth={2} activeDot={{ r: 5, strokeWidth: 2, stroke: "#0f172a" }} />
-            </AreaChart>
+              <Bar dataKey="billed" fill="#3b82f6" radius={[3, 3, 0, 0]} name="Billed" />
+              <Bar dataKey="paid" fill="#22c55e" radius={[3, 3, 0, 0]} name="Paid" />
+            </BarChart>
           </ResponsiveContainer>
         </div>
         <div className={cx(chartCardCls, "p-5")}>
@@ -4092,6 +4106,38 @@ function Dashboard({ data }) {
                 ))}
               </div>
             </>
+          )}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className={cx(chartCardCls, "p-5")}>
+          <h3 className="text-white font-semibold flex items-center gap-2 mb-4"><AlertTriangle size={16} className="text-amber-500" />Needs Attention</h3>
+          {fin.attention.length === 0 ? (
+            <div className="text-slate-500 text-sm">All clear — nothing waiting on you.</div>
+          ) : (
+            <div>
+              {fin.attention.map((item) => (
+                <button key={item.label} type="button" disabled={!item.view} onClick={() => item.view && onNavigate && onNavigate(item.view)} className="w-full flex items-center justify-between gap-3 py-2.5 text-left text-sm border-b border-slate-800 last:border-0 disabled:cursor-default">
+                  <span className="text-slate-300">{item.label}</span>
+                  <span className="text-white font-semibold">{item.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={cx(chartCardCls, "p-5")}>
+          <h3 className="text-white font-semibold flex items-center gap-2 mb-4"><Receipt size={16} className="text-amber-500" />Top Balances Owed to Transporters</h3>
+          {fin.topOwing.length === 0 ? (
+            <div className="text-slate-500 text-sm">No outstanding transporter balances.</div>
+          ) : (
+            <div>
+              {fin.topOwing.map((t) => (
+                <button key={t.name} type="button" onClick={() => onNavigate && onNavigate("bill_checker")} className="w-full flex items-center justify-between gap-3 py-2.5 text-left text-sm border-b border-slate-800 last:border-0">
+                  <span className="text-slate-300 truncate">{t.name}</span>
+                  <span className="text-white font-semibold whitespace-nowrap">{formatPKR(t.balance)}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -11451,7 +11497,7 @@ function LogistixERP() {
                   )}
                 </div>
               )}
-              {view === "dashboard" && <Dashboard data={data} />}
+              {view === "dashboard" && <Dashboard data={data} onNavigate={setView} />}
               {view === "orders_domestic" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Domestic" role={viewSession.role} isColVisible={isColVisible} domesticCategory={domesticCategory} setDomesticCategory={setDomesticCategory} />}
               {view === "orders_import" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Import" role={viewSession.role} isColVisible={isColVisible} />}
               {view === "orders_export" && <OrdersView data={data} openModal={setModal} askDelete={setConfirm} shipmentType="Export" role={viewSession.role} isColVisible={isColVisible} />}
