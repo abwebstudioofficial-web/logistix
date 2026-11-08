@@ -105,15 +105,14 @@
   .light-theme .hover\:bg-slate-800\/70:hover { background-color: #e2e8f0 !important; }
   .light-theme .hover\:text-white:hover { color: #0f172a !important; }
   /* Keep white text/icons white on solid coloured buttons, badges and icon tiles. */
-  .light-theme :is(.bg-blue-400,.bg-blue-500,.bg-blue-600,.bg-emerald-500,.bg-emerald-600,.bg-indigo-600,.bg-violet-600,.bg-purple-600,.bg-teal-600,.bg-red-500,.bg-red-600,.bg-amber-600).text-white,
-  .light-theme :is(.bg-blue-400,.bg-blue-500,.bg-blue-600,.bg-emerald-500,.bg-emerald-600,.bg-indigo-600,.bg-violet-600,.bg-purple-600,.bg-teal-600,.bg-red-500,.bg-red-600,.bg-amber-600) .text-white { color: #ffffff !important; }
+  .light-theme :is(.bg-blue-400,.bg-blue-500,.bg-blue-600,.bg-emerald-500,.bg-emerald-600,.bg-indigo-600,.bg-violet-600,.bg-purple-600,.bg-teal-600,.bg-red-600,.bg-amber-600).text-white,
+  .light-theme :is(.bg-blue-400,.bg-blue-500,.bg-blue-600,.bg-emerald-500,.bg-emerald-600,.bg-indigo-600,.bg-violet-600,.bg-purple-600,.bg-teal-600,.bg-red-600,.bg-amber-600) .text-white { color: #ffffff !important; }
 
   /* Colored left-accent stripes (status border on Tracking cards, grouped-table row accents).
      Placed after the generic .border-slate-800 rule above so these win the cascade for
      border-left-color specifically — without this, cards combining a neutral border-slate-800
      with a border-l-{color} accent had the left stripe silently overridden to plain gray. */
-  .light-theme .border-l-blue-500,
-  .light-theme .border-l-blue-600 { border-left-color: #2563eb !important; }
+  .light-theme .border-l-blue-500 { border-left-color: #2563eb !important; }
   .light-theme .border-l-emerald-500 { border-left-color: #059669 !important; }
   .light-theme .border-l-amber-500 { border-left-color: #d97706 !important; }
   .light-theme .border-l-violet-500 { border-left-color: #7c3aed !important; }
@@ -148,10 +147,8 @@
      and the -950 backgrounds render as near-black boxes clashing with an otherwise white UI.
      Each accent shifts to a darker, more saturated text shade for contrast on white, and badge
      backgrounds/borders shift to light pastel equivalents instead of staying near-black. */
-  .light-theme .text-blue-300,
   .light-theme .text-blue-400,
   .light-theme .text-blue-500 { color: #1d4ed8 !important; }
-  .light-theme .text-emerald-300,
   .light-theme .text-emerald-400,
   .light-theme .text-emerald-500 { color: #047857 !important; }
   .light-theme .text-red-400,
@@ -171,18 +168,15 @@
   .light-theme .bg-violet-950 { background-color: #f5f3ff !important; }
   .light-theme .bg-indigo-950 { background-color: #eef2ff !important; }
   .light-theme .bg-sky-950 { background-color: #f0f9ff !important; }
-  .light-theme .bg-purple-950 { background-color: #faf5ff !important; }
 
   .light-theme .border-blue-800,
-  .light-theme .border-blue-600,
-  .light-theme .border-blue-500 { border-color: #bfdbfe !important; }
+  .light-theme .border-blue-600 { border-color: #bfdbfe !important; }
   .light-theme .border-emerald-800 { border-color: #a7f3d0 !important; }
   .light-theme .border-red-800 { border-color: #fecaca !important; }
   .light-theme .border-amber-800 { border-color: #fde68a !important; }
   .light-theme .border-violet-800 { border-color: #ddd6fe !important; }
   .light-theme .border-indigo-800 { border-color: #c7d2fe !important; }
   .light-theme .border-sky-800 { border-color: #bae6fd !important; }
-  .light-theme .border-purple-800 { border-color: #e9d5ff !important; }
 
   /* ---- Lightweight animations (opacity/transform only — cheap, GPU-composited) ---- */
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -234,7 +228,7 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useRef } = React;
 const {
-  AreaChart, Area, PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
+  PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } = Recharts;
 
@@ -281,9 +275,6 @@ function Building2({ size = 16, className = "" }) {
 }
 function BarChart3({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="3" y1="3" x2="3" y2="21"/><line x1="3" y1="21" x2="21" y2="21"/><rect x="7" y="13" width="3" height="6"/><rect x="12" y="9" width="3" height="10"/><rect x="17" y="5" width="3" height="14"/></svg>;
-}
-function Phone({ size = 16, className = "" }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>;
 }
 function X({ size = 16, className = "" }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
@@ -557,7 +548,6 @@ function fromDbRow(row) {
 
 /* ==================== Constants ==================== */
 
-const STORAGE_KEY = "logistix-data";
 const FLEET_LINK_KEY = "logistix-fleet-url";
 
 const NAV_ITEMS = [
@@ -865,7 +855,6 @@ const ORDER_STATUSES = ["Confirmed", "In Transit", "Delivered", "Cancelled"];
 const PRIORITIES = ["Low", "Normal", "Urgent"];
 const VEHICLE_STATUSES = ["active", "maintenance", "idle"];
 const DRIVER_STATUSES = ["Available", "On Duty", "Off Leave"];
-const ROUTE_STATUSES = ["planned", "active", "completed"];
 const INVOICE_STATUSES = ["Draft", "Sent", "Paid", "Overdue", "Cancelled"];
 
 const SHIPPING_FIELDS = [
@@ -914,25 +903,10 @@ const priorityColor = {
   Normal: "bg-slate-800 text-slate-300 border-slate-700",
   Urgent: "bg-red-950 text-red-400 border-red-800",
 };
-const vehicleStatusColor = {
-  active: "bg-emerald-950 text-emerald-400 border-emerald-800",
-  maintenance: "bg-amber-950 text-amber-400 border-amber-800",
-  idle: "bg-slate-800 text-slate-400 border-slate-700",
-};
 const shipmentTypeColor = {
   Import: "bg-blue-950 text-blue-400 border-blue-800",
   Export: "bg-violet-950 text-violet-400 border-violet-800",
   Domestic: "bg-amber-950 text-amber-400 border-amber-800",
-};
-const driverStatusColor = {
-  Available: "bg-emerald-950 text-emerald-400 border-emerald-800",
-  "On Duty": "bg-blue-950 text-blue-400 border-blue-800",
-  "Off Leave": "bg-slate-800 text-slate-400 border-slate-700",
-};
-const routeStatusColor = {
-  planned: "bg-blue-950 text-blue-400 border-blue-800",
-  active: "bg-emerald-950 text-emerald-400 border-emerald-800",
-  completed: "bg-slate-800 text-slate-400 border-slate-700",
 };
 const invoiceStatusColor = {
   Draft: "bg-slate-800 text-slate-400 border-slate-700",
@@ -1072,28 +1046,6 @@ function fileToAttachmentDataUrl(file, maxDim, quality) {
 
 function isPdfDataUrl(url) {
   return typeof url === "string" && url.startsWith("data:application/pdf");
-}
-
-// Renders an uploaded photo/PDF with a real download affordance either way — previously
-// only PDFs had a download link; image files just rendered inline with no way to save
-// them off to share (e.g. to a WhatsApp group).
-function AttachmentPreview({ dataUrl, alt, downloadName }) {
-  if (!dataUrl) return null;
-  if (isPdfDataUrl(dataUrl)) {
-    return (
-      <a href={dataUrl} download={downloadName || "document.pdf"} className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm bg-slate-900/60 border border-slate-800 rounded-lg p-2">
-        <FileText size={16} /> PDF attached — click to download
-      </a>
-    );
-  }
-  return (
-    <div className="space-y-1.5">
-      <img src={dataUrl} alt={alt || "Attachment"} className="rounded-lg border border-slate-800 max-h-48" />
-      <a href={dataUrl} download={downloadName || "photo.jpg"} className={cx(btnSecondary, "inline-flex items-center gap-1.5 text-xs")}>
-        <Download size={13} /> Download
-      </a>
-    </div>
-  );
 }
 
 const FIELD_LABELS = {
@@ -1384,15 +1336,7 @@ function orderAggregateStatus(order) {
   return "Confirmed";
 }
 
-function orderAggregateAmount(order) {
-  const cs = orderContainers(order);
-  if (cs.length === 0) return Number(order.amount) || 0;
-  return cs.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
-}
-
 function getCustomer(data, id) { return data.customers.find((c) => c.id === id) || null; }
-function getDriverName(data, id) { const d = data.drivers.find((x) => x.id === id); return d ? d.name : "Unassigned"; }
-function getVehiclePlate(data, id) { const v = data.vehicles.find((x) => x.id === id); return v ? v.plate : "Unassigned"; }
 function getOrder(data, id) { return data.orders.find((o) => o.id === id) || null; }
 
 /* ---- Excel attach/detach/download helpers ---- */
@@ -1488,15 +1432,11 @@ async function buildStyledFullBackupWorkbook(data) {
   return buildXlsxBuffer(sheets);
 }
 
-/* ---- Transportation-2026 template export ---- */
-const TEMPLATE_COMPANY_SHEETS = ["Tetra Pak","PTC","Dairyland","Haleeb","Fauji","Nestle","Engro","Pakola","Shezan","Others","Coca Cola","Ecolean","Pepsi"];
-const CLEARED_CASES_HEADERS = ["No. Of Contrs","Job#","SAP No.","Bonded Status","Port","Shipping Line","Transporter","Descritpion","B/L No.","No. of Containers 20'","No. of Containers 40'","Container No.","Contr Size","Cargo Weight (Kgs)","Truck No.","Driver Cell No.","I.G.M Date","Detention Free Upto","Loaded On Date","Loaded On Time","Expected Arrival Date","Expected Arrival Time","Actual Arrival Date","Actual Arrival Time","Offloading / Gate Out Date","Offloading / Gate Out Time","Destination","Empty Return Place","Offloaded On (DP World/Other Yard)","Delivered at TPF On","Any Extra Exp at LHE","Due Date for Empty Contr Receiving from TR","Over Due Days","Party Receiving From TR On","Terminal Receiving From TR On","Empty Return Date","NO OF FREE DAYS","Detention Free Upto (2)","NO OF DET DAYS","Detention Calculated USD","Exc. Rate","Detention Calculated PKR","Placement Charges","Damage Repair / Other Chgs","Total Amount Payable in PKR","Paid On / Case Cleared On","Pay Order No.","REMARKS"];
 const IMPORT_HEADERS = ["Sr.","Job#","PO NO. / LC NO.","Bonded Status","Loading Point","Shipping Line","Transporter","Description","B/L No.","Container No.","Seal Number","Contr Size","Cargo Weight (Kgs)","I.G.M Date","Destination","Consignee","Empty Return Location","Bilty No.","Truck No.","Loaded On","Freight","Freight Paid By Vide Cheque#","Bill Signed On","Transporter Bill Date","Transporter Bill No.","Bill Amount Approved","LOLO Charges","Stay Charges","Other Charges","Total Bill Amount","Remarks","YEAR"];
 const DOMESTIC_HEADERS = ["Sr.", "Domestic Category", "Customer", "Sender Name", "Sender Address", "Est. Delivery Date", "PO / SAP No.", "Movement Through", "Loading Date", "Vehicle No.", "Vehicle Size", "Loading Point", "Destination", "Transporter Name", "Freight Amount"];
 const EXPORT_HEADERS = ["Sr.","Job#","Shipper","Empty Pickup Location","Loading Point","Transporter","Shipping Line","Container No.","Contr Size","Weight","Truck No.","Vehicle Placed On","Dispatch Date","Bilty No.","Freight","Bonded Status","Destination","Remarks for Any Extra Activity or Any Extra Cost"];
 
 function fmtDateISO(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toISOString().slice(0,10); }
-function fmtTimePart(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? "" : d.toLocaleTimeString(); }
 // The real, authoritative field — replaces an old heuristic that guessed shipment type by
 // searching the description/origin/destination text for the words "import"/"export", which
 // could misfire on any order whose free-text happened to contain those words.
@@ -1506,10 +1446,6 @@ function orderKind(o) {
 function chargeAmount(c, type) {
   const ch = (Array.isArray(c.charges) ? c.charges : []).find((x) => x.type === type);
   return ch ? Number(ch.amount) || "" : "";
-}
-function driverPhoneFor(c, data) {
-  const drv = (data.drivers || []).find((d) => d.name && c.driverName && d.name.toLowerCase() === c.driverName.toLowerCase());
-  return drv ? drv.phone || "" : "";
 }
 
 // Every row-builder below operates on one CONTAINER at a time (not one order) — an order
@@ -1547,20 +1483,6 @@ function buildDomesticRow(sr, o, c, data) {
     c.poSapNo || "", c.movementThrough || "", fmtDateISO(c.loadingDate),
     c.vehiclePlate || "", c.vehicleSize || "", o.origin || "", c.destination || "", c.transporter || "",
     xnum(c.freightAmount, ""),
-  ];
-}
-function buildClearedRow(sr, o, c, data) {
-  const cust = getCustomer(data, o.customerId);
-  return [
-    sr, o.jobNumber || o.orderNumber || "", o.poNumber || "", o.bondedStatus || "", o.origin || "", o.shippingLine || "",
-    c.transporter || o.nominatedTransporter || "", o.description || "", o.blNumber || "",
-    c.containerSize === "20'" ? 1 : "", c.containerSize === "40'" ? 1 : "",
-    c.containerNumber || "", c.containerSize || "", xnum(c.weight, ""), c.vehiclePlate || "", driverPhoneFor(c, data),
-    fmtDateISO(o.igmDate), "", fmtDateISO(c.dispatchAt), fmtTimePart(c.dispatchAt),
-    fmtDateISO(o.eta), "", fmtDateISO(c.podArrivalAt), fmtTimePart(c.podArrivalAt),
-    fmtDateISO(c.podOffloadingAt), fmtTimePart(c.podOffloadingAt), c.destination || o.destination || "", c.emptyReturnLocation || "",
-    "", "", "", "", "", "", "", fmtDateISO(c.emptyReturnDate), "", "", "", "", "", "", "", "",
-    containerTotalBillAmount(c), "", "", c.emptyReturnDescription || "",
   ];
 }
 
@@ -1964,23 +1886,7 @@ async function buildTemplateWorkbook(data, mode) {
         return { ...o, containers };
       }).filter((o) => orderContainers(o).length > 0)
     : allOrders;
-  const today = todayISO();
   const sheets = [];
-
-  // --- Shared layout/rules for the customer-specific sheets below (used to be also used by
-  // a "Cleared Cases-01" sheet here, which has been removed from this export) ---
-  // Not explicitly covered in the wrap/no-wrap spec (that was given for the Import sheet's
-  // columns) — headers here are wrapped uniformly since most of its 48 labels are long
-  // detention-tracking phrases, and content-wrap is applied to the same *concepts* the
-  // Import sheet marks as wrap (Job#, SAP/PO No., Shipping Line, Description, B/L No.,
-  // Truck No., I.G.M Date, Destination, Empty Return Place).
-  const clearedHeaderWrap = new Set(Array.from({ length: 48 }, (_, i) => i + 1)); // all wrap
-  const clearedContentWrap = new Set([2, 3, 6, 8, 9, 15, 17, 27, 28]);
-  const clearedHeaderOverrides = buildColStyleMap(48, clearedHeaderWrap, 1, 2);
-  const clearedContentDefault = buildColStyleMap(48, clearedContentWrap, 9, 8);
-  // Charges/amount columns — bold: Detention Calculated USD/PKR, Placement Charges,
-  // Damage Repair/Other Chgs, Total Amount Payable in PKR.
-  [40, 42, 43, 44, 45].forEach((col) => { clearedContentDefault[col] = 22; });
 
   // --- Import Transportation (cream header) ---
   // Header wrap: everything except Job#, B/L No., Container No., Bilty No., Truck No., YEAR.
@@ -2383,13 +2289,6 @@ function coerceContractRates(rows) {
 const COERCE_FUNCTIONS = { coerceOrders, coerceDrivers, coerceVehicles, coerceInvoices, coerceRoutes, coerceFuelPrices, coerceContractRates };
 
 /* ---- Bilty receipt generator (downloads a PDF, styled like a real bilty form) ---- */
-
-function compactPKR(n) {
-  const num = Number(n) || 0;
-  if (Math.abs(num) >= 1e7) return "Rs " + (num / 1e7).toFixed(2) + " Cr";
-  if (Math.abs(num) >= 1e5) return "Rs " + (num / 1e5).toFixed(2) + " Lac";
-  return "Rs " + num.toLocaleString("en-US");
-}
 
 /* ---- Company letterhead — edit these to match your actual details ---- */
 // Company logo, embedded as a data URL (cropped from the actual logo provided) so the bilty
@@ -3090,55 +2989,6 @@ function analyticsData(data, rangeDays) {
     activeVehicles, totalVehicles: vehicles.length, fleetUtilPct, onTimePct, onDutyPct, paidRatePct,
     chart, statusMix: getStatusMix(orders),
     revenueChart, priorityMix, invoiceStatusMix, vehicleTypeMix,
-  };
-}
-
-function makeSeed() {
-  const today = todayISO();
-  const custId = "cust_seed_1";
-  const dispatcherId = "drv_seed_0";
-  const driverId = "drv_seed_1";
-  const vehicleId = "veh_seed_1";
-  const orderId = "ord_seed_1";
-  const invoiceId = "inv_seed_1";
-  return {
-    customers: [
-      {
-        id: custId, name: "Pakistan Tobacco Company Ltd", email: "muhammad_irfan_hussain@bat.com", phone: "+923099093855", contact: "Muhammad Irfan Hussain", location: "Islamabad, Pakistan",
-        deliveryAddresses: [
-          { id: "addr-demo-1", label: "Jhelum Factory", address: "Kala Gujran GT Road, Jhelum, Punjab" },
-          { id: "addr-demo-2", label: "Islamabad Warehouse", address: "Islamabad, Pakistan" },
-        ],
-      },
-    ],
-    drivers: [
-      { id: dispatcherId, name: "Iq Nest", email: "iqnestofficial@gmail.com", role: "Dispatcher", phone: "", status: "" },
-      { id: driverId, name: "Gul Bahar", email: "talal.baig130@gmail.com", role: "Driver", phone: "+923015689679", status: "Available" },
-    ],
-    vehicles: [
-      { id: vehicleId, plate: "JW-6205", type: "Truck", make: "Isuzu", model: "FVR-240", year: 2026, capacityKg: 32000, mileageKm: 50000, lastService: addDaysISO(today, -4), driverId, status: "active" },
-    ],
-    orders: [
-      {
-        id: orderId, orderNumber: "ORD-MS1REP4K-BTJ", customerId: custId, origin: "Karachi", destination: "Jhelum",
-        driverId, vehicleId, priority: "Urgent", amount: 120400000, createdDate: today, eta: addDaysISO(today, 2),
-        stageIndex: 2, cancelled: false, deliveredDate: null,
-        description: "Bulk tobacco leaf shipment for regional distribution.",
-        jobNumber: "JOB-2026-0143", poNumber: "PO-88231", cargoType: "Import",
-        shippingLine: "Maersk", nominatedTransporter: "Logistix Transport ERP", blNumber: "MAEU123456789",
-        igmDate: addDaysISO(today, -6),
-        emptyReturnLocation: "Karachi Port Trust Yard", biltyNumber: "BLT-55210",
-        bondedStatus: "Non-Bonded", shipmentType: "Import",
-        senderAddress: "SAPT, Karachi", deliveryAddress: "",
-        containers: [
-          { id: "cnt-demo-1", containerNumber: "MSKU7345612", sealNumber: "SL-994271", qtyLabel: "01 X 40'" },
-        ],
-      },
-    ],
-    invoices: [
-      { id: invoiceId, invoiceNumber: "INV-2026-FWRD", orderId, customerId: custId, issued: today, due: addDaysISO(today, 30), total: 120400000, status: "Draft" },
-    ],
-    routes: [],
   };
 }
 
@@ -4401,229 +4251,9 @@ function OrdersView({ data, openModal, askDelete, shipmentType, role, isColVisib
 
 /* ==================== Fleet ==================== */
 
-function FleetView({ data, openModal, askDelete }) {
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("All Status");
-  const total = data.vehicles.length;
-  const active = data.vehicles.filter((v) => v.status === "active").length;
-  const maint = data.vehicles.filter((v) => v.status === "maintenance").length;
-  const idle = data.vehicles.filter((v) => v.status === "idle").length;
-
-  const rows = data.vehicles.filter((v) => {
-    const text = `${v.plate} ${v.make} ${v.model} ${getDriverName(data, v.driverId)}`.toLowerCase();
-    const matchesQ = !q || text.includes(q.toLowerCase());
-    const matchesStatus = status === "All Status" || v.status === status;
-    return matchesQ && matchesStatus;
-  });
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-2xl font-bold text-white">Fleet</h2>
-          <p className="text-slate-500 text-sm mt-1">Manage your vehicles</p>
-        </div>
-        <button className={btnPrimary} onClick={() => openModal({ type: "vehicle", mode: "add", item: null })}>
-          <Plus size={16} /> Add Vehicle
-        </button>
-      </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MiniStat label="Total Fleet" value={total} />
-        <MiniStat label="Active" value={active} color="text-emerald-400" />
-        <MiniStat label="Maintenance" value={maint} color="text-amber-400" />
-        <MiniStat label="Idle" value={idle} color="text-slate-400" />
-      </div>
-      <div className="flex gap-3 flex-wrap">
-        <SearchBox value={q} onChange={setQ} placeholder="Search by plate, make, model, driver..." />
-        <select className={inputCls} style={{ width: 170 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {["All Status", ...VEHICLE_STATUSES].map((s) => <option key={s} value={s}>{cap(s)}</option>)}
-        </select>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState
-          icon={Truck}
-          text="No vehicles found."
-          actionLabel={data.vehicles.length === 0 ? "Add your first vehicle" : null}
-          onAction={() => openModal({ type: "vehicle", mode: "add", item: null })}
-        />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {rows.map((v) => (
-            <div key={v.id} className={cx(cardCls, "p-5")}>
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0"><Truck size={18} className="text-white" /></div>
-                  <div><div className="text-white font-semibold">{v.plate}</div><div className="text-slate-500 text-xs">{v.type}</div></div>
-                </div>
-                <Badge text={cap(v.status)} className={vehicleStatusColor[v.status]} />
-              </div>
-              <div className="grid grid-cols-2 gap-y-3 text-sm mb-4">
-                <div><div className="text-slate-500 text-xs mb-0.5">Make / Model</div><div className="text-slate-200">{v.make} {v.model} ({v.year})</div></div>
-                <div><div className="text-slate-500 text-xs mb-0.5">Capacity</div><div className="text-slate-200">{Number(v.capacityKg).toLocaleString()} kg</div></div>
-                <div><div className="text-slate-500 text-xs mb-0.5">Mileage</div><div className="text-slate-200">{Number(v.mileageKm).toLocaleString()} km</div></div>
-                <div><div className="text-slate-500 text-xs mb-0.5">Last Service</div><div className="text-slate-200">{fmtDate(v.lastService)}</div></div>
-                <div className="col-span-2"><div className="text-slate-500 text-xs mb-0.5">Assigned Driver</div><div className="text-slate-200">{getDriverName(data, v.driverId)}</div></div>
-              </div>
-              <div className="flex gap-2">
-                <button className={cx(btnSecondary, "flex-1 justify-center")} onClick={() => openModal({ type: "vehicle", mode: "edit", item: v })}><Pencil size={14} /> Edit</button>
-                <button className={iconBtnDanger} onClick={() => askDelete({ entity: "vehicles", id: v.id, label: "vehicle" })}><Trash2 size={16} /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ==================== Drivers ==================== */
 
-function DriversView({ data, openModal, askDelete, updateDriverStatus }) {
-  const [q, setQ] = useState("");
-  const [role, setRole] = useState("All Roles");
-  const driverList = data.drivers.filter((d) => d.role === "Driver");
-  const available = driverList.filter((d) => d.status === "Available").length;
-  const onDuty = driverList.filter((d) => d.status === "On Duty").length;
-  const offLeave = driverList.filter((d) => d.status === "Off Leave").length;
-
-  const rows = data.drivers.filter((d) => {
-    const text = `${d.name} ${d.email}`.toLowerCase();
-    const matchesQ = !q || text.includes(q.toLowerCase());
-    const matchesRole = role === "All Roles" || d.role === role;
-    return matchesQ && matchesRole;
-  });
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-2xl font-bold text-white">Drivers &amp; Staff</h2>
-          <p className="text-slate-500 text-sm mt-1">Manage team members, roles, and availability</p>
-        </div>
-        <button className={btnPrimary} onClick={() => openModal({ type: "driver", mode: "add", item: null })}>
-          <Plus size={16} /> Add Team Member
-        </button>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <MiniStat label="Available" value={available} color="text-emerald-400" />
-        <MiniStat label="On Duty" value={onDuty} color="text-blue-400" />
-        <MiniStat label="Off / Leave" value={offLeave} color="text-slate-400" />
-      </div>
-      <div className="flex gap-3 flex-wrap">
-        <SearchBox value={q} onChange={setQ} placeholder="Search by name or email..." />
-        <select className={inputCls} style={{ width: 170 }} value={role} onChange={(e) => setRole(e.target.value)}>
-          {["All Roles", "Dispatcher", "Driver"].map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState icon={Users} text="No team members found." />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {rows.map((d) => (
-            <div key={d.id} className={cx(cardCls, "p-5")}>
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold shrink-0">{d.name.charAt(0)}</div>
-                  <div className="min-w-0"><div className="text-white font-semibold truncate">{d.name}</div><div className="text-slate-500 text-xs truncate">{d.email}</div></div>
-                </div>
-                <button className={iconBtnDanger} onClick={() => askDelete({ entity: "drivers", id: d.id, label: "team member" })}><Trash2 size={14} /></button>
-              </div>
-              <div className="mb-3">
-                <Badge text={d.role} className={d.role === "Driver" ? "bg-blue-950 text-blue-400 border-blue-800" : "bg-purple-950 text-purple-400 border-purple-800"} />
-              </div>
-              {d.role === "Driver" ? (
-                <>
-                  <div className="flex items-center gap-1.5 text-slate-400 text-sm mb-3"><Phone size={13} />{d.phone || "—"}</div>
-                  <div className="flex items-center gap-2">
-                    <select className={inputCls} value={d.status} onChange={(e) => updateDriverStatus(d.id, e.target.value)}>
-                      {DRIVER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <button className={cx(btnSecondary, "shrink-0")} onClick={() => openModal({ type: "driver", mode: "edit", item: d })}><Pencil size={14} /> Edit</button>
-                  </div>
-                </>
-              ) : (
-                <div className="flex justify-end">
-                  <button className={btnSecondary} onClick={() => openModal({ type: "driver", mode: "edit", item: d })}><Pencil size={14} /> View / Edit</button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ==================== Routes ==================== */
-
-function RoutesView({ data, openModal, askDelete }) {
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("All Status");
-  const planned = data.routes.filter((r) => r.status === "planned").length;
-  const active = data.routes.filter((r) => r.status === "active").length;
-  const completed = data.routes.filter((r) => r.status === "completed").length;
-
-  const rows = data.routes.filter((r) => {
-    const text = `${r.name} ${r.origin} ${r.destination}`.toLowerCase();
-    const matchesQ = !q || text.includes(q.toLowerCase());
-    const matchesStatus = status === "All Status" || r.status === status;
-    return matchesQ && matchesStatus;
-  });
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-2xl font-bold text-white">Route Planning</h2>
-          <p className="text-slate-500 text-sm mt-1">Plan, assign, and track delivery routes</p>
-        </div>
-        <button className={btnPrimary} onClick={() => openModal({ type: "route", mode: "add", item: null })}>
-          <Plus size={16} /> New Route
-        </button>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <MiniStat label="Planned" value={planned} color="text-blue-400" />
-        <MiniStat label="Active" value={active} color="text-emerald-400" />
-        <MiniStat label="Completed" value={completed} color="text-slate-400" />
-      </div>
-      <div className="flex gap-3 flex-wrap">
-        <SearchBox value={q} onChange={setQ} placeholder="Search routes..." />
-        <select className={inputCls} style={{ width: 170 }} value={status} onChange={(e) => setStatus(e.target.value)}>
-          {["All Status", ...ROUTE_STATUSES].map((s) => <option key={s} value={s}>{cap(s)}</option>)}
-        </select>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState
-          icon={MapPin}
-          text="No routes found."
-          actionLabel="Create your first route"
-          onAction={() => openModal({ type: "route", mode: "add", item: null })}
-        />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {rows.map((r) => (
-            <div key={r.id} className={cx(cardCls, "p-5")}>
-              <div className="flex items-start justify-between mb-3">
-                <div className="text-white font-semibold">{r.name}</div>
-                <Badge text={cap(r.status)} className={routeStatusColor[r.status]} />
-              </div>
-              <div className="text-slate-300 text-sm mb-3">{r.origin} → {r.destination}</div>
-              <div className="text-slate-500 text-xs space-y-1 mb-4">
-                <div>Driver: <span className="text-slate-300">{getDriverName(data, r.driverId)}</span></div>
-                <div>Vehicle: <span className="text-slate-300">{getVehiclePlate(data, r.vehicleId)}</span></div>
-                {r.orderId && <div>Order: <span className="text-slate-300 font-mono">{getOrder(data, r.orderId) ? getOrder(data, r.orderId).orderNumber : "—"}</span></div>}
-              </div>
-              <div className="flex gap-2">
-                <button className={cx(btnSecondary, "flex-1 justify-center")} onClick={() => openModal({ type: "route", mode: "edit", item: r })}><Pencil size={14} /> Edit</button>
-                <button className={iconBtnDanger} onClick={() => askDelete({ entity: "routes", id: r.id, label: "route" })}><Trash2 size={16} /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ==================== Tracking ==================== */
 
@@ -8187,7 +7817,6 @@ function OrderForm({ initial, customers, senders, drivers, vehicles, data, prese
   const senderList = senders || [];
   const selectedSender = senderList.find((sd) => sd.id === senderId);
   const senderAddresses = (selectedSender && Array.isArray(selectedSender.addresses)) ? selectedSender.addresses : [];
-  const driverOptions = drivers.filter((d) => d.role === "Driver");
 
   function setShippingField(key, val) {
     setShipping((s) => ({ ...s, [key]: val }));
@@ -8682,70 +8311,6 @@ function DriverForm({ initial, onSave, onCancel }) {
       <div className="flex justify-end gap-2 mt-2">
         <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
         <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Add Team Member"}</button>
-      </div>
-    </form>
-  );
-}
-
-function RouteForm({ initial, drivers, vehicles, orders, onSave, onCancel }) {
-  const isEdit = !!initial;
-  const r = initial || {};
-  const [name, setName] = useState(r.name || "");
-  const [origin, setOrigin] = useState(r.origin || "");
-  const [destination, setDestination] = useState(r.destination || "");
-  const [driverId, setDriverId] = useState(r.driverId || "");
-  const [vehicleId, setVehicleId] = useState(r.vehicleId || "");
-  const [orderId, setOrderId] = useState(r.orderId || "");
-  const [status, setStatus] = useState(r.status || "planned");
-  const driverOptions = drivers.filter((d) => d.role === "Driver");
-
-  function submit(e) {
-    e.preventDefault();
-    if (!origin.trim() || !destination.trim()) return;
-    onSave({
-      id: r.id || uid("rte"),
-      name: name.trim() || `${origin.trim()} \u2192 ${destination.trim()}`,
-      origin: origin.trim(), destination: destination.trim(), driverId, vehicleId, orderId, status,
-    });
-  }
-
-  return (
-    <form onSubmit={submit}>
-      <Field label="Route Name (optional)"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Karachi Northbound" /></Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Origin"><input className={inputCls} value={origin} onChange={(e) => setOrigin(e.target.value)} /></Field>
-        <Field label="Destination"><input className={inputCls} value={destination} onChange={(e) => setDestination(e.target.value)} /></Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Driver">
-          <select className={inputCls} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
-            <option value="">Unassigned</option>
-            {driverOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Vehicle">
-          <select className={inputCls} value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}>
-            <option value="">Unassigned</option>
-            {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plate}</option>)}
-          </select>
-        </Field>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Linked Order (optional)">
-          <select className={inputCls} value={orderId} onChange={(e) => setOrderId(e.target.value)}>
-            <option value="">None</option>
-            {orders.map((o) => <option key={o.id} value={o.id}>{o.orderNumber}</option>)}
-          </select>
-        </Field>
-        <Field label="Status">
-          <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
-            {ROUTE_STATUSES.map((s) => <option key={s} value={s}>{cap(s)}</option>)}
-          </select>
-        </Field>
-      </div>
-      <div className="flex justify-end gap-2 mt-2">
-        <button type="button" className={btnSecondary} onClick={onCancel}>Cancel</button>
-        <button type="submit" className={btnPrimary}>{isEdit ? "Save Changes" : "Create Route"}</button>
       </div>
     </form>
   );
@@ -9917,13 +9482,6 @@ function LogistixERP() {
     setAuthBusy(false);
   }
 
-  async function handleSignup(email, password, name) {
-    setAuthBusy(true); setAuthError(null);
-    const { error } = await supabaseClient.auth.signUp({ email, password, options: { data: { name } } });
-    if (error) setAuthError(error.message);
-    setAuthBusy(false);
-  }
-
   async function handleLogout() {
     await supabaseClient.auth.signOut();
   }
@@ -10195,12 +9753,6 @@ function LogistixERP() {
     const result = updateQueueRef.current.then(run, run);
     updateQueueRef.current = result.catch(() => {});
     return result;
-  }
-
-  async function updateDriverStatus(driverId, status) {
-    const { error } = await supabaseClient.from("drivers").update({ status }).eq("id", driverId);
-    if (error) { window.alert("Couldn't update driver: " + error.message); return; }
-    setDataState((prev) => ({ ...prev, drivers: prev.drivers.map((d) => (d.id === driverId ? { ...d, status } : d)) }));
   }
 
   function handleAttachClick() {
