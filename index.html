@@ -6550,6 +6550,11 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
   }
   const [psoRefreshing, setPsoRefreshing] = useState(false);
   const [psoRefreshResult, setPsoRefreshResult] = useState(null); // { ok, text }
+  useEffect(() => {
+    if (!psoRefreshResult) return;
+    const t = setTimeout(() => setPsoRefreshResult(null), 90000); // hide the result message after 1.5 minutes
+    return () => clearTimeout(t);
+  }, [psoRefreshResult]);
 
   const [refreshingDates, setRefreshingDates] = useState(new Set());
 
@@ -7007,18 +7012,11 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
             onExport={onFuelPriceExport}
             onRevert={onFuelPriceRevert}
           >
-            <button
-              disabled={psoRefreshing}
-              onClick={() => refreshFuelDates([])}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={12} className={psoRefreshing ? "animate-spin" : ""} /> {psoRefreshing ? "Checking PSO…" : "Refresh from PSO"}
-            </button>
             {psoRefreshResult && (
               <span className={cx("text-xs", psoRefreshResult.ok ? "text-emerald-400" : "text-red-400")}>{psoRefreshResult.text}</span>
             )}
           </TabExcelBar>
-          <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now. To re-check older dates, use the refresh icon on a row, or tick several rows and click Refresh Selected.</p>
+          <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. To re-check a date, use the refresh icon on its row, or tick several rows and click Refresh Selected.</p>
           <div className="flex items-center justify-between flex-wrap gap-2">
             {selectedFuelPriceIds.size > 0 ? (
               <div className="flex items-center gap-3">
