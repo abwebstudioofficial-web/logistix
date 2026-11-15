@@ -6551,28 +6551,39 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
   const [psoRefreshing, setPsoRefreshing] = useState(false);
   const [psoRefreshResult, setPsoRefreshResult] = useState(null); // { ok, text }
 
-  // Manually triggers the same fetch-hicetane-price Edge Function that runs on the daily
-  // schedule - a fallback for when the automatic run fails (e.g. PSO's page layout changed,
-  // or the scheduled run simply didn't fire) without needing to go into Supabase directly.
-  async function handleRefreshFromPso() {
+  const [refreshingDates, setRefreshingDates] = useState(new Set());
+
+  // Looks prices up in PSO's dated price history (fetch-hicetane-price-v2), so each date gets the
+  // price that applied on that date. No dates = today, plus a re-check of the previous 2 days.
+  async function refreshFuelDates(dates) {
     setPsoRefreshing(true);
+    setRefreshingDates(new Set(dates));
     setPsoRefreshResult(null);
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/fetch-hicetane-price`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/fetch-hicetane-price-v2`, {
         method: "POST",
         headers: { Authorization: `Bearer ${SUPABASE_ANON_KEY}`, apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify(dates.length ? { dates } : {}),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.error) {
         setPsoRefreshResult({ ok: false, text: json.error || `Request failed (${res.status})` });
       } else {
-        setPsoRefreshResult({ ok: true, text: `Updated: Rs.${json.price_per_liter}/Ltr as of ${fmtDate(json.effective_date)}` });
-        if (refreshData) await refreshData(); // pull the new row in immediately, don't wait for the next background poll
+        const results = Array.isArray(json.results) ? json.results : [];
+        const count = (a) => results.filter((r) => r.action === a).length;
+        const failed = results.filter((r) => !r.ok);
+        const parts = [];
+        if (results.length === 1 && results[0].ok) parts.push(`${fmtDate(results[0].date)}: Rs.${results[0].price_per_liter}/Ltr (${results[0].action})`);
+        else parts.push(`${count("updated")} updated, ${count("created")} added, ${count("unchanged")} already correct`);
+        if (failed.length) parts.push(`${failed.length} not found on PSO: ${failed.map((r) => fmtDate(r.date)).join(", ")}`);
+        setPsoRefreshResult({ ok: failed.length === 0, text: parts.join(" · ") });
+        if (refreshData) await refreshData(); // pull the changes in immediately, don't wait for the next background poll
       }
     } catch (err) {
       setPsoRefreshResult({ ok: false, text: "Couldn't reach the price-fetch function — check your connection and try again." });
     } finally {
       setPsoRefreshing(false);
+      setRefreshingDates(new Set());
     }
   }
   const [selectedFuelPriceIds, setSelectedFuelPriceIds] = useState(new Set());
@@ -6998,7 +7009,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
           >
             <button
               disabled={psoRefreshing}
-              onClick={handleRefreshFromPso}
+              onClick={() => refreshFuelDates([])}
               className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={12} className={psoRefreshing ? "animate-spin" : ""} /> {psoRefreshing ? "Checking PSO…" : "Refresh from PSO"}
@@ -7007,12 +7018,19 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
               <span className={cx("text-xs", psoRefreshResult.ok ? "text-emerald-400" : "text-red-400")}>{psoRefreshResult.text}</span>
             )}
           </TabExcelBar>
-          <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now.</p>
+          <p className="text-slate-500 text-xs -mt-2">Hi-Cetane Diesel Euro 5 is fetched automatically from PSO once a day. Use this if that hasn't run yet, or failed, and you need today's price now. To re-check older dates, use the refresh icon on a row, or tick several rows and click Refresh Selected.</p>
           <div className="flex items-center justify-between flex-wrap gap-2">
             {selectedFuelPriceIds.size > 0 ? (
               <div className="flex items-center gap-3">
                 <span className="text-slate-400 text-sm">{selectedFuelPriceIds.size} selected</span>
                 <button className={btnSecondary} onClick={() => setSelectedFuelPriceIds(new Set())}>Clear</button>
+                <button
+                  className={btnSecondary}
+                  disabled={psoRefreshing}
+                  onClick={() => refreshFuelDates(fuelPrices.filter((p) => selectedFuelPriceIds.has(p.id) && p.effectiveDate).map((p) => p.effectiveDate))}
+                >
+                  <RefreshCw size={15} className={psoRefreshing ? "animate-spin" : ""} /> Refresh Selected ({selectedFuelPriceIds.size})
+                </button>
                 <button
                   className={btnDanger}
                   onClick={() => askDelete({ entity: "fuel_prices", id: Array.from(selectedFuelPriceIds), label: "fuel price entry" })}
@@ -7066,6 +7084,7 @@ function CustomerFuelDetail({ customer, data, openModal, askDelete, onBack, fuel
                       <td className={cx(tdCls, "text-white font-medium")}>{formatPKR(p.pricePerLiter)}</td>
                       <td className={tdCls}>
                         <div className="flex items-center gap-1 justify-end">
+                          <button className={iconBtn} title="Refresh this date's price from PSO" disabled={psoRefreshing || !p.effectiveDate} onClick={() => refreshFuelDates([p.effectiveDate])}><RefreshCw size={15} className={refreshingDates.has(p.effectiveDate) ? "animate-spin" : ""} /></button>
                           <button className={iconBtn} onClick={() => openModal({ type: "fuel_price", mode: "edit", item: p })}><Pencil size={15} /></button>
                           <button className={iconBtnDanger} onClick={() => askDelete({ entity: "fuel_prices", id: p.id, label: "fuel price entry" })}><Trash2 size={15} /></button>
                         </div>
