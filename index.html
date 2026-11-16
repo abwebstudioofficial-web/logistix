@@ -3069,7 +3069,7 @@ function MiniIconStat({ icon: Icon, iconBg, label, value }) {
 }
 
 // Donut chart with its legend. Hovering a slice, or its legend row, pops that slice out a
-// little; minAngle keeps very small categories visible enough to hover.
+// little (inward and outward); minAngle keeps very small categories wide enough to see and hover.
 function Donut({ mix, unit = "", height = 180, inner = 55, outer = 80 }) {
   const [active, setActive] = useState(null);
   const total = mix.reduce((s, x) => s + x.value, 0);
@@ -3094,9 +3094,9 @@ function Donut({ mix, unit = "", height = 180, inner = 55, outer = 80 }) {
             }}
           />
           <Pie
-            data={mix} dataKey="value" nameKey="name" innerRadius={inner} outerRadius={outer} paddingAngle={2} minAngle={4}
+            data={mix} dataKey="value" nameKey="name" innerRadius={inner} outerRadius={outer} paddingAngle={2} minAngle={7}
             activeIndex={active === null ? undefined : active}
-            activeShape={(props) => <Sector {...props} outerRadius={props.outerRadius + 8} />}
+            activeShape={(props) => <Sector {...props} innerRadius={props.innerRadius - 5} outerRadius={props.outerRadius + 8} />}
             onMouseEnter={(_, i) => setActive(i)}
             onMouseLeave={() => setActive(null)}
           >
